@@ -322,7 +322,7 @@ const InternalDashboardPage: React.FC = () => {
               Welcome, {internalUser ? `${internalUser.first_name} ${internalUser.last_name}` : "User"}
             </Typography>
             <Typography variant="body1" color="text.secondary">
-              Role: {internalUser?.role.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase())} • Last login: Today, 9:30 AM
+              Role: {internalUser?.role ? internalUser.role.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()) : "Unknown"} • Last login: Today, 9:30 AM
             </Typography>
           </Box>
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>

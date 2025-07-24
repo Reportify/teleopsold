@@ -736,7 +736,7 @@ const InternalVendorManagementPage: React.FC = () => {
                       </TableCell>
                       <TableCell align="center">
                         <Chip
-                          label={network.status.replace("_", " ")}
+                          label={network.status ? network.status.replace("_", " ") : "Unknown"}
                           size="small"
                           variant="outlined"
                           sx={{

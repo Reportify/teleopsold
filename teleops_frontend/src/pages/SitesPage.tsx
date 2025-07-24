@@ -591,7 +591,7 @@ const SitesPage: React.FC = () => {
                         </TableCell>
                         <TableCell>
                           <Stack spacing={1}>
-                            <Chip label={site.site_type.replace("_", " ").toUpperCase()} size="small" variant="outlined" />
+                            <Chip label={site.site_type ? site.site_type.replace("_", " ").toUpperCase() : "Unknown"} size="small" variant="outlined" />
                             <Chip label={site.status.toUpperCase()} color={getStatusColor(site.status)} size="small" />
                           </Stack>
                         </TableCell>
@@ -738,7 +738,7 @@ const SitesPage: React.FC = () => {
                   <Stack spacing={1}>
                     {Object.entries(distributions.site_types).map(([type, count]) => (
                       <Box key={type} sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <Typography variant="body2">{type.replace("_", " ").toUpperCase()}</Typography>
+                        <Typography variant="body2">{type ? type.replace("_", " ").toUpperCase() : "Unknown"}</Typography>
                         <Chip label={count} size="small" />
                       </Box>
                     ))}

@@ -638,7 +638,7 @@ const ComplianceIssuesList: React.FC<{
 
               <Box sx={{ display: "flex", flexDirection: "column", alignItems: "end", gap: 1 }}>
                 <Chip label={issue.severity} color={getSeverityColor(issue.severity) as any} size="small" />
-                <Chip label={issue.status.replace("_", " ")} size="small" variant="outlined" />
+                <Chip label={issue.status ? issue.status.replace("_", " ") : "Unknown"} size="small" variant="outlined" />
                 {issue.is_overdue && <Chip label="Overdue" color="error" size="small" icon={<Schedule />} />}
                 <Typography variant="caption" color="text.secondary">
                   Due: {new Date(issue.due_date).toLocaleDateString()}

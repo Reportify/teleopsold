@@ -651,7 +651,7 @@ const InternalSupportPage: React.FC = () => {
                         </TableCell>
                         <TableCell align="center">
                           <Chip
-                            label={ticket.ticket_status.replace("_", " ")}
+                            label={ticket.ticket_status ? ticket.ticket_status.replace("_", " ") : "Unknown"}
                             size="small"
                             variant="outlined"
                             sx={{
@@ -800,7 +800,7 @@ const InternalSupportPage: React.FC = () => {
                       </TableCell>
                       <TableCell align="center">
                         <Chip
-                          label={ticket.ticket_status.replace("_", " ")}
+                          label={ticket.ticket_status ? ticket.ticket_status.replace("_", " ") : "Unknown"}
                           size="small"
                           variant="outlined"
                           sx={{

@@ -25,7 +25,6 @@ DJANGO_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.gis',  # Added for GPS support
 ]
 
 THIRD_PARTY_APPS = [
@@ -70,7 +69,7 @@ LOCAL_APPS = [
     'teleops_internal.api',    # Internal-only API endpoints
 ]
 
-INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + DOMAIN_APPS + LOCAL_APPS
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     'core.middleware.cors.CustomCorsMiddleware',  # Custom CORS middleware

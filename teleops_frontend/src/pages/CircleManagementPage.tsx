@@ -246,7 +246,7 @@ const CircleManagementPage: React.FC = () => {
     for (const field of requiredFields) {
       const value = inviteForm[field as keyof typeof inviteForm];
       if (!value || (typeof value === "string" && !value.trim())) {
-        const fieldName = field.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+        const fieldName = field ? field.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase()) : "Unknown Field";
         errors.push(fieldName);
       }
     }
@@ -564,7 +564,7 @@ const CircleManagementPage: React.FC = () => {
                           </Box>
                         </Box>
                         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                          <Chip icon={getStatusIcon(circle.status)} label={circle.status.replace("_", " ")} color={getStatusColor(circle.status)} size="small" />
+                          <Chip icon={getStatusIcon(circle.status)} label={circle.status ? circle.status.replace("_", " ") : "Unknown"} color={getStatusColor(circle.status)} size="small" />
                           <IconButton size="small" onClick={(e) => handleMenuOpen(e, circle)}>
                             <MoreVert />
                           </IconButton>
