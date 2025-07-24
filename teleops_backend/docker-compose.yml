@@ -1,0 +1,137 @@
+version: "3.8"
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: teleops
+      POSTGRES_USER: teleops
+      POSTGRES_PASSWORD: teleops123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teleops -d teleops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Backend Application
+  backend:
+    build: .
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=development-secret-key-change-in-production
+      - DB_NAME=teleops
+      - DB_USER=teleops
+      - DB_PASSWORD=teleops123
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - AZURE_ACCOUNT_NAME=dev-storage
+      - AZURE_ACCOUNT_KEY=dev-key
+      - AZURE_CONTAINER_NAME=teleops-dev
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: python manage.py runserver 0.0.0.0:8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Celery Worker
+  celery:
+    build: .
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=development-secret-key-change-in-production
+      - DB_NAME=teleops
+      - DB_USER=teleops
+      - DB_PASSWORD=teleops123
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config worker -l info
+    profiles:
+      - worker
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build: .
+    environment:
+      - DEBUG=True
+      - SECRET_KEY=development-secret-key-change-in-production
+      - DB_NAME=teleops
+      - DB_USER=teleops
+      - DB_PASSWORD=teleops123
+      - DB_HOST=db
+      - DB_PORT=5432
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A config beat -l info
+    profiles:
+      - scheduler
+
+  # Nginx (for production-like setup)
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    depends_on:
+      - backend
+    profiles:
+      - nginx
+
+volumes:
+  postgres_data:
+  redis_data:
+  static_volume:
+  media_volume:
