@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import (
+from ..models import (
     CircleVendorRelationship, 
     Tenant, 
     TelecomCircle, 
@@ -87,7 +87,7 @@ class CircleVendorRelationshipSerializer(serializers.ModelSerializer):
     
     def _get_related_invitation(self, obj):
         """Helper method to find related TenantInvitation"""
-        from .models import TenantInvitation
+        from ..models import TenantInvitation
         
         # Look for invitation based on contact person and vendor code
         # This is a heuristic since we don't have a direct FK relationship
@@ -465,7 +465,7 @@ class VendorCreatedClientSerializer(serializers.ModelSerializer):
             vendor_tenant_id = self.context.get('vendor_tenant_id')
             
         if vendor_tenant_id:
-            from .services import DualModeVendorService
+            from ..services import DualModeVendorService
             service = DualModeVendorService()
             validation_result = service.validate_client_name_rules(vendor_tenant_id, value)
             
@@ -657,6 +657,63 @@ class ConversionAnalyticsSerializer(serializers.Serializer):
     top_conversion_opportunities = serializers.ListField(read_only=True)
 
 
+class DualModeVendorSerializer(serializers.Serializer):
+    """Serializer for dual-mode vendor operations"""
+    
+    vendor_info = serializers.DictField(read_only=True)
+    associated_clients = AssociatedClientSerializer(many=True, read_only=True)
+    independent_clients = IndependentClientSerializer(many=True, read_only=True)
+    portfolio_summary = serializers.DictField(read_only=True)
+    conversion_metrics = serializers.DictField(read_only=True)
+
+
+class VendorClientRelationshipSerializer(serializers.Serializer):
+    """Serializer for vendor-client relationships"""
+    
+    vendor_tenant = TenantSerializer(read_only=True)
+    relationship_type = serializers.CharField(read_only=True)
+    client_data = serializers.DictField(read_only=True)
+    portfolio_summary = serializers.DictField(read_only=True)
+
+
+class VendorClientSerializer(serializers.Serializer):
+    """Serializer for vendor clients (both associated and independent)"""
+    
+    id = serializers.UUIDField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    type = serializers.CharField(read_only=True)
+    is_associated = serializers.BooleanField(read_only=True)
+    client_data = serializers.DictField(read_only=True)
+
+
+class VendorManagementSummarySerializer(serializers.Serializer):
+    """Serializer for vendor management summary"""
+    
+    vendor_info = serializers.DictField(read_only=True)
+    client_summary = serializers.DictField(read_only=True)
+    revenue_summary = serializers.DictField(read_only=True)
+    conversion_summary = serializers.DictField(read_only=True)
+    recent_activity = serializers.ListField(read_only=True)
+
+
+class CircleVendorSummarySerializer(serializers.Serializer):
+    """Serializer for circle-vendor relationship summary"""
+    
+    circle_info = serializers.DictField(read_only=True)
+    vendor_relationships = serializers.ListField(read_only=True)
+    performance_metrics = serializers.DictField(read_only=True)
+
+
+class CircleRelationshipMetricsSerializer(serializers.Serializer):
+    """Serializer for circle relationship metrics"""
+    
+    total_vendors = serializers.IntegerField(read_only=True)
+    active_vendors = serializers.IntegerField(read_only=True)
+    pending_vendors = serializers.IntegerField(read_only=True)
+    vendor_performance = serializers.DictField(read_only=True)
+    relationship_health = serializers.DictField(read_only=True)
+
+
 class DesignationSerializer(serializers.ModelSerializer):
     """Serializer for tenant designations"""
     
@@ -670,6 +727,11 @@ class DesignationSerializer(serializers.ModelSerializer):
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by']
+
+
+class TenantDesignationSerializer(DesignationSerializer):
+    """Alias for backward compatibility"""
+    pass
 
 
 class TenantUserProfileSerializer(serializers.ModelSerializer):
@@ -688,5 +750,4 @@ class TenantUserProfileSerializer(serializers.ModelSerializer):
             'primary_designation', 'effective_permissions', 'is_active',
             'last_login', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'primary_designation', 'effective_permissions']
-    conversion_metrics = serializers.DictField(read_only=True) 
+        read_only_fields = ['id', 'created_at', 'updated_at', 'primary_designation', 'effective_permissions'] 

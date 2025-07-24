@@ -199,6 +199,13 @@ const circleNavigationItems = [
     description: "Circle settings",
   },
   {
+    text: "Designations",
+    icon: <AdminPanelSettings />,
+    path: "/designations",
+    permission: "designations.manage",
+    description: "Manage organizational roles and designations",
+  },
+  {
     text: "RBAC Management",
     icon: <Key />,
     path: "/rbac",
@@ -236,6 +243,13 @@ const vendorNavigationItems = [
     path: "/vendor-operations",
     permission: "operations.manage",
     description: "Manage designations, certifications, and employee readiness",
+  },
+  {
+    text: "Designations",
+    icon: <Shield />,
+    path: "/designations",
+    permission: "designations.manage",
+    description: "Manage organizational roles and designations",
   },
   {
     text: "Equipment",

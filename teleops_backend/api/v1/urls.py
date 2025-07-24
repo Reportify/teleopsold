@@ -17,6 +17,9 @@ urlpatterns = [
     # Tenant User Management endpoints
     path('tenant/', include('apps.users.tenant.urls')),
     
+    # Tenant Organization Management endpoints
+    path('tenant/', include('apps.tenants.urls.organization_urls')),
+    
     # Vendor Operations Management endpoints
     path('vendor-operations/', include('apps.users.tenant.urls', namespace='vendor-operations')),
     

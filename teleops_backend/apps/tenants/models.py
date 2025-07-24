@@ -2019,6 +2019,12 @@ class ComprehensiveDesignation(models.Model):
         ('Limited', 'Limited'),
         ('Full', 'Full'),
     ]
+    
+    # Designation Types
+    DESIGNATION_TYPE_CHOICES = [
+        ('field', 'Field'),
+        ('non_field', 'Non-Field'),
+    ]
 
     # Core Designation Fields
     id = models.BigAutoField(primary_key=True)
@@ -2031,6 +2037,18 @@ class ComprehensiveDesignation(models.Model):
     department = models.CharField(max_length=100, blank=True, help_text="Functional department - tenant defined")
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    
+    # Designation Type and Certifications
+    designation_type = models.CharField(
+        max_length=20, 
+        choices=DESIGNATION_TYPE_CHOICES, 
+        default='non_field',
+        help_text="Whether this is a field or non-field designation"
+    )
+    certifications_required = models.JSONField(
+        default=dict,
+        help_text="Required certifications for field positions: {farmtocli: true, fat: false, medical: true}"
+    )
 
     # Tenant-Defined Hierarchy
     parent_designation = models.ForeignKey(

@@ -11,7 +11,9 @@ from ..views.rbac_views import (
     PermissionRegistryViewSet,
     PermissionGroupViewSet,
     UserPermissionViewSet,
-    PermissionAuditViewSet
+    PermissionAuditViewSet,
+    DepartmentViewSet,
+    ComprehensiveDesignationViewSet
 )
 
 # Create router for RBAC viewsets
@@ -20,6 +22,8 @@ rbac_router.register(r'permissions', PermissionRegistryViewSet, basename='permis
 rbac_router.register(r'groups', PermissionGroupViewSet, basename='permission-groups')
 rbac_router.register(r'user-permissions', UserPermissionViewSet, basename='user-permissions')
 rbac_router.register(r'audit', PermissionAuditViewSet, basename='permission-audit')
+rbac_router.register(r'departments', DepartmentViewSet, basename='departments')
+rbac_router.register(r'designations', ComprehensiveDesignationViewSet, basename='designations')
 
 urlpatterns = [
     # RBAC API endpoints

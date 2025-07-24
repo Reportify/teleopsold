@@ -13,6 +13,7 @@ from ..models import (
     DesignationBasePermission, PermissionAuditTrail,
     TenantUserProfile, ComprehensiveDesignation
 )
+from apps.users.models import Department
 
 User = get_user_model()
 
@@ -352,4 +353,156 @@ class PermissionTemplateSerializer(serializers.Serializer):
     permissions = serializers.ListField(
         child=serializers.DictField()
     )
-    metadata = serializers.DictField(required=False) 
+    metadata = serializers.DictField(required=False)
+
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    """Serializer for department management."""
+    
+    class Meta:
+        model = Department
+        fields = [
+            'id', 'name', 'code', 'description', 'parent_department',
+            'is_operational', 'requires_safety_training', 'is_active',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def validate_name(self, value):
+        """Validate department name uniqueness within tenant."""
+        tenant = self.context['request'].user.tenant_profile.tenant
+        if self.instance:
+            # Update case - exclude current instance
+            if Department.objects.filter(
+                tenant=tenant, 
+                name__iexact=value
+            ).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError("Department with this name already exists.")
+        else:
+            # Create case
+            if Department.objects.filter(tenant=tenant, name__iexact=value).exists():
+                raise serializers.ValidationError("Department with this name already exists.")
+        return value
+
+
+class ComprehensiveDesignationSerializer(serializers.ModelSerializer):
+    """Serializer for comprehensive designation management."""
+    
+    user_count = serializers.SerializerMethodField()
+    department_name = serializers.CharField(source='department', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    
+    class Meta:
+        model = ComprehensiveDesignation
+        fields = [
+            'id', 'designation_name', 'designation_code', 'designation_level',
+            'department', 'department_name', 'description', 'is_active',
+            'designation_type', 'certifications_required',
+            'permissions', 'feature_access', 'data_access_level',
+            'custom_capabilities', 'geographic_scope', 'functional_scope',
+            'cross_functional_access', 'multi_location_access',
+            'can_manage_users', 'can_create_projects', 'can_assign_tasks',
+            'can_approve_expenses', 'can_access_reports', 'expense_approval_limit',
+            'is_system_role', 'is_template', 'user_count', 'created_by_name',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'designation_code', 'created_at', 'updated_at', 
+            'user_count', 'department_name', 'created_by_name'
+        ]
+    
+    def get_user_count(self, obj):
+        """Get number of users assigned to this designation."""
+        try:
+            from ..models import UserDesignationAssignment
+            return UserDesignationAssignment.objects.filter(
+                designation=obj,
+                is_active=True,
+                assignment_status='Active'
+            ).count()
+        except:
+            return 0
+    
+    def validate_designation_name(self, value):
+        """Validate designation name uniqueness within tenant."""
+        tenant = self.context['request'].user.tenant_profile.tenant
+        if self.instance:
+            # Update case - exclude current instance
+            if ComprehensiveDesignation.objects.filter(
+                tenant=tenant, 
+                designation_name__iexact=value
+            ).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError("Designation with this name already exists.")
+        else:
+            # Create case
+            if ComprehensiveDesignation.objects.filter(
+                tenant=tenant, 
+                designation_name__iexact=value
+            ).exists():
+                raise serializers.ValidationError("Designation with this name already exists.")
+        return value
+    
+    def validate_certifications_required(self, value):
+        """Validate certifications format."""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Certifications must be a dictionary.")
+        
+        valid_certifications = ['farmtocli', 'fat', 'medical']
+        for cert in value.keys():
+            if cert not in valid_certifications:
+                raise serializers.ValidationError(
+                    f"Invalid certification '{cert}'. Valid options: {valid_certifications}"
+                )
+        
+        for cert, required in value.items():
+            if not isinstance(required, bool):
+                raise serializers.ValidationError(
+                    f"Certification '{cert}' value must be boolean."
+                )
+        
+        return value
+    
+    def validate(self, attrs):
+        """Validate designation data."""
+        # If designation type is non_field, reset certifications
+        if attrs.get('designation_type') == 'non_field':
+            attrs['certifications_required'] = {
+                'farmtocli': False,
+                'fat': False,
+                'medical': False
+            }
+        
+        # Ensure certifications_required has default structure
+        if 'certifications_required' not in attrs:
+            attrs['certifications_required'] = {
+                'farmtocli': False,
+                'fat': False,
+                'medical': False
+            }
+        else:
+            # Ensure all required keys are present
+            required_certs = ['farmtocli', 'fat', 'medical']
+            for cert in required_certs:
+                if cert not in attrs['certifications_required']:
+                    attrs['certifications_required'][cert] = False
+        
+        return attrs
+    
+    def create(self, validated_data):
+        """Create designation with auto-generated code."""
+        tenant = self.context['request'].user.tenant_profile.tenant
+        user = self.context['request'].user
+        
+        # Auto-generate designation code
+        validated_data['designation_code'] = validated_data['designation_name'].lower().replace(' ', '_')
+        validated_data['tenant'] = tenant
+        validated_data['created_by'] = user
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update designation."""
+        user = self.context['request'].user
+        validated_data['updated_by'] = user
+        
+        return super().update(instance, validated_data) 

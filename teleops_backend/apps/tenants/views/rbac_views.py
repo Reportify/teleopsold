@@ -15,19 +15,21 @@ from rest_framework.request import Request
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from core.permissions.tenant_permissions import TenantAdminPermission, TenantUserPermission
+from core.permissions.tenant_permissions import IsTenantAdmin, IsTenantMember
 from ..models import (
     Tenant, TenantUserProfile, PermissionRegistry, PermissionGroup,
     PermissionGroupPermission, UserPermissionGroupAssignment,
     UserPermissionOverride, DesignationBasePermission, 
     ComprehensiveDesignation, PermissionAuditTrail
 )
+from apps.users.models import Department
 from ..serializers.rbac_serializers import (
     PermissionRegistrySerializer, PermissionGroupSerializer,
     UserPermissionGroupAssignmentSerializer, UserPermissionOverrideSerializer,
     DesignationBasePermissionSerializer, UserEffectivePermissionsSerializer,
     PermissionCheckRequestSerializer, PermissionCheckResponseSerializer,
-    PermissionAuditTrailSerializer
+    PermissionAuditTrailSerializer, DepartmentSerializer, 
+    ComprehensiveDesignationSerializer
 )
 from ..services import get_rbac_service, get_permission_management_service
 
@@ -40,7 +42,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     API endpoints for managing tenant permission registry.
     """
     serializer_class = PermissionRegistrySerializer
-    permission_classes = [TenantAdminPermission]
+    permission_classes = [IsTenantAdmin]
     
     def get_queryset(self):
         """Get permissions for current tenant."""
@@ -174,7 +176,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     API endpoints for managing permission groups.
     """
     serializer_class = PermissionGroupSerializer
-    permission_classes = [TenantAdminPermission]
+    permission_classes = [IsTenantAdmin]
     
     def get_queryset(self):
         """Get permission groups for current tenant."""
@@ -279,7 +281,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
     """
     API endpoints for user permission queries and management.
     """
-    permission_classes = [TenantUserPermission]
+    permission_classes = [IsTenantMember]
     
     @extend_schema(
         summary="Get user effective permissions",
@@ -453,7 +455,7 @@ class PermissionAuditViewSet(viewsets.ReadOnlyModelViewSet):
     API endpoints for permission audit trail.
     """
     serializer_class = PermissionAuditTrailSerializer
-    permission_classes = [TenantAdminPermission]
+    permission_classes = [IsTenantAdmin]
     
     def get_queryset(self):
         """Get audit trail for current tenant."""
@@ -521,4 +523,233 @@ class PermissionAuditViewSet(viewsets.ReadOnlyModelViewSet):
             return self.get_paginated_response(serializer.data)
         
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data) 
+        return Response(serializer.data)
+
+
+class DepartmentViewSet(viewsets.ModelViewSet):
+    """
+    API endpoints for managing tenant departments.
+    """
+    serializer_class = DepartmentSerializer
+    permission_classes = [IsTenantMember]
+    
+    def get_queryset(self):
+        """Get departments for current tenant."""
+        return Department.objects.filter(
+            tenant=self.request.user.tenant_profile.tenant,
+            is_active=True
+        ).order_by('name')
+    
+    @extend_schema(
+        summary="List departments",
+        description="Get all departments for the current tenant",
+        responses={200: DepartmentSerializer(many=True)}
+    )
+    def list(self, request: Request) -> Response:
+        """List all departments."""
+        try:
+            queryset = self.get_queryset()
+            
+            # Search filter
+            search = request.query_params.get('search')
+            if search:
+                queryset = queryset.filter(
+                    Q(name__icontains=search) | Q(description__icontains=search)
+                )
+            
+            serializer = self.get_serializer(queryset, many=True)
+            return Response({
+                'departments': serializer.data,
+                'count': queryset.count()
+            })
+            
+        except Exception as e:
+            logger.error(f"Error listing departments: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Create department",
+        description="Create a new department",
+        responses={201: DepartmentSerializer}
+    )
+    def create(self, request: Request) -> Response:
+        """Create a new department."""
+        try:
+            tenant = request.user.tenant_profile.tenant
+            
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Auto-generate code from name
+            validated_data = serializer.validated_data
+            validated_data['code'] = validated_data['name'].lower().replace(' ', '_')
+            validated_data['tenant'] = tenant
+            validated_data['created_by'] = request.user
+            
+            department = Department.objects.create(**validated_data)
+            
+            response_serializer = self.get_serializer(department)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            logger.error(f"Error creating department: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
+    """
+    API endpoints for managing tenant designations.
+    """
+    serializer_class = ComprehensiveDesignationSerializer
+    permission_classes = [IsTenantMember]
+    
+    def get_queryset(self):
+        """Get designations for current tenant."""
+        return ComprehensiveDesignation.objects.filter(
+            tenant=self.request.user.tenant_profile.tenant,
+            is_active=True
+        ).order_by('designation_level', 'designation_name')
+    
+    @extend_schema(
+        summary="List designations",
+        description="Get all designations for the current tenant",
+        responses={200: ComprehensiveDesignationSerializer(many=True)}
+    )
+    def list(self, request: Request) -> Response:
+        """List all designations."""
+        try:
+            queryset = self.get_queryset()
+            
+            # Search filter
+            search = request.query_params.get('search')
+            if search:
+                queryset = queryset.filter(
+                    Q(designation_name__icontains=search) | 
+                    Q(department__icontains=search) |
+                    Q(description__icontains=search)
+                )
+            
+            # Type filter
+            designation_type = request.query_params.get('type')
+            if designation_type in ['field', 'non_field']:
+                queryset = queryset.filter(designation_type=designation_type)
+            
+            # Department filter
+            department = request.query_params.get('department')
+            if department:
+                queryset = queryset.filter(department=department)
+            
+            serializer = self.get_serializer(queryset, many=True)
+            
+            # Calculate statistics
+            total = queryset.count()
+            field_count = queryset.filter(designation_type='field').count()
+            non_field_count = queryset.filter(designation_type='non_field').count()
+            departments = queryset.values_list('department', flat=True).distinct()
+            
+            return Response({
+                'designations': serializer.data,
+                'statistics': {
+                    'total': total,
+                    'field': field_count,
+                    'non_field': non_field_count,
+                    'departments_count': len(list(departments))
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error listing designations: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Create designation",
+        description="Create a new designation",
+        responses={201: ComprehensiveDesignationSerializer}
+    )
+    def create(self, request: Request) -> Response:
+        """Create a new designation."""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            designation = serializer.save()
+            
+            return Response(
+                self.get_serializer(designation).data, 
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            logger.error(f"Error creating designation: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Update designation",
+        description="Update an existing designation",
+        responses={200: ComprehensiveDesignationSerializer}
+    )
+    def update(self, request: Request, pk=None) -> Response:
+        """Update an existing designation."""
+        try:
+            designation = self.get_object()
+            serializer = self.get_serializer(designation, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            designation = serializer.save()
+            
+            return Response(self.get_serializer(designation).data)
+            
+        except Exception as e:
+            logger.error(f"Error updating designation: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Delete designation",
+        description="Delete a designation (soft delete)",
+        responses={204: None}
+    )
+    def destroy(self, request: Request, pk=None) -> Response:
+        """Delete a designation (soft delete)."""
+        try:
+            designation = self.get_object()
+            
+            # Check if designation has users assigned
+            from ..models import UserDesignationAssignment
+            assigned_users = UserDesignationAssignment.objects.filter(
+                designation=designation,
+                is_active=True,
+                assignment_status='Active'
+            ).count()
+            
+            if assigned_users > 0:
+                return Response(
+                    {'error': f'Cannot delete designation. {assigned_users} users are assigned to this designation.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Soft delete
+            designation.is_active = False
+            designation.deleted_at = timezone.now()
+            designation.save()
+            
+            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+        except Exception as e:
+            logger.error(f"Error deleting designation: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            ) 

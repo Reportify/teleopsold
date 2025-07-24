@@ -59,6 +59,7 @@ import VendorOperationsManagementPage from "./pages/VendorOperationsManagementPa
 import RBACDashboardPage from "./pages/RBACDashboardPage";
 import PermissionRegistryPage from "./pages/PermissionRegistryPage";
 import MyPermissionsPage from "./pages/MyPermissionsPage";
+import DesignationManagementPage from "./pages/DesignationManagementPage";
 
 import { createModernTheme } from "./styles/theme";
 import { useDarkMode } from "./contexts/ThemeContext";
@@ -424,6 +425,22 @@ const App: React.FC = () => {
                     element={
                       <ProtectedRoute>
                         <MyPermissionsPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/designations"
+                    element={
+                      <ProtectedRoute>
+                        <DesignationManagementPage />
+                      </ProtectedRoute>
+                    }
+                  />
+                  <Route
+                    path="/rbac/designations"
+                    element={
+                      <ProtectedRoute>
+                        <DesignationManagementPage />
                       </ProtectedRoute>
                     }
                   />
