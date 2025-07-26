@@ -82,7 +82,8 @@ interface Designation {
   id: number;
   designation_name: string;
   designation_code: string;
-  department: string;
+  department: number; // Changed from string to number (ID)
+  department_name?: string;
   description: string;
   designation_type: "field" | "non_field";
   certifications_required: {
@@ -98,15 +99,18 @@ interface Designation {
 
 interface Department {
   id: number;
-  name: string;
-  code: string;
+  department_name: string;
+  department_code: string;
   description: string;
   is_active: boolean;
+  // For backward compatibility if needed
+  name?: string;
+  code?: string;
 }
 
 interface DesignationFormData {
   designation_name: string;
-  department: string;
+  department: number | null; // changed from string to number|null
   description: string;
   designation_type: "field" | "non_field";
   certifications_required: {
@@ -118,7 +122,7 @@ interface DesignationFormData {
 
 const initialFormData: DesignationFormData = {
   designation_name: "",
-  department: "",
+  department: null, // changed from "" to null
   description: "",
   designation_type: "non_field",
   certifications_required: {
@@ -208,7 +212,7 @@ const DesignationManagementPage: React.FC = () => {
       setEditingDesignation(designation);
       setFormData({
         designation_name: designation.designation_name,
-        department: designation.department,
+        department: typeof designation.department === "number" ? designation.department : departments.find((d) => d.name === designation.department_name)?.id || null,
         description: designation.description,
         designation_type: designation.designation_type,
         certifications_required: designation.certifications_required,
@@ -251,6 +255,8 @@ const DesignationManagementPage: React.FC = () => {
         ...formData,
         designation_code: formData.designation_name.toLowerCase().replace(/\s+/g, "_"),
       };
+      // Remove department if not selected
+      if (!formData.department) payload.department = null;
 
       if (editingDesignation) {
         await api.put(`/tenant/designations/${editingDesignation.id}/`, payload);
@@ -292,20 +298,20 @@ const DesignationManagementPage: React.FC = () => {
     try {
       setSubmitting(true);
       const payload = {
-        name: newDepartmentName,
-        code: newDepartmentName.toLowerCase().replace(/\s+/g, "_"),
+        department_name: newDepartmentName, // was name
+        department_code: newDepartmentName.toLowerCase().replace(/\s+/g, "_"), // was code
         description: newDepartmentDescription,
       };
 
-      await api.post("/tenant/departments/", payload);
+      const response = await api.post("/tenant/departments/", payload);
       showSnackbar("Department created successfully", "success");
       await loadDepartments();
       setDepartmentDialogOpen(false);
       setNewDepartmentName("");
       setNewDepartmentDescription("");
 
-      // Auto-select the new department
-      setFormData((prev) => ({ ...prev, department: payload.name }));
+      // Auto-select the new department by ID
+      setFormData((prev) => ({ ...prev, department: response.data.id }));
     } catch (error: any) {
       console.error("Error creating department:", error);
       showSnackbar(error.response?.data?.message || "Failed to create department", "error");
@@ -316,10 +322,10 @@ const DesignationManagementPage: React.FC = () => {
 
   // Filter designations
   const filteredDesignations = designations.filter((designation) => {
-    const matchesSearch = designation.designation_name.toLowerCase().includes(searchTerm.toLowerCase()) || designation.department.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = designation.designation_name.toLowerCase().includes(searchTerm.toLowerCase()) || designation.department_name?.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesType = typeFilter === "all" || designation.designation_type === typeFilter;
-    const matchesDepartment = departmentFilter === "all" || designation.department === departmentFilter;
+    const matchesDepartment = departmentFilter === "all" || designation.department_name === departmentFilter;
 
     return matchesSearch && matchesType && matchesDepartment;
   });
@@ -329,7 +335,7 @@ const DesignationManagementPage: React.FC = () => {
     total: designations.length,
     field: designations.filter((d) => d.designation_type === "field").length,
     nonField: designations.filter((d) => d.designation_type === "non_field").length,
-    departments: new Set(designations.map((d) => d.department)).size,
+    departments: new Set(designations.map((d) => d.department_name)).size,
   };
 
   const getDesignationTypeColor = (type: string) => {
@@ -485,7 +491,7 @@ const DesignationManagementPage: React.FC = () => {
                     </Box>
                   </TableCell>
                   <TableCell>
-                    <Chip label={designation.department} size="small" variant="outlined" icon={<Business />} />
+                    <Chip label={designation.department_name || "No Department"} size="small" variant="outlined" icon={<Business />} />
                   </TableCell>
                   <TableCell>
                     <Chip
@@ -587,12 +593,12 @@ const DesignationManagementPage: React.FC = () => {
             {/* Department Selection */}
             <Stack direction="row" spacing={2} alignItems="flex-end">
               <Autocomplete
-                options={departments.map((dept) => dept.name)}
-                value={formData.department}
-                onChange={(_, value) => handleFormChange("department", value || "")}
-                renderInput={(params) => <TextField {...params} label="Department" required helperText="Select or type department name" />}
+                options={departments}
+                getOptionLabel={(option) => option.department_name}
+                value={departments.find((d) => d.id === formData.department) || null}
+                onChange={(_, value) => handleFormChange("department", value ? value.id : null)}
+                renderInput={(params) => <TextField {...params} label="Department" required helperText="Select department" />}
                 sx={{ flex: 1 }}
-                freeSolo
               />
               <Button variant="outlined" startIcon={<AddCircle />} onClick={() => setDepartmentDialogOpen(true)} sx={{ mb: 3 }}>
                 Add Department

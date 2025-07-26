@@ -476,7 +476,7 @@ class DesignationHierarchySerializer(serializers.Serializer):
     designation_name = serializers.CharField()
     designation_code = serializers.CharField()
     designation_level = serializers.IntegerField()
-    department = serializers.CharField(allow_null=True)
+    department = serializers.CharField(source='department.department_name', allow_null=True)
     can_manage_subordinates = serializers.BooleanField()
     subordinates = serializers.ListField(child=serializers.DictField(), required=False)
     user_count = serializers.IntegerField(required=False)

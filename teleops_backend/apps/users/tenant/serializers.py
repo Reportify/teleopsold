@@ -9,8 +9,8 @@ from django.contrib.auth.models import User
 from datetime import date, timedelta
 from django.utils import timezone
 
+from apps.tenants.models import TenantDepartment
 from apps.users.models import (
-    Department,
     CertificationType,
     VendorOperationalDesignation,
     VendorEmployee,
@@ -35,7 +35,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     
     class Meta:
-        model = Department
+        model = TenantDepartment
         fields = [
             'id', 'tenant', 'name', 'code', 'description', 'parent_department',
             'parent_department_name', 'is_operational', 'requires_safety_training',
@@ -59,7 +59,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
     def validate_code(self, value):
         """Validate department code uniqueness within tenant"""
         tenant = self.context['tenant']
-        existing = Department.objects.filter(tenant=tenant, code=value)
+        existing = TenantDepartment.objects.filter(tenant=tenant, code=value)
         
         if self.instance:
             existing = existing.exclude(id=self.instance.id)
@@ -98,7 +98,7 @@ class DepartmentListSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
     
     class Meta:
-        model = Department
+        model = TenantDepartment
         fields = [
             'id', 'name', 'code', 'parent_department', 'parent_department_name',
             'is_operational', 'is_active', 'full_name'

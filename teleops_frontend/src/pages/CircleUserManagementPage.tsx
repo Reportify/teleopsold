@@ -38,6 +38,7 @@ import {
   Avatar,
   Badge,
   ListItemIcon,
+  FormHelperText,
 } from "@mui/material";
 import {
   Add,
@@ -74,56 +75,12 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { StatsCard } from "../components";
+import useEmployeeManagement from "../hooks/useEmployeeManagement";
+import { EnhancedUserProfile, UserCreateData } from "../types/user";
 import api from "../services/api";
 
-interface CircleUser {
-  id: number;
-  uuid: string;
-  email: string;
-  first_name: string;
-  last_name: string;
-  full_name: string;
-  user_type: string;
-  is_active: boolean;
-  last_login: string | null;
-  created_at: string;
-
-  // Profile Information
-  profile_id: number;
-  display_name: string;
-  phone_number: string;
-  secondary_phone: string;
-  employee_id: string;
-  job_title: string;
-  designation: string;
-  department: string;
-  employment_type: string;
-  profile_photo: string | null;
-
-  // Designations
-  designations: Array<{
-    id: number;
-    name: string;
-    level: number;
-    department: string;
-    can_approve_tasks: boolean;
-    can_manage_users: boolean;
-  }>;
-
-  // Status
-  verification_status: string;
-  invitation_status: string;
-  access_level: string;
-  last_activity: string | null;
-}
-
-interface UserStatistics {
-  total_users: number;
-  active_users: number;
-  pending_users: number;
-  admin_users: number;
-  inactive_users: number;
-}
+// Using types from the hook - CircleUser is now EnhancedUserProfile
+type CircleUser = EnhancedUserProfile;
 
 interface CreateUserForm {
   email: string;
@@ -133,36 +90,92 @@ interface CreateUserForm {
   phone_number: string;
   secondary_phone: string;
   employee_id: string;
-  job_title: string;
-  designation: string;
-  department: string;
+  designation_id: number;
+  department_id: number;
   employment_type: string;
-  designation_ids: number[];
+  password: string; // Adding password field
 }
 
 const CircleUserManagementPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
   const { darkMode } = useDarkMode();
+
+  // Use the Employee Management Hook
+  const {
+    // Employee data
+    employees,
+    total,
+    loading,
+    error,
+    selectedEmployee,
+    setSelectedEmployee,
+
+    // Employee operations
+    loadEmployees,
+    createEmployee,
+    deleteEmployee,
+    activateEmployee,
+    deactivateEmployee,
+
+    // Operation states
+    creating,
+    updating,
+    deleting,
+
+    // Statistics
+    stats,
+    loadEmployeeStats,
+
+    // Designations
+    designations,
+
+    // Departments
+    departments,
+
+    // Utility functions
+    searchEmployees,
+    filterByDesignation,
+    filterByActiveStatus,
+    clearErrors,
+  } = useEmployeeManagement();
+
+  // Local UI state
   const [activeTab, setActiveTab] = useState(0);
-  const [users, setUsers] = useState<CircleUser[]>([]);
-  const [statistics, setStatistics] = useState<UserStatistics>({
-    total_users: 0,
-    active_users: 0,
-    pending_users: 0,
-    admin_users: 0,
-    inactive_users: 0,
-  });
-  const [departments, setDepartments] = useState<Record<string, number>>({});
-  const [designations, setDesignations] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [selectedUser, setSelectedUser] = useState<CircleUser | null>(null);
   const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
   const currentTenant = getCurrentTenant();
+
+  // Map hook data to existing component variables for compatibility
+  const users = employees; // Use employees from hook
+  const selectedUser = selectedEmployee; // Use selectedEmployee from hook
+
+  // Calculate statistics from actual user data instead of relying on potentially null stats
+  const statistics = {
+    total_users: users.length,
+    active_users: users.filter((user) => user.is_active && user.user?.last_login).length,
+    pending_users: users.filter((user) => user.is_active && !user.user?.last_login).length,
+    admin_users: users.filter((user) => (user.designation as any)?.name?.toLowerCase().includes("admin")).length,
+    inactive_users: users.filter((user) => !user.is_active).length,
+  };
+
+  // Create departments and designations counts from employees data
+  const departmentCounts = employees.reduce((acc, user) => {
+    const dept = (user as any).department || "Unassigned";
+    acc[dept] = (acc[dept] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
+  const designationsCount = employees.reduce((acc, user) => {
+    if (user.designation) {
+      const designationName = (user.designation as any).name;
+      acc[designationName] = (acc[designationName] || 0) + 1;
+    }
+    return acc;
+  }, {} as Record<string, number>);
 
   // Form state for user creation
   const [createForm, setCreateForm] = useState<CreateUserForm>({
@@ -173,67 +186,68 @@ const CircleUserManagementPage: React.FC = () => {
     phone_number: "",
     secondary_phone: "",
     employee_id: "",
-    job_title: "",
-    designation: "",
-    department: "",
+    designation_id: 0,
+    department_id: 0,
     employment_type: "Full-time",
-    designation_ids: [],
+    password: "TempPassword123!", // Default temporary password
   });
 
-  const [availableDesignations, setAvailableDesignations] = useState<
-    Array<{
-      id: number;
-      name: string;
-      level: number;
-      department: string;
-    }>
-  >([]);
+  // Use designations from hook instead of separate state
+  const availableDesignations = designations;
 
-  // Load circle users
+  // Debug logging to check data
+  useEffect(() => {
+    console.log("=== DESIGNATION DEBUG ===");
+    console.log("Designations from hook:", designations);
+    console.log("Designations length:", designations?.length);
+    console.log("Designations type:", typeof designations);
+    console.log("Designations is array:", Array.isArray(designations));
+    if (designations && designations.length > 0) {
+      console.log("First designation:", designations[0]);
+    }
+
+    console.log("=== DEPARTMENT DEBUG ===");
+    console.log("Departments from hook:", departments);
+    console.log("Departments length:", departments?.length);
+    console.log("Departments type:", typeof departments);
+    console.log("Departments is array:", Array.isArray(departments));
+    if (departments && departments.length > 0) {
+      console.log("First department:", departments[0]);
+    }
+    console.log("=== END DEBUG ===");
+  }, [designations, departments]);
+
+  // Load circle users using hook
   const loadCircleUsers = async () => {
     try {
-      setLoading(true);
-      const response = await api.get("/api/v1/tenant/users/");
-
-      if (response.data) {
-        setUsers(response.data.users || []);
-        setStatistics(response.data.statistics || {});
-        setDepartments(response.data.departments || {});
-        setDesignations(response.data.designations || {});
-      }
+      await loadEmployees();
+      // Note: Statistics are now calculated from user data directly, not from API stats
+      // await loadEmployeeStats(); // Uncomment if needed for other purposes
     } catch (error) {
       console.error("Error loading circle users:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Load available designations for the form
-  const loadAvailableDesignations = async () => {
-    try {
-      const response = await api.get("/api/v1/designations/");
-      setAvailableDesignations(response.data || []);
-    } catch (error) {
-      console.error("Error loading designations:", error);
     }
   };
 
   useEffect(() => {
     loadCircleUsers();
-    loadAvailableDesignations();
   }, []);
 
   // Handle user creation
   const handleCreateUser = async () => {
     try {
-      setLoading(true);
-
-      const payload = {
-        ...createForm,
-        display_name: createForm.display_name || `${createForm.first_name} ${createForm.last_name}`.trim(),
+      const payload: UserCreateData = {
+        email: createForm.email,
+        first_name: createForm.first_name,
+        last_name: createForm.last_name,
+        password: createForm.password, // Use the password from the form
+        employee_id: createForm.employee_id,
+        phone_number: createForm.phone_number,
+        designation_id: createForm.designation_id > 0 ? createForm.designation_id : undefined, // Only include if selected
+        department_id: createForm.department_id > 0 ? createForm.department_id : undefined, // Only include if available
+        circle_tenant_id: currentTenant?.id || "",
       };
 
-      await api.post("/api/v1/tenant/users/", payload);
+      await createEmployee(payload);
 
       // Reset form and close dialog
       setCreateForm({
@@ -244,11 +258,10 @@ const CircleUserManagementPage: React.FC = () => {
         phone_number: "",
         secondary_phone: "",
         employee_id: "",
-        job_title: "",
-        designation: "",
-        department: "",
+        designation_id: 0,
+        department_id: 0,
         employment_type: "Full-time",
-        designation_ids: [],
+        password: "TempPassword123!", // Reset password to temporary
       });
       setCreateDialogOpen(false);
 
@@ -257,8 +270,6 @@ const CircleUserManagementPage: React.FC = () => {
     } catch (error: any) {
       console.error("Error creating user:", error);
       // Handle error display
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -284,19 +295,16 @@ const CircleUserManagementPage: React.FC = () => {
 
   // Filter users based on search and filters
   const filteredUsers = users.filter((user) => {
-    const matchesSearch =
-      user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.job_title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      user.department.toLowerCase().includes(searchTerm.toLowerCase());
+    const userEmail = user.user?.email || "";
+    const userDepartment = (user as any).department || "Unassigned";
 
-    const matchesDepartment = departmentFilter === "all" || user.department === departmentFilter;
+    const matchesSearch =
+      user.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || userEmail.toLowerCase().includes(searchTerm.toLowerCase()) || userDepartment.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesDepartment = departmentFilter === "all" || userDepartment === departmentFilter;
 
     const matchesStatus =
-      statusFilter === "all" ||
-      (statusFilter === "active" && user.is_active) ||
-      (statusFilter === "inactive" && !user.is_active) ||
-      (statusFilter === "pending" && user.verification_status === "invitation_sent");
+      statusFilter === "all" || (statusFilter === "active" && user.is_active) || (statusFilter === "inactive" && !user.is_active) || (statusFilter === "pending" && !user.user?.last_login);
 
     return matchesSearch && matchesDepartment && matchesStatus;
   });
@@ -304,13 +312,13 @@ const CircleUserManagementPage: React.FC = () => {
   // Helper functions
   const getStatusColor = (user: CircleUser) => {
     if (!user.is_active) return "error";
-    if (user.verification_status === "invitation_sent") return "warning";
+    if (!user.user?.last_login) return "warning";
     return "success";
   };
 
   const getStatusText = (user: CircleUser) => {
     if (!user.is_active) return "Inactive";
-    if (user.verification_status === "invitation_sent") return "Invitation Sent";
+    if (!user.user?.last_login) return "Pending Setup"; // User created but hasn't logged in yet
     return "Active";
   };
 
@@ -334,12 +342,12 @@ const CircleUserManagementPage: React.FC = () => {
 
   const handleUserMenuClick = (event: React.MouseEvent<HTMLButtonElement>, user: CircleUser) => {
     setUserMenuAnchor(event.currentTarget);
-    setSelectedUser(user);
+    setSelectedEmployee(user);
   };
 
   const handleUserMenuClose = () => {
     setUserMenuAnchor(null);
-    setSelectedUser(null);
+    setSelectedEmployee(null);
   };
 
   return (
@@ -399,9 +407,9 @@ const CircleUserManagementPage: React.FC = () => {
                 <InputLabel>Department</InputLabel>
                 <Select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} label="Department">
                   <MenuItem value="all">All Departments</MenuItem>
-                  {Object.keys(departments).map((dept) => (
+                  {Object.keys(departmentCounts).map((dept) => (
                     <MenuItem key={dept} value={dept}>
-                      {dept} ({departments[dept]})
+                      {dept} ({departmentCounts[dept]})
                     </MenuItem>
                   ))}
                 </Select>
@@ -451,18 +459,16 @@ const CircleUserManagementPage: React.FC = () => {
                   <TableRow key={user.id} hover>
                     <TableCell>
                       <Box sx={{ display: "flex", alignItems: "center" }}>
-                        <Avatar src={user.profile_photo || undefined} sx={{ mr: 2, bgcolor: "primary.main" }}>
-                          {user.full_name.charAt(0)}
-                        </Avatar>
+                        <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{user.full_name.charAt(0)}</Avatar>
                         <Box>
                           <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
                             {user.full_name}
                           </Typography>
                           <Typography variant="body2" color="text.secondary">
-                            {user.email}
+                            {user.user?.email || "No email"}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {user.job_title}
+                            {(user.designation as any)?.name || "No designation"}
                           </Typography>
                         </Box>
                       </Box>
@@ -483,20 +489,13 @@ const CircleUserManagementPage: React.FC = () => {
                       </Box>
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">{user.department || "Unassigned"}</Typography>
+                      <Typography variant="body2">{(user as any).department || "Unassigned"}</Typography>
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                        {user.designations.map((designation) => (
-                          <Chip
-                            key={designation.id}
-                            label={designation.name}
-                            size="small"
-                            color={designation.can_manage_users ? "primary" : "default"}
-                            variant={designation.can_approve_tasks ? "filled" : "outlined"}
-                          />
-                        ))}
-                        {user.designations.length === 0 && (
+                        {user.designation ? (
+                          <Chip key={user.designation.id} label={(user.designation as any).name} size="small" color="primary" variant="outlined" />
+                        ) : (
                           <Typography variant="caption" color="text.secondary">
                             No designations
                           </Typography>
@@ -507,10 +506,10 @@ const CircleUserManagementPage: React.FC = () => {
                       <Chip label={getStatusText(user)} color={getStatusColor(user)} size="small" />
                     </TableCell>
                     <TableCell>
-                      <Chip label={user.access_level} color={getAccessLevelColor(user.access_level)} size="small" variant="outlined" />
+                      <Chip label="Member" color="default" size="small" variant="outlined" />
                     </TableCell>
                     <TableCell>
-                      <Typography variant="body2">{formatDate(user.last_login)}</Typography>
+                      <Typography variant="body2">{formatDate(user.user?.last_login || null)}</Typography>
                     </TableCell>
                     <TableCell align="center">
                       <IconButton onClick={(e) => handleUserMenuClick(e, user)} size="small">
@@ -558,7 +557,7 @@ const CircleUserManagementPage: React.FC = () => {
           </ListItemIcon>
           Edit User
         </MenuItem>
-        {selectedUser?.verification_status === "invitation_sent" && (
+        {selectedUser && !selectedUser.user?.last_login && (
           <MenuItem
             onClick={() => {
               if (selectedUser) {
@@ -631,16 +630,58 @@ const CircleUserManagementPage: React.FC = () => {
             </Grid>
 
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Job Title" value={createForm.job_title} onChange={(e) => setCreateForm({ ...createForm, job_title: e.target.value })} fullWidth required />
+              <FormControl fullWidth>
+                <InputLabel>Job Title (Designation)</InputLabel>
+                <Select
+                  value={createForm.designation_id}
+                  onChange={(e) => {
+                    const designationId = e.target.value as number;
+                    const selectedDesignation = designations?.find((d) => d.id === designationId);
+                    setCreateForm({
+                      ...createForm,
+                      designation_id: designationId,
+                      // Auto-populate department from designation
+                      department_id: selectedDesignation?.department || (selectedDesignation as any)?.department_id || 0,
+                    });
+                  }}
+                  label="Job Title (Designation)"
+                >
+                  <MenuItem value={0}>{designations && designations.length > 0 ? "Select Designation" : "No Designations Available"}</MenuItem>
+                  {designations && designations.length > 0
+                    ? designations.map((designation) => (
+                        <MenuItem key={designation.id} value={designation.id}>
+                          {designation.designation_name || (designation as any).name}
+                          {(designation.department_name || (designation as any).department) && ` (${designation.department_name || (designation as any).department})`}
+                        </MenuItem>
+                      ))
+                    : null}
+                </Select>
+                {(!designations || designations.length === 0) && (
+                  <FormHelperText>No designations found. Create departments and designations first, or leave empty for Administrator role.</FormHelperText>
+                )}
+              </FormControl>
             </Grid>
 
             <Grid size={{ xs: 12, sm: 6 }}>
               <TextField label="Employee ID" value={createForm.employee_id} onChange={(e) => setCreateForm({ ...createForm, employee_id: e.target.value })} fullWidth />
             </Grid>
 
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Department" value={createForm.department} onChange={(e) => setCreateForm({ ...createForm, department: e.target.value })} fullWidth />
-            </Grid>
+            {/* Show guidance for first-time setup */}
+            {(!designations || designations.length === 0) && (
+              <Grid size={{ xs: 12 }}>
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <Typography variant="body2" fontWeight={600} gutterBottom>
+                    First Time Setup Detected
+                  </Typography>
+                  <Typography variant="body2">
+                    Since no departments and designations exist yet, this user will be created with Administrator privileges. You can later:
+                    <br />• Create departments and designations using the "Designation Management" page
+                    <br />• Update user designations from this page or their profile
+                    <br />• Assign specific roles and permissions as needed
+                  </Typography>
+                </Alert>
+              </Grid>
+            )}
 
             <Grid size={{ xs: 12, sm: 6 }}>
               <FormControl fullWidth>
@@ -654,44 +695,17 @@ const CircleUserManagementPage: React.FC = () => {
               </FormControl>
             </Grid>
 
-            {/* Designations */}
+            {/* Password Field */}
             <Grid size={{ xs: 12 }}>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Designations (Optional)
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12 }}>
-              <FormControl fullWidth>
-                <InputLabel>Assign Designations</InputLabel>
-                <Select
-                  multiple
-                  value={createForm.designation_ids}
-                  onChange={(e) =>
-                    setCreateForm({
-                      ...createForm,
-                      designation_ids: e.target.value as number[],
-                    })
-                  }
-                  label="Assign Designations"
-                  renderValue={(selected) => (
-                    <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                      {(selected as number[]).map((value) => {
-                        const designation = availableDesignations.find((d) => d.id === value);
-                        return <Chip key={value} label={designation?.name || value} size="small" />;
-                      })}
-                    </Box>
-                  )}
-                >
-                  {availableDesignations.map((designation) => (
-                    <MenuItem key={designation.id} value={designation.id}>
-                      <Checkbox checked={createForm.designation_ids.includes(designation.id)} />
-                      {designation.name} - {designation.department}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
+              <TextField
+                label="Password"
+                type="password"
+                value={createForm.password}
+                onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                fullWidth
+                required
+                helperText="Temporary password: TempPassword123!"
+              />
             </Grid>
           </Grid>
         </DialogContent>

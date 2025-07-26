@@ -61,7 +61,7 @@ class TenantPermissionMiddleware(MiddlewareMixin):
             return None  # Let authentication middleware handle this
         
         # Skip if user doesn't have tenant profile
-        if not hasattr(request.user, 'tenant_profile'):
+        if not hasattr(request.user, 'tenant_user_profile'):
             return None
         
         # Get permission requirements from URL/view
@@ -233,7 +233,7 @@ class TenantPermissionMiddleware(MiddlewareMixin):
         """Check if user has required permissions for the request."""
         
         try:
-            user_profile = request.user.tenant_profile
+            user_profile = request.user.tenant_user_profile
             required_permissions = permission_requirements.get('required_permissions', [])
             scope_context = permission_requirements.get('scope_context', {})
             
@@ -365,11 +365,11 @@ def check_view_permission(request, permission_code: str, scope_context: Optional
         if not request.user.is_authenticated:
             return False
         
-        if not hasattr(request.user, 'tenant_profile'):
+        if not hasattr(request.user, 'tenant_user_profile'):
             return False
         
         has_permission, _ = check_user_permission(
-            request.user.tenant_profile,
+            request.user.tenant_user_profile,
             permission_code,
             scope_context
         )

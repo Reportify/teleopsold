@@ -301,7 +301,7 @@ export class AuthService {
   static getUserDesignation(): string {
     const context = this.getTenantContext();
     const profile = context?.userProfile;
-    return profile?.designation?.name || "";
+    return profile?.designation?.designation_name || "";
   }
 
   // Get user's phone number

@@ -344,8 +344,8 @@ class OnboardingSerializer(serializers.Serializer):
     first_name = serializers.CharField()
     last_name = serializers.CharField()
     phone_number = serializers.CharField()
-    department = serializers.CharField()
-    designation = serializers.CharField()
+    department = serializers.CharField(required=False, allow_blank=True)
+    designation = serializers.CharField(required=False, allow_blank=True)
     employee_id = serializers.CharField(required=False, allow_blank=True)
     profile_photo = serializers.ImageField(required=False, allow_null=True)
     reporting_manager = serializers.CharField(required=False, allow_blank=True)
@@ -356,21 +356,14 @@ class OnboardingSerializer(serializers.Serializer):
         # Determine tenant_type
         tenant_type = attrs.get('tenant_type') or self.context.get('tenant_type')
         errors = {}
-        # Enforce required fields by tenant type
-        if tenant_type == 'Circle':
-            required = ['first_name', 'last_name', 'phone_number', 'department', 'designation']
-        elif tenant_type == 'Corporate':
-            required = ['first_name', 'last_name', 'phone_number', 'department', 'designation']
-        elif tenant_type == 'Vendor':
-            required = ['first_name', 'last_name', 'phone_number', 'department', 'designation']
-        else:
-            required = ['first_name', 'last_name', 'phone_number', 'department', 'designation']
+        # Only require basic fields for initial setup - designation/department can be added later
+        required = ['first_name', 'last_name', 'phone_number']
         for field in required:
             if not attrs.get(field):
                 errors[field] = 'This field is required.'
         if errors:
             raise serializers.ValidationError(errors)
-        return attrs 
+        return attrs
 
 
 class UserProfileUpdateSerializer(serializers.Serializer):

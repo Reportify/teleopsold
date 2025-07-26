@@ -154,75 +154,6 @@ class TeleopsUserProfile(models.Model):
 # Vendor Operations Management Models
 # ============================================================================
 
-class Department(models.Model):
-    """Custom departments for vendor operations"""
-    
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tenant = models.ForeignKey(
-        'tenants.Tenant', 
-        on_delete=models.CASCADE, 
-        related_name='vendor_departments'
-    )
-    
-    # Department Information
-    name = models.CharField(max_length=100)
-    code = models.CharField(max_length=50)
-    description = models.TextField(blank=True)
-    parent_department = models.ForeignKey(
-        'self', 
-        on_delete=models.CASCADE, 
-        null=True, 
-        blank=True,
-        related_name='sub_departments'
-    )
-    
-    # Department Configuration
-    is_operational = models.BooleanField(
-        default=True, 
-        help_text="Whether this department handles field operations"
-    )
-    requires_safety_training = models.BooleanField(
-        default=False,
-        help_text="Whether employees in this department need safety training"
-    )
-    
-    # Status
-    is_active = models.BooleanField(default=True)
-    
-    # Audit Fields
-    created_by = models.ForeignKey(
-        'User', 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True,
-        related_name='created_departments'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'vendor_departments'
-        verbose_name = _('Department')
-        verbose_name_plural = _('Departments')
-        unique_together = [('tenant', 'code')]
-        ordering = ['name']
-        indexes = [
-            models.Index(fields=['tenant', 'is_active']),
-            models.Index(fields=['tenant', 'code']),
-            models.Index(fields=['parent_department']),
-        ]
-    
-    def __str__(self):
-        return f"{self.tenant.organization_name} - {self.name}"
-    
-    @property
-    def full_name(self):
-        """Get full department name including parent"""
-        if self.parent_department:
-            return f"{self.parent_department.name} > {self.name}"
-        return self.name
-
-
 class CertificationType(models.Model):
     """Certification types for vendor employees"""
     
@@ -322,11 +253,7 @@ class VendorOperationalDesignation(models.Model):
     name = models.CharField(max_length=255, help_text="Designation title (e.g., Site Engineer, Safety Officer)")
     code = models.CharField(max_length=100, help_text="Unique identifier within tenant")
     description = models.TextField(blank=True)
-    department = models.ForeignKey(
-        Department, 
-        on_delete=models.CASCADE, 
-        related_name='designations'
-    )
+    department = models.CharField(max_length=100, blank=True) # Changed from models.ForeignKey
     
     # Operational Configuration
     is_field_designation = models.BooleanField(

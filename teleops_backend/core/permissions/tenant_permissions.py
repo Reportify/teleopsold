@@ -3,358 +3,421 @@ Tenant-scoped permissions for multi-tenant platform
 """
 
 import logging
-from rest_framework import permissions
+from rest_framework.permissions import BasePermission
 from django.core.exceptions import PermissionDenied
 from apps.tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
 
 
-class TenantPermission(permissions.BasePermission):
+class TenantScopedPermission(BasePermission):
     """
-    Base permission class that requires tenant context
-    """
-    
-    def has_permission(self, request, view):
-        """
-        Check if user has permission for the tenant
-        """
-        if not hasattr(request, 'tenant') or request.tenant is None:
-            logger.warning("Tenant context required but not found")
-            return False
-        
-        return self.check_tenant_permission(request, view)
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Override this method to implement specific tenant permission logic
-        """
-        return True
-
-
-class TenantObjectPermission(permissions.BasePermission):
-    """
-    Object-level permission class that requires tenant context
+    Permission class that ensures users can only access resources within their tenant scope.
+    This is the foundation permission for multi-tenant isolation.
     """
     
     def has_permission(self, request, view):
-        """
-        Check if user has permission for the tenant
-        """
-        if not hasattr(request, 'tenant') or request.tenant is None:
+        """Check if user has permission to access the resource"""
+        if not request.user.is_authenticated:
             return False
         
-        return True
+        # Super users have access to all tenants
+        if request.user.is_superuser:
+            return True
+        
+        # Check if user has a tenant context
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            logger.warning(f"No tenant context found for user {request.user.email}")
+            return False
+        
+        # Verify user belongs to this tenant
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile and profile.tenant_id == tenant.id:
+                return True
+        
+        # Check if user email matches tenant contact
+        if tenant.primary_contact_email == request.user.email:
+            return True
+        
+        logger.warning(f"User {request.user.email} does not belong to tenant {tenant.organization_name}")
+        return False
     
     def has_object_permission(self, request, view, obj):
-        """
-        Check if user has permission for the specific object
-        """
-        if not hasattr(request, 'tenant') or request.tenant is None:
+        """Check if user has permission to access specific object"""
+        if not request.user.is_authenticated:
             return False
         
-        return self.check_object_tenant_permission(request, view, obj)
-    
-    def check_object_tenant_permission(self, request, view, obj):
-        """
-        Override this method to implement specific object tenant permission logic
-        """
-        # Check if object belongs to the tenant
+        # Super users have access to all objects
+        if request.user.is_superuser:
+            return True
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        # Check if object belongs to user's tenant
         if hasattr(obj, 'tenant'):
-            return obj.tenant == request.tenant
+            return obj.tenant.id == tenant.id
         
-        return True
+        # For objects without direct tenant relationship, check through related fields
+        if hasattr(obj, 'project') and hasattr(obj.project, 'tenant'):
+            return obj.project.tenant.id == tenant.id
+        
+        if hasattr(obj, 'site') and hasattr(obj.site, 'tenant'):
+            return obj.site.tenant.id == tenant.id
+        
+        return False
 
 
-class CorporatePermission(TenantPermission):
-    """
-    Permission class for corporate-level operations
-    """
+class IsTenantAdmin(BasePermission):
+    """Permission for tenant administrators"""
     
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user has corporate-level permissions
-        """
-        tenant = request.tenant
-        
-        # Only corporate tenants can access
-        if tenant.tenant_type != 'CORPORATE':
-            logger.warning(f"Corporate permission denied for tenant type: {tenant.tenant_type}")
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
             return False
         
-        # Check user role within corporate
-        return self.check_corporate_user_permission(request, view)
-    
-    def check_corporate_user_permission(self, request, view):
-        """
-        Check if user has appropriate corporate role
-        """
-        user = request.user
-        
-        # Super users have all permissions
-        if user.is_superuser:
+        if request.user.is_superuser:
             return True
         
-        # Check user's corporate role
-        # This depends on your role/permission system
-        return True
-
-
-class CirclePermission(TenantPermission):
-    """
-    Permission class for circle-level operations
-    """
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user has circle-level permissions
-        """
-        tenant = request.tenant
-        
-        # Only circle tenants can access
-        if tenant.tenant_type != 'CIRCLE':
-            logger.warning(f"Circle permission denied for tenant type: {tenant.tenant_type}")
+        # Check if user has admin role in their tenant
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
             return False
         
-        # Check user role within circle
-        return self.check_circle_user_permission(request, view)
-    
-    def check_circle_user_permission(self, request, view):
-        """
-        Check if user has appropriate circle role
-        """
-        user = request.user
-        
-        # Super users have all permissions
-        if user.is_superuser:
+        # Check if user is the primary contact (admin) for the tenant
+        if tenant.primary_contact_email == request.user.email:
             return True
         
-        # Check user's circle role
-        # This depends on your role/permission system
-        return True
-
-
-class VendorPermission(TenantPermission):
-    """
-    Permission class for vendor-level operations
-    """
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user has vendor-level permissions
-        """
-        tenant = request.tenant
+        # Check user permissions/designations for admin access
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile and profile.tenant_id == tenant.id:
+                # Check if user has admin designation or permissions
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_manage_users or designation.approval_authority_level > 0:
+                        return True
         
-        # Only vendor tenants can access
-        if tenant.tenant_type != 'VENDOR':
-            logger.warning(f"Vendor permission denied for tenant type: {tenant.tenant_type}")
+        return False
+
+
+class IsTenantMember(BasePermission):
+    """Permission for tenant members (any user within the tenant)"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
             return False
         
-        # Check user role within vendor
-        return self.check_vendor_user_permission(request, view)
-    
-    def check_vendor_user_permission(self, request, view):
-        """
-        Check if user has appropriate vendor role
-        """
-        user = request.user
-        
-        # Super users have all permissions
-        if user.is_superuser:
+        if request.user.is_superuser:
             return True
         
-        # Check user's vendor role
-        # This depends on your role/permission system
-        return True
-
-
-class CrossTenantPermission(TenantPermission):
-    """
-    Permission class for cross-tenant operations (e.g., corporate viewing circles)
-    """
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user has cross-tenant permissions
-        """
-        user = request.user
-        tenant = request.tenant
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
         
-        # Super users have all permissions
-        if user.is_superuser:
+        # Check if user belongs to this tenant
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile and profile.tenant_id == tenant.id and profile.is_active:
+                return True
+        
+        # Check if user email matches tenant contact
+        if tenant.primary_contact_email == request.user.email:
             return True
         
-        # Corporate users can access their circles
-        if tenant.tenant_type == 'Corporate':
-            return self.check_corporate_cross_tenant_permission(request, view)
+        return False
+
+
+class CrossTenantPermission(BasePermission):
+    """
+    Permission for cross-tenant operations (e.g., corporate accessing circles)
+    Used for vendor relationships and corporate oversight
+    """
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
         
-        # Circle users can access their vendor relationships
-        if tenant.tenant_type == 'Circle':
-            return self.check_circle_cross_tenant_permission(request, view)
+        if request.user.is_superuser:
+            return True
         
-        # Vendor users can access their circle relationships
-        if tenant.tenant_type == 'Vendor':
-            return self.check_vendor_cross_tenant_permission(request, view)
+        # Get user's primary tenant
+        user_tenant = self._get_user_tenant(request.user)
+        if not user_tenant:
+            return False
+        
+        # Allow corporate tenants to access their circle tenants
+        if user_tenant.tenant_type == 'Corporate':
+            return True
+        
+        # Allow circle tenants to access vendor relationships
+        if user_tenant.tenant_type == 'Circle':
+            return True
+        
+        # Allow vendors to access their client relationships
+        if user_tenant.tenant_type == 'Vendor':
+            return True
         
         return False
     
-    def check_corporate_cross_tenant_permission(self, request, view):
-        """
-        Check if corporate user can access cross-tenant data
-        """
-        # Corporate users can access their circles
-        return True
-    
-    def check_circle_cross_tenant_permission(self, request, view):
-        """
-        Check if circle user can access cross-tenant data
-        """
-        # Circle users can access their vendor relationships
-        return True
-    
-    def check_vendor_cross_tenant_permission(self, request, view):
-        """
-        Check if vendor user can access cross-tenant data
-        """
-        # Vendor users can access their circle relationships
-        return True
+    def _get_user_tenant(self, user):
+        """Get user's primary tenant"""
+        if hasattr(user, 'tenant_user_profile'):
+            profile = user.tenant_user_profile
+            if profile:
+                return profile.tenant
+        
+        # Fallback: find tenant by email
+        from apps.tenants.models import Tenant
+        return Tenant.objects.filter(primary_contact_email=user.email).first()
 
 
-class TenantObjectPermission(TenantObjectPermission):
-    """
-    Object-level permission class for tenant-scoped objects
-    """
+class ProjectPermission(BasePermission):
+    """Permission class specifically for project operations"""
     
-    def check_object_tenant_permission(self, request, view, obj):
-        """
-        Check if object belongs to the tenant
-        """
-        tenant = request.tenant
-        
-        # Check if object has tenant field
-        if hasattr(obj, 'tenant'):
-            return obj.tenant == tenant
-        
-        # Check if object has project field (for project-scoped objects)
-        if hasattr(obj, 'project') and hasattr(obj.project, 'tenant'):
-            return obj.project.tenant == tenant
-        
-        # Check if object has site field (for site-scoped objects)
-        if hasattr(obj, 'site') and hasattr(obj.site, 'project') and hasattr(obj.site.project, 'tenant'):
-            return obj.site.project.tenant == tenant
-        
-        # Default to True for objects without tenant association
-        return True
-
-
-class RoleBasedPermission(TenantPermission):
-    """
-    Permission class based on user roles within tenant
-    """
-    
-    required_roles = []
-    required_permissions = []
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user has required roles and permissions
-        """
-        user = request.user
-        tenant = request.tenant
-        
-        # Super users have all permissions
-        if user.is_superuser:
-            return True
-        
-        # Check user roles
-        if self.required_roles and not self.has_required_roles(user, tenant):
+    def has_permission(self, request, view):
+        # First check basic tenant scope
+        tenant_permission = TenantScopedPermission()
+        if not tenant_permission.has_permission(request, view):
             return False
         
-        # Check user permissions
-        if self.required_permissions and not self.has_required_permissions(user, tenant):
+        # Check specific project permissions
+        if view.action in ['create']:
+            return self._can_create_projects(request)
+        elif view.action in ['update', 'partial_update', 'destroy']:
+            return self._can_manage_projects(request)
+        elif view.action in ['list', 'retrieve']:
+            return self._can_view_projects(request)
+        
+        return True
+    
+    def _can_create_projects(self, request):
+        """Check if user can create projects"""
+        if request.user.is_superuser:
+            return True
+        
+        # Check user designations and permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_create_projects:
+                        return True
+        
+        return False
+    
+    def _can_manage_projects(self, request):
+        """Check if user can manage projects"""
+        if request.user.is_superuser:
+            return True
+        
+        # Check user designations and permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_create_projects or designation.can_manage_users:
+                        return True
+        
+        return False
+    
+    def _can_view_projects(self, request):
+        """Check if user can view projects"""
+        # All tenant members can view projects
+        return True
+    
+    def has_object_permission(self, request, view, obj):
+        """Check object-level permissions"""
+        # First check tenant scope
+        tenant_permission = TenantScopedPermission()
+        if not tenant_permission.has_object_permission(request, view, obj):
             return False
         
-        return True
-    
-    def has_required_roles(self, user, tenant):
-        """
-        Check if user has required roles
-        """
-        # This depends on your role system
-        # For now, return True
-        return True
-    
-    def has_required_permissions(self, user, tenant):
-        """
-        Check if user has required permissions
-        """
-        # This depends on your permission system
-        # For now, return True
-        return True
-
-
-class IsTenantOwner(TenantPermission):
-    """
-    Permission class for tenant owner operations
-    """
-    
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user is the tenant owner
-        """
-        user = request.user
-        tenant = request.tenant
-        
-        # Super users have all permissions
-        if user.is_superuser:
+        # Project managers and team members can always access their projects
+        if obj.project_manager == request.user:
             return True
         
-        # Check if user is tenant owner
-        # This depends on your tenant ownership model
-        return True
+        if request.user in obj.team_members.all():
+            return True
+        
+        return True  # Allow all tenant members to view projects
 
 
-class IsTenantAdmin(TenantPermission):
-    """
-    Permission class for tenant admin operations
-    """
+class TaskPermission(BasePermission):
+    """Permission class specifically for task operations"""
     
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user is a tenant admin
-        """
-        user = request.user
-        tenant = request.tenant
+    def has_permission(self, request, view):
+        # First check basic tenant scope
+        tenant_permission = TenantScopedPermission()
+        if not tenant_permission.has_permission(request, view):
+            return False
         
-        # Super users have all permissions
-        if user.is_superuser:
-            return True
+        # Check specific task permissions
+        if view.action in ['create']:
+            return self._can_create_tasks(request)
+        elif view.action in ['update', 'partial_update', 'destroy']:
+            return self._can_manage_tasks(request)
+        elif view.action in ['list', 'retrieve']:
+            return self._can_view_tasks(request)
         
-        # Check if user is tenant admin
-        # This depends on your admin role system
         return True
-
-
-class IsTenantMember(TenantPermission):
-    """
-    Permission class for tenant member operations
-    """
     
-    def check_tenant_permission(self, request, view):
-        """
-        Check if user is a member of the tenant
-        """
-        user = request.user
-        tenant = request.tenant
-        
-        # Super users have all permissions
-        if user.is_superuser:
+    def _can_create_tasks(self, request):
+        """Check if user can create tasks"""
+        if request.user.is_superuser:
             return True
         
-        # Check if user belongs to this tenant
-        try:
-            from apps.tenants.models import TenantUserProfile
-            profile = TenantUserProfile.objects.get(user=user, tenant=tenant, is_active=True)
+        # Check user designations and permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_assign_tasks or designation.can_create_projects:
+                        return True
+        
+        return False
+    
+    def _can_manage_tasks(self, request):
+        """Check if user can manage tasks"""
+        if request.user.is_superuser:
             return True
-        except TenantUserProfile.DoesNotExist:
-            return False 
+        
+        # Check user designations and permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_assign_tasks or designation.can_manage_users:
+                        return True
+        
+        return False
+    
+    def _can_view_tasks(self, request):
+        """Check if user can view tasks"""
+        # All tenant members can view tasks
+        return True
+    
+    def has_object_permission(self, request, view, obj):
+        """Check object-level permissions"""
+        # First check tenant scope
+        tenant_permission = TenantScopedPermission()
+        if not tenant_permission.has_object_permission(request, view, obj):
+            return False
+        
+        # Task assignees and supervisors can always access their tasks
+        if obj.assigned_to == request.user:
+            return True
+        
+        if obj.supervisor == request.user:
+            return True
+        
+        if request.user in obj.assigned_team.all():
+            return True
+        
+        # Project managers can access project tasks
+        if obj.project and obj.project.project_manager == request.user:
+            return True
+        
+        return True  # Allow all tenant members to view tasks
+
+
+class SitePermission(BasePermission):
+    """Permission class specifically for site operations"""
+    
+    def has_permission(self, request, view):
+        # First check basic tenant scope
+        tenant_permission = TenantScopedPermission()
+        return tenant_permission.has_permission(request, view)
+    
+    def has_object_permission(self, request, view, obj):
+        """Check object-level permissions"""
+        # First check tenant scope
+        tenant_permission = TenantScopedPermission()
+        return tenant_permission.has_object_permission(request, view, obj)
+
+
+class EquipmentVerificationPermission(BasePermission):
+    """Permission for equipment verification operations"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_superuser:
+            return True
+        
+        # Check if user has equipment verification permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    # Check if designation is field-capable and has verification permissions
+                    if designation.designation_type == 'field':
+                        return True
+                    
+                    # Check for supervisor or quality control roles
+                    if 'supervisor' in designation.designation_name.lower():
+                        return True
+                    
+                    if 'quality' in designation.designation_name.lower():
+                        return True
+        
+        return False
+
+
+class VendorRelationshipPermission(BasePermission):
+    """Permission for vendor relationship management"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_superuser:
+            return True
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        # Only Circle and Corporate tenants can manage vendor relationships
+        if tenant.tenant_type in ['Circle', 'Corporate']:
+            return True
+        
+        # Vendors can view their relationships but not create new ones
+        if tenant.tenant_type == 'Vendor' and view.action in ['list', 'retrieve']:
+            return True
+        
+        return False
+
+
+class ReportingPermission(BasePermission):
+    """Permission for accessing reports and analytics"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_superuser:
+            return True
+        
+        # Check if user has reporting permissions
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile:
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_access_reports:
+                        return True
+                    
+                    # Managers and supervisors typically have reporting access
+                    if designation.can_manage_users or designation.approval_authority_level > 0:
+                        return True
+        
+        return False 

@@ -510,11 +510,82 @@ def verify_email_and_set_password(request):
     
     # Now create or update tenant user profile (only if we have a tenant)
     if tenant:
-        try:
-            profile, _ = TenantUserProfile.objects.get_or_create(user=user, tenant=tenant)
-            profile.phone_number = data['phone_number']
-            profile.department = data['department']
-            profile.job_title = data['designation']
+        try:            
+            # Create enhanced TenantUserProfile (for designations, departments, etc.)
+            profile, created = TenantUserProfile.objects.get_or_create(user=user, tenant=tenant)
+            profile.phone_number = data.get('phone_number', '')
+            
+            # Handle department and designation - if not provided, create defaults and assign Administrator role
+            department_name = data.get('department', '')
+            designation_name = data.get('designation', '')
+            
+            if not department_name or not designation_name:
+                # This is the initial user - create default Administration department and Administrator designation
+                from apps.tenants.models import TenantDepartment, TenantDesignation, UserDesignationAssignment
+                
+                # Create default Administration department if it doesn't exist
+                admin_dept, dept_created = TenantDepartment.objects.get_or_create(
+                    tenant=tenant,
+                    department_code='ADMIN',
+                    defaults={
+                        'department_name': 'Administration',
+                        'description': 'Administrative department for system management',
+                        'department_level': 1,
+                        'is_system_department': True,
+                        'can_manage_users': True,
+                        'can_create_projects': True,
+                        'can_assign_tasks': True,
+                        'can_approve_expenses': True,
+                        'can_access_reports': True,
+                    }
+                )
+                
+                # Create default Administrator designation if it doesn't exist
+                admin_designation, desig_created = TenantDesignation.objects.get_or_create(
+                    tenant=tenant,
+                    designation_code='ADMIN',
+                    defaults={
+                        'designation_name': 'Administrator',
+                        'description': 'System Administrator with full access rights',
+                        'designation_level': 1,
+                        'department': admin_dept,
+                        'designation_type': 'non_field',
+                        'is_system_role': True,
+                        'can_manage_users': True,
+                        'can_create_projects': True,
+                        'can_assign_tasks': True,
+                        'can_approve_expenses': True,
+                        'can_access_reports': True,
+                        'permissions': ['*'],  # Full permissions
+                        'feature_access': {'all': True},
+                        'data_access_level': 'Admin',
+                    }
+                )
+                
+                # Set profile with Administrator role
+                profile.department = admin_dept.department_name
+                profile.job_title = 'Administrator'
+                
+                # Create designation assignment for Administrator role
+                UserDesignationAssignment.objects.get_or_create(
+                    user_profile=profile,
+                    designation=admin_designation,
+                    defaults={
+                        'is_primary_designation': True,
+                        'assignment_reason': 'Initial setup - first user gets Administrator role',
+                        'assignment_status': 'Active',
+                        'is_active': True,
+                        'assigned_by': user,
+                    }
+                )
+                
+                logger.info(f"Created Administrator role for initial user {user.email} in tenant {tenant.organization_name}")
+            else:
+                # Department and designation provided - use them
+                profile.department = department_name
+                profile.job_title = designation_name
+            
+            # Set other profile fields
             if 'employee_id' in data:
                 profile.employee_id = data['employee_id']
             if 'profile_photo' in data and data['profile_photo']:
@@ -522,6 +593,7 @@ def verify_email_and_set_password(request):
             if 'reporting_manager' in data:
                 profile.reporting_manager = data['reporting_manager']
             profile.save()
+            
             logger.info(f"TenantUserProfile created for user {user.email} in tenant {tenant.organization_name}")
         except Exception as e:
             logger.error(f"Failed to create TenantUserProfile for {user.email}: {e}", exc_info=True)

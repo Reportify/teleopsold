@@ -14,7 +14,7 @@ from ..models import (
     Tenant, TenantUserProfile, PermissionRegistry, PermissionGroup,
     PermissionGroupPermission, UserPermissionGroupAssignment,
     UserPermissionOverride, DesignationBasePermission,
-    PermissionAuditTrail, ComprehensiveDesignation
+    PermissionAuditTrail, TenantDesignation
 )
 from .rbac_service import TenantRBACService
 
@@ -438,7 +438,7 @@ class PermissionManagementService:
         """Assign permissions to a designation."""
         try:
             with transaction.atomic():
-                designation = ComprehensiveDesignation.objects.get(
+                designation = TenantDesignation.objects.get(
                     id=designation_id,
                     tenant=self.tenant
                 )
@@ -492,7 +492,7 @@ class PermissionManagementService:
                 
                 return created_assignments
                 
-        except ComprehensiveDesignation.DoesNotExist:
+        except TenantDesignation.DoesNotExist:
             raise ValidationError("Designation not found")
         except PermissionRegistry.DoesNotExist:
             raise ValidationError("One or more permissions not found")
@@ -569,7 +569,7 @@ class PermissionManagementService:
         for user_profile in user_profiles:
             self.rbac_service.invalidate_user_permissions(user_profile)
     
-    def _invalidate_designation_user_caches(self, designation: ComprehensiveDesignation):
+    def _invalidate_designation_user_caches(self, designation: TenantDesignation):
         """Invalidate permission caches for all users with a designation."""
         user_profiles = TenantUserProfile.objects.filter(
             designation_assignments__designation=designation,

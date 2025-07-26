@@ -2003,24 +2003,23 @@ class VendorClientBilling(models.Model):
 
 
 # =============================================================================
-# COMPREHENSIVE DESIGNATION MANAGEMENT SYSTEM
+# DESIGNATION MANAGEMENT SYSTEM
 # =============================================================================
 
-class ComprehensiveDesignation(models.Model):
+class TenantDesignation(models.Model):
     """
-    Comprehensive tenant-defined designation/role system
-    Only Super Admin is predefined - everything else is tenant-created
+    Tenant-scoped designation model with proper department relationship.
+    Each tenant can define their own designations independently.
     """
-    
-    # Data Access Levels
+
     DATA_ACCESS_LEVEL_CHOICES = [
         ('View_Only', 'View Only'),
-        ('Restricted', 'Restricted'),
-        ('Limited', 'Limited'),
-        ('Full', 'Full'),
+        ('Edit_Own', 'Edit Own Records'),
+        ('Edit_Department', 'Edit Department Records'),
+        ('Edit_All', 'Edit All Records'),
+        ('Admin', 'Administrative Access'),
     ]
-    
-    # Designation Types
+
     DESIGNATION_TYPE_CHOICES = [
         ('field', 'Field'),
         ('non_field', 'Non-Field'),
@@ -2028,13 +2027,23 @@ class ComprehensiveDesignation(models.Model):
 
     # Core Designation Fields
     id = models.BigAutoField(primary_key=True)
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='comprehensive_designations')
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='tenant_designations')
 
     # Required Fields
     designation_name = models.CharField(max_length=255, help_text="Role title - tenant defined")
     designation_code = models.CharField(max_length=100, help_text="Unique identifier within tenant")
     designation_level = models.IntegerField(default=10, help_text="Hierarchy level, 1=highest")
-    department = models.CharField(max_length=100, blank=True, help_text="Functional department - tenant defined")
+    
+    # FIXED: Use Foreign Key instead of CharField for department
+    department = models.ForeignKey(
+        'TenantDepartment', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='designations',
+        db_column='department',
+        help_text="Department this designation belongs to"
+    )
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     
@@ -2103,9 +2112,9 @@ class ComprehensiveDesignation(models.Model):
     deleted_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
-        db_table = 'comprehensive_designations'
-        verbose_name = _('Comprehensive Designation')
-        verbose_name_plural = _('Comprehensive Designations')
+        db_table = 'tenant_designations'
+        verbose_name = _('Tenant Designation')
+        verbose_name_plural = _('Tenant Designations')
         unique_together = [('tenant', 'designation_code')]
         ordering = ['designation_level', 'designation_name']
         indexes = [
@@ -2153,7 +2162,7 @@ class ComprehensiveDesignation(models.Model):
                 self.hierarchy_path = f"{parent_path}/{self.id}"
             else:
                 self.hierarchy_path = str(self.id)
-            ComprehensiveDesignation.objects.filter(id=self.id).update(hierarchy_path=self.hierarchy_path)
+            TenantDesignation.objects.filter(id=self.id).update(hierarchy_path=self.hierarchy_path)
 
 
 class PermissionCategory(models.Model):
@@ -2260,7 +2269,7 @@ class DesignationPermission(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     designation = models.ForeignKey(
-        ComprehensiveDesignation, on_delete=models.CASCADE, related_name='permission_assignments'
+        TenantDesignation, on_delete=models.CASCADE, related_name='permission_assignments'
     )
     permission = models.ForeignKey(
         CustomPermission, on_delete=models.CASCADE, related_name='designation_assignments'
@@ -2323,7 +2332,7 @@ class UserDesignationAssignment(models.Model):
         'TenantUserProfile', on_delete=models.CASCADE, related_name='designation_assignments'
     )
     designation = models.ForeignKey(
-        ComprehensiveDesignation, on_delete=models.CASCADE, related_name='user_assignments'
+        TenantDesignation, on_delete=models.CASCADE, related_name='user_assignments'
     )
 
     # Assignment Details
@@ -2453,7 +2462,7 @@ class SystemRole(models.Model):
         return self.role_name
 
 
-# Legacy designation compatibility code removed - replaced with comprehensive designation system
+# Legacy designation compatibility code removed - replaced with tenant designation system
 
 
 # =============================================================================
@@ -2544,7 +2553,7 @@ class DesignationBasePermission(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     designation = models.ForeignKey(
-        ComprehensiveDesignation, on_delete=models.CASCADE, related_name='base_permissions'
+        TenantDesignation, on_delete=models.CASCADE, related_name='base_permissions'
     )
     permission = models.ForeignKey(
         PermissionRegistry, on_delete=models.CASCADE, related_name='designation_assignments'
@@ -2944,266 +2953,7 @@ class DesignationQuerySet(models.QuerySet):
         return self.filter(can_manage_subordinates=True)
 
 
-class TenantDesignation(models.Model):
-    """
-    Flexible designation model for tenant-driven organizational hierarchy.
-    Supports complete tenant autonomy in creating custom designations.
-    """
-    
-    # Data Access Level Choices
-    DATA_ACCESS_CHOICES = [
-        ('Full', 'Full Access'),
-        ('Limited', 'Limited Access'), 
-        ('Restricted', 'Restricted Access'),
-        ('View_Only', 'View Only')
-    ]
-    
-    # Core Designation Information
-    tenant = models.ForeignKey(
-        'Tenant', 
-        on_delete=models.CASCADE,
-        related_name='designations',
-        help_text="Tenant that owns this designation"
-    )
-    designation_name = models.CharField(
-        max_length=255,
-        help_text="Human-readable designation name (e.g., 'Project Manager')"
-    )
-    designation_code = models.CharField(
-        max_length=100,
-        help_text="Unique code for this designation within the tenant"
-    )
-    designation_level = models.PositiveIntegerField(
-        default=10,
-        validators=[MinValueValidator(1)],
-        help_text="Hierarchy level (1 = highest, higher numbers = lower levels)"
-    )
-    department = models.CharField(
-        max_length=100, 
-        blank=True, 
-        null=True,
-        help_text="Department or functional area (tenant-defined)"
-    )
-    description = models.TextField(
-        blank=True, 
-        null=True,
-        help_text="Detailed description of this designation's responsibilities"
-    )
-    
-    # Hierarchy Configuration
-    parent_designation = models.ForeignKey(
-        'self',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='subordinate_designations',
-        help_text="Parent designation in the hierarchy"
-    )
-    can_manage_subordinates = models.BooleanField(
-        default=False,
-        help_text="Can this designation manage users with lower-level designations"
-    )
-    approval_authority_level = models.PositiveIntegerField(
-        default=0,
-        help_text="Approval authority level (tenant-defined scale)"
-    )
-    delegation_allowed = models.BooleanField(
-        default=False,
-        help_text="Can this designation delegate permissions to others"
-    )
-    max_subordinates = models.PositiveIntegerField(
-        null=True,
-        blank=True,
-        help_text="Maximum number of direct subordinates (null = unlimited)"
-    )
-    hierarchy_path = models.TextField(
-        blank=True,
-        null=True,
-        help_text="Materialized path for efficient hierarchy queries"
-    )
-    
-    # Permission Configuration
-    permissions = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="List of permission codes assigned to this designation"
-    )
-    feature_access = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Feature access levels (tenant-defined)"
-    )
-    data_access_level = models.CharField(
-        max_length=50,
-        choices=DATA_ACCESS_CHOICES,
-        default='View_Only',
-        help_text="Overall data access level"
-    )
-    custom_capabilities = models.JSONField(
-        default=dict,
-        blank=True,
-        help_text="Tenant-specific custom capabilities"
-    )
-    
-    # Scope Configuration
-    geographic_scope = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Geographic areas this designation can access"
-    )
-    functional_scope = models.JSONField(
-        default=list,
-        blank=True,
-        help_text="Functional areas this designation can access"
-    )
-    cross_functional_access = models.BooleanField(
-        default=False,
-        help_text="Can access functions outside assigned scope"
-    )
-    multi_location_access = models.BooleanField(
-        default=False,
-        help_text="Can access multiple geographic locations"
-    )
-    
-    # Business Rules
-    can_manage_users = models.BooleanField(
-        default=False,
-        help_text="Can manage user accounts and assignments"
-    )
-    can_create_projects = models.BooleanField(
-        default=False,
-        help_text="Can create new projects"
-    )
-    can_assign_tasks = models.BooleanField(
-        default=False,
-        help_text="Can assign tasks to team members"
-    )
-    can_approve_expenses = models.BooleanField(
-        default=False,
-        help_text="Can approve expense requests"
-    )
-    can_access_reports = models.BooleanField(
-        default=False,
-        help_text="Can access reporting and analytics"
-    )
-    expense_approval_limit = models.DecimalField(
-        max_digits=15,
-        decimal_places=2,
-        default=0.00,
-        validators=[MinValueValidator(0)],
-        help_text="Maximum expense amount this designation can approve"
-    )
-    
-    # System Fields
-    is_system_role = models.BooleanField(
-        default=False,
-        help_text="True only for system-defined roles like Super Admin"
-    )
-    is_active = models.BooleanField(
-        default=True,
-        help_text="Whether this designation is currently active"
-    )
-    is_template = models.BooleanField(
-        default=False,
-        help_text="Whether this designation serves as a template"
-    )
-    
-    # Audit Fields
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='created_tenant_designations',
-        help_text="User who created this designation"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='updated_tenant_designations',
-        help_text="User who last updated this designation"
-    )
-    updated_at = models.DateTimeField(auto_now=True)
-    deleted_at = models.DateTimeField(
-        null=True,
-        blank=True,
-        help_text="Soft delete timestamp"
-    )
-    
-    objects = DesignationQuerySet.as_manager()
-    
-    class Meta:
-        db_table = 'designations'
-        ordering = ['tenant_id', 'designation_level', 'designation_name']
-        unique_together = [['tenant', 'designation_code']]
-        indexes = [
-            models.Index(fields=['tenant', 'designation_code']),
-            models.Index(fields=['tenant', 'designation_level']),
-            models.Index(fields=['tenant', 'is_active']),
-            models.Index(fields=['parent_designation']),
-            models.Index(fields=['is_system_role']),
-            models.Index(fields=['created_at']),
-        ]
-    
-    def __str__(self):
-        return f"{self.tenant.organization_name} - {self.designation_name}"
-    
-    def save(self, *args, **kwargs):
-        """Override save to update hierarchy path and validate data"""
-        # Update hierarchy path
-        if self.parent_designation:
-            parent_path = self.parent_designation.hierarchy_path or ''
-            self.hierarchy_path = f"{parent_path}/{self.parent_designation.id}"
-        else:
-            self.hierarchy_path = ''
-        
-        # Validate designation level against parent
-        if self.parent_designation and self.designation_level <= self.parent_designation.designation_level:
-            raise ValueError("Designation level must be higher (lower number) than parent level")
-        
-        super().save(*args, **kwargs)
-    
-    def get_subordinate_designations(self):
-        """Get all subordinate designations in the hierarchy"""
-        return TenantDesignation.objects.filter(
-            tenant=self.tenant,
-            hierarchy_path__startswith=f"{self.hierarchy_path}/{self.id}",
-            is_active=True
-        )
-    
-    def get_superior_designations(self):
-        """Get all superior designations in the hierarchy"""
-        if not self.hierarchy_path:
-            return TenantDesignation.objects.none()
-        
-        superior_ids = [int(id_str) for id_str in self.hierarchy_path.split('/') if id_str]
-        return TenantDesignation.objects.filter(
-            id__in=superior_ids,
-            tenant=self.tenant,
-            is_active=True
-        ).order_by('designation_level')
-    
-    def can_manage_designation(self, other_designation):
-        """Check if this designation can manage another designation"""
-        if not self.can_manage_subordinates:
-            return False
-        
-        # Can manage if the other designation is a subordinate
-        return other_designation in self.get_subordinate_designations()
-    
-    def get_effective_permissions(self):
-        """Get all effective permissions including inherited ones"""
-        all_permissions = set(self.permissions or [])
-        
-        # Add permissions from superior designations if applicable
-        for superior in self.get_superior_designations():
-            if superior.delegation_allowed:
-                all_permissions.update(superior.permissions or [])
-        
-        return list(all_permissions)
+
 
 
 class PermissionCategory(models.Model):
@@ -3701,3 +3451,126 @@ class DesignationTemplate(models.Model):
     
     def __str__(self):
         return f"{self.tenant.organization_name} - {self.template_name}"
+
+
+class TenantDepartment(models.Model):
+    """
+    Tenant-scoped department model for organizational structure.
+    Each tenant can define their own departments independently.
+    """
+    
+    # Core Department Fields
+    id = models.BigAutoField(primary_key=True)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='tenant_departments')
+
+    # Required Fields
+    department_name = models.CharField(max_length=255, help_text="Department name - tenant defined")
+    department_code = models.CharField(max_length=100, help_text="Unique identifier within tenant")
+    department_level = models.IntegerField(default=1, help_text="Hierarchy level, 1=highest")
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    
+    # Department Configuration
+    is_operational = models.BooleanField(
+        default=True, 
+        help_text="Whether this department handles field operations"
+    )
+    requires_safety_training = models.BooleanField(
+        default=False,
+        help_text="Whether employees in this department need safety training"
+    )
+    
+    # Hierarchy Support
+    parent_department = models.ForeignKey(
+        'self', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='child_departments', help_text="Hierarchical parent"
+    )
+    can_manage_subordinates = models.BooleanField(default=False, help_text="Manage lower hierarchy")
+    max_subordinates = models.IntegerField(null=True, blank=True, help_text="Team size limits")
+    hierarchy_path = models.TextField(blank=True, help_text="Materialized path for efficient queries")
+
+    # Business Rules
+    can_manage_users = models.BooleanField(default=False, help_text="User management permission")
+    can_create_projects = models.BooleanField(default=False, help_text="Project creation permission")
+    can_assign_tasks = models.BooleanField(default=False, help_text="Task assignment permission")
+    can_approve_expenses = models.BooleanField(default=False, help_text="Expense approval authority")
+    can_access_reports = models.BooleanField(default=False, help_text="Reporting access level")
+    expense_approval_limit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0.00, help_text="Tenant-defined limits"
+    )
+
+    # System Fields
+    is_system_department = models.BooleanField(default=False, help_text="True only for system departments")
+    is_template = models.BooleanField(default=False, help_text="For tenant-created templates")
+
+    # Audit Fields
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_tenant_departments'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='updated_tenant_departments'
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'tenant_departments'
+        verbose_name = _('Tenant Department')
+        verbose_name_plural = _('Tenant Departments')
+        unique_together = [('tenant', 'department_code')]
+        ordering = ['department_level', 'department_name']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['tenant', 'department_code']),
+            models.Index(fields=['department_level']),
+            models.Index(fields=['parent_department']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['is_system_department']),
+        ]
+
+    def __str__(self):
+        return f"{self.tenant.organization_name} - {self.department_name}"
+
+    def clean(self):
+        """Validate department data"""
+        from django.core.exceptions import ValidationError
+        
+        if self.parent_department and self.parent_department.tenant != self.tenant:
+            raise ValidationError("Parent department must belong to the same tenant")
+        
+        if self.department_level < 1:
+            raise ValidationError("Department level must be at least 1")
+
+    def save(self, *args, **kwargs):
+        self.clean()
+        super().save(*args, **kwargs)
+
+    @property
+    def full_name(self):
+        """Get full department name including parent"""
+        if self.parent_department:
+            return f"{self.parent_department.department_name} > {self.department_name}"
+        return self.department_name
+
+    def get_child_departments(self):
+        """Get all child departments"""
+        return TenantDepartment.objects.filter(
+            parent_department=self,
+            is_active=True
+        ).order_by('department_level', 'department_name')
+
+    def get_all_subordinates(self):
+        """Get all subordinate departments recursively"""
+        subordinates = []
+        children = self.get_child_departments()
+        for child in children:
+            subordinates.append(child)
+            subordinates.extend(child.get_all_subordinates())
+        return subordinates
+
+
+
+

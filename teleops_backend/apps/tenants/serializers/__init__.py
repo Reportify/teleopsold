@@ -42,7 +42,8 @@ from .rbac_serializers import (
     PermissionCheckResponseSerializer,
     PermissionAuditTrailSerializer,
     DepartmentSerializer,
-    ComprehensiveDesignationSerializer,
+    TenantDesignationSerializer,
+    TenantDepartmentSerializer,
 )
 
 # Import from designation serializers if they exist
@@ -88,5 +89,6 @@ __all__ = [
     'PermissionCheckResponseSerializer',
     'PermissionAuditTrailSerializer',
     'DepartmentSerializer',
-    'ComprehensiveDesignationSerializer',
+    'TenantDesignationSerializer',
+    'TenantDepartmentSerializer',
 ] 

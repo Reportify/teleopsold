@@ -11,9 +11,8 @@ from ..models import (
     PermissionRegistry, PermissionGroup, PermissionGroupPermission,
     UserPermissionGroupAssignment, UserPermissionOverride,
     DesignationBasePermission, PermissionAuditTrail,
-    TenantUserProfile, ComprehensiveDesignation
+    TenantUserProfile, TenantDesignation, TenantDepartment
 )
-from apps.users.models import Department
 
 User = get_user_model()
 
@@ -360,40 +359,40 @@ class DepartmentSerializer(serializers.ModelSerializer):
     """Serializer for department management."""
     
     class Meta:
-        model = Department
+        model = TenantDepartment
         fields = [
-            'id', 'name', 'code', 'description', 'parent_department',
+            'id', 'department_name', 'department_code', 'description', 'parent_department',
             'is_operational', 'requires_safety_training', 'is_active',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
-    def validate_name(self, value):
+    def validate_department_name(self, value):
         """Validate department name uniqueness within tenant."""
-        tenant = self.context['request'].user.tenant_profile.tenant
+        tenant = self.context['request'].user.tenant_user_profile.tenant
         if self.instance:
             # Update case - exclude current instance
-            if Department.objects.filter(
+            if TenantDepartment.objects.filter(
                 tenant=tenant, 
-                name__iexact=value
+                department_name__iexact=value
             ).exclude(id=self.instance.id).exists():
                 raise serializers.ValidationError("Department with this name already exists.")
         else:
             # Create case
-            if Department.objects.filter(tenant=tenant, name__iexact=value).exists():
+            if TenantDepartment.objects.filter(tenant=tenant, department_name__iexact=value).exists():
                 raise serializers.ValidationError("Department with this name already exists.")
         return value
 
 
-class ComprehensiveDesignationSerializer(serializers.ModelSerializer):
-    """Serializer for comprehensive designation management."""
+class TenantDesignationSerializer(serializers.ModelSerializer):
+    """Serializer for tenant designation management."""
     
     user_count = serializers.SerializerMethodField()
-    department_name = serializers.CharField(source='department', read_only=True)
+    department_name = serializers.CharField(source='department.department_name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
-    
+
     class Meta:
-        model = ComprehensiveDesignation
+        model = TenantDesignation
         fields = [
             'id', 'designation_name', 'designation_code', 'designation_level',
             'department', 'department_name', 'description', 'is_active',
@@ -420,25 +419,22 @@ class ComprehensiveDesignationSerializer(serializers.ModelSerializer):
                 is_active=True,
                 assignment_status='Active'
             ).count()
-        except:
+        except Exception:
             return 0
     
     def validate_designation_name(self, value):
         """Validate designation name uniqueness within tenant."""
-        tenant = self.context['request'].user.tenant_profile.tenant
+        tenant = self.context['request'].user.tenant_user_profile.tenant
         if self.instance:
             # Update case - exclude current instance
-            if ComprehensiveDesignation.objects.filter(
+            if TenantDesignation.objects.filter(
                 tenant=tenant, 
                 designation_name__iexact=value
             ).exclude(id=self.instance.id).exists():
                 raise serializers.ValidationError("Designation with this name already exists.")
         else:
             # Create case
-            if ComprehensiveDesignation.objects.filter(
-                tenant=tenant, 
-                designation_name__iexact=value
-            ).exists():
+            if TenantDesignation.objects.filter(tenant=tenant, designation_name__iexact=value).exists():
                 raise serializers.ValidationError("Designation with this name already exists.")
         return value
     
@@ -490,7 +486,7 @@ class ComprehensiveDesignationSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         """Create designation with auto-generated code."""
-        tenant = self.context['request'].user.tenant_profile.tenant
+        tenant = self.context['request'].user.tenant_user_profile.tenant
         user = self.context['request'].user
         
         # Auto-generate designation code
@@ -502,6 +498,72 @@ class ComprehensiveDesignationSerializer(serializers.ModelSerializer):
     
     def update(self, instance, validated_data):
         """Update designation."""
+        user = self.context['request'].user
+        validated_data['updated_by'] = user
+        
+        return super().update(instance, validated_data)
+
+
+class TenantDepartmentSerializer(serializers.ModelSerializer):
+    """Serializer for tenant department management."""
+    
+    user_count = serializers.SerializerMethodField()
+    parent_department_name = serializers.CharField(source='parent_department.department_name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+
+    class Meta:
+        model = TenantDepartment
+        fields = [
+            'id', 'department_name', 'department_code', 'department_level',
+            'description', 'is_active', 'is_operational', 'requires_safety_training',
+            'parent_department', 'parent_department_name', 'can_manage_subordinates',
+            'max_subordinates', 'hierarchy_path', 'can_manage_users', 'can_create_projects',
+            'can_assign_tasks', 'can_approve_expenses', 'can_access_reports',
+            'expense_approval_limit', 'is_system_department', 'is_template',
+            'user_count', 'created_by_name', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'department_code', 'created_at', 'updated_at', 
+            'user_count', 'parent_department_name', 'created_by_name'
+        ]
+    
+    def get_user_count(self, obj):
+        """Get number of users in this department."""
+        try:
+            return obj.tenant_user_profiles.filter(is_active=True).count()
+        except Exception:
+            return 0
+    
+    def validate_department_name(self, value):
+        """Validate department name uniqueness within tenant."""
+        tenant = self.context['request'].user.tenant_user_profile.tenant
+        if self.instance:
+            # Update case - exclude current instance
+            if TenantDepartment.objects.filter(
+                tenant=tenant,
+                department_name__iexact=value
+            ).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError("Department with this name already exists.")
+        else:
+            # Create case
+            if TenantDepartment.objects.filter(tenant=tenant, department_name__iexact=value).exists():
+                raise serializers.ValidationError("Department with this name already exists.")
+        return value
+    
+    def create(self, validated_data):
+        """Create department with auto-generated code."""
+        tenant = self.context['request'].user.tenant_user_profile.tenant
+        user = self.context['request'].user
+        
+        # Auto-generate department code
+        validated_data['department_code'] = validated_data['department_name'].lower().replace(' ', '_')
+        validated_data['tenant'] = tenant
+        validated_data['created_by'] = user
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """Update department."""
         user = self.context['request'].user
         validated_data['updated_by'] = user
         

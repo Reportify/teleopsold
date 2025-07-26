@@ -123,6 +123,9 @@ class OnboardingService:
                 # Create tenant based on type
                 tenant = self._create_tenant_by_type(invitation, onboarding_data)
                 
+                # Create initial user profile for the invited user (administrator)
+                self._create_initial_user_profile(invitation, tenant)
+                
                 # Update invitation with created tenant
                 invitation.created_tenant = tenant
                 invitation.save()
@@ -332,3 +335,91 @@ class OnboardingService:
                 logger.warning(f"Failed to parse circle data from invitation notes: {e}")
         
         return result 
+
+    def _create_initial_user_profile(self, invitation: TenantInvitation, tenant: 'Tenant'):
+        """
+        Create initial user profile for the invited user with Administrator role
+        
+        Args:
+            invitation: The tenant invitation
+            tenant: The created tenant
+        """
+        try:
+            from django.contrib.auth import get_user_model
+            from ..models import TenantUserProfile, TenantDesignation, TenantDepartment, UserDesignationAssignment
+            
+            User = get_user_model()
+            
+            # Get the user
+            user = User.objects.get(email=invitation.email)
+            
+            # Create default 'Administration' department if it doesn't exist
+            admin_dept, created = TenantDepartment.objects.get_or_create(
+                tenant=tenant,
+                department_code='ADMIN',
+                defaults={
+                    'department_name': 'Administration',
+                    'description': 'Administrative department for system management',
+                    'department_level': 1,
+                    'is_system_department': True,
+                    'can_manage_users': True,
+                    'can_create_projects': True,
+                    'can_assign_tasks': True,
+                    'can_approve_expenses': True,
+                    'can_access_reports': True,
+                }
+            )
+            
+            # Create default 'Administrator' designation if it doesn't exist
+            admin_designation, created = TenantDesignation.objects.get_or_create(
+                tenant=tenant,
+                designation_code='ADMIN',
+                defaults={
+                    'designation_name': 'Administrator',
+                    'description': 'System Administrator with full access rights',
+                    'designation_level': 1,
+                    'department': admin_dept,
+                    'designation_type': 'non_field',
+                    'is_system_role': True,
+                    'can_manage_users': True,
+                    'can_create_projects': True,
+                    'can_assign_tasks': True,
+                    'can_approve_expenses': True,
+                    'can_access_reports': True,
+                    'permissions': ['*'],  # Full permissions
+                    'feature_access': {'all': True},
+                    'data_access_level': 'Admin',
+                }
+            )
+            
+            # Create TenantUserProfile for the invited user
+            user_profile, created = TenantUserProfile.objects.get_or_create(
+                user=user,
+                tenant=tenant,
+                defaults={
+                    'display_name': invitation.contact_name,
+                    'job_title': 'Administrator',
+                    'department': admin_dept.department_name,
+                    'employment_type': 'Full-time',
+                    'is_active': True,
+                }
+            )
+            
+            # Assign Administrator designation to the user
+            UserDesignationAssignment.objects.get_or_create(
+                user_profile=user_profile,
+                designation=admin_designation,
+                defaults={
+                    'is_primary_designation': True,
+                    'assignment_reason': 'Initial setup - invited user',
+                    'assignment_status': 'Active',
+                    'is_active': True,
+                    'assigned_by': user,  # Self-assigned during setup
+                }
+            )
+            
+            logger.info(f"Initial user profile created for {user.email} as Administrator")
+            
+        except Exception as e:
+            logger.error(f"Failed to create initial user profile: {e}", exc_info=True)
+            raise OnboardingError(f"Failed to create initial user profile: {str(e)}") 

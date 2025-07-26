@@ -1,14 +1,24 @@
+"""
+Tenant Management Serializers
+
+Serializers for tenant-related models and operations.
+"""
+import uuid
 from rest_framework import serializers
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.mail import send_mail
+from django.conf import settings
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
+
 from ..models import (
-    CircleVendorRelationship, 
-    Tenant, 
-    TelecomCircle, 
-    TenantInvitation,
-    VendorCreatedClient,
-    VendorClientBilling,
-    TenantUserProfile,
-    TenantDesignation
+    Tenant, TenantUserProfile, TelecomCircle, CircleVendorRelationship,
+    TenantInvitation, TenantDesignation, VendorCreatedClient,
+    VendorClientBilling, TenantDepartment
 )
+
+User = get_user_model()
 
 class CircleVendorRelationshipSerializer(serializers.ModelSerializer):
     vendor_tenant = serializers.PrimaryKeyRelatedField(
@@ -751,3 +761,217 @@ class TenantUserProfileSerializer(serializers.ModelSerializer):
             'last_login', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'primary_designation', 'effective_permissions'] 
+
+class TenantUserCreateSerializer(serializers.Serializer):
+    """
+    Serializer for creating tenant users with proper User and TenantUserProfile creation
+    """
+    email = serializers.EmailField()
+    first_name = serializers.CharField(max_length=100)
+    last_name = serializers.CharField(max_length=100)
+    password = serializers.CharField(min_length=8, write_only=True)
+    employee_id = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    phone_number = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    designation_id = serializers.IntegerField()
+    department_id = serializers.IntegerField(required=False, allow_null=True)
+    employment_type = serializers.CharField(max_length=50, default='Full-time')
+    circle_tenant_id = serializers.UUIDField()
+    
+    def validate_password(self, value):
+        """Validate password using Django's password validators"""
+        validate_password(value)
+        return value
+    
+    def validate_email(self, value):
+        """Check if email already exists"""
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("A user with this email already exists.")
+        return value
+    
+    def validate_designation_id(self, value):
+        """Validate designation exists for the tenant"""
+        tenant_id = self.initial_data.get('circle_tenant_id')
+        if tenant_id and not TenantDesignation.objects.filter(
+            id=value, 
+            tenant_id=tenant_id, 
+            is_active=True
+        ).exists():
+            raise serializers.ValidationError("Invalid designation for this tenant.")
+        return value
+    
+    def validate_department_id(self, value):
+        """Validate department exists for the tenant if provided"""
+        if value is None or value == '' or value == 0:
+            return None
+        
+        # Convert string to int if needed
+        try:
+            value = int(value)
+        except (ValueError, TypeError):
+            return None
+        
+        tenant_id = self.initial_data.get('circle_tenant_id')
+        if tenant_id and not TenantDepartment.objects.filter(
+            id=value, 
+            tenant_id=tenant_id, 
+            is_active=True
+        ).exists():
+            raise serializers.ValidationError("Invalid department for this tenant.")
+        return value
+    
+    def create(self, validated_data):
+        """Create User and TenantUserProfile"""
+        # Extract data
+        circle_tenant_id = validated_data.pop('circle_tenant_id')
+        designation_id = validated_data.pop('designation_id')
+        department_id = validated_data.pop('department_id', None)
+        password = validated_data.pop('password')
+        
+        # Get tenant
+        try:
+            tenant = Tenant.objects.get(id=circle_tenant_id)
+        except Tenant.DoesNotExist:
+            raise serializers.ValidationError("Invalid tenant ID.")
+        
+        # Create User
+        user_data = {
+            'email': validated_data['email'],
+            'first_name': validated_data['first_name'],
+            'last_name': validated_data['last_name'],
+            'user_type': 'circle',  # Set appropriate user type
+            'is_active': True,  # User is active by default
+        }
+        user = User.objects.create_user(password=password, **user_data)
+        
+        # Create TenantUserProfile
+        profile_data = {
+            'user': user,
+            'tenant': tenant,
+            'employee_id': validated_data.get('employee_id', ''),
+            'phone_number': validated_data.get('phone_number', ''),
+            'employment_type': validated_data.get('employment_type', 'Full-time'),
+            'is_active': True,  # Profile is active by default
+        }
+        
+        # Add department if provided
+        if department_id and str(department_id).strip() and department_id != 0:
+            try:
+                department = TenantDepartment.objects.get(id=department_id, tenant=tenant)
+                profile_data['department'] = department.department_name
+            except (TenantDepartment.DoesNotExist, ValueError):
+                pass  # Department is optional
+        
+        tenant_profile = TenantUserProfile.objects.create(**profile_data)
+        
+        # Assign designation to user
+        try:
+            from ..models import UserDesignationAssignment
+            designation = TenantDesignation.objects.get(
+                id=designation_id, 
+                tenant=tenant
+            )
+            UserDesignationAssignment.objects.create(
+                user_profile=tenant_profile,
+                designation=designation,
+                is_primary_designation=True,
+                assignment_reason="Initial user setup",
+                assigned_by=self.context['request'].user if self.context.get('request') else None
+            )
+        except TenantDesignation.DoesNotExist:
+            pass  # Handle error appropriately
+        
+        # Send email with login credentials
+        self.send_login_credentials_email(user, password, tenant)
+        
+        return {
+            'user': user,
+            'tenant_profile': tenant_profile,
+            'tenant': tenant
+        }
+    
+    def send_login_credentials_email(self, user, password, tenant):
+        """Send email with login credentials to the new user"""
+        try:
+            subject = f"Welcome to {tenant.organization_name} - Your Login Credentials"
+            
+            # Create email context
+            context = {
+                'user': user,
+                'tenant': tenant,
+                'email': user.email,
+                'password': password,
+                'login_url': f"{settings.FRONTEND_URL}/login",
+                'organization_name': tenant.organization_name
+            }
+            
+            # Simple email message (you can create HTML templates later)
+            message = f"""
+Dear {user.full_name},
+
+Welcome to {tenant.organization_name}!
+
+Your account has been created successfully. Here are your login credentials:
+
+Email: {user.email}
+Password: {password}
+
+Please log in at: {settings.FRONTEND_URL}/login
+
+For security reasons, we recommend changing your password after your first login.
+
+If you have any questions, please contact your administrator.
+
+Best regards,
+{tenant.organization_name} Team
+            """.strip()
+            
+            send_mail(
+                subject,
+                message,
+                settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@teleops.com',
+                [user.email],
+                fail_silently=False,
+            )
+            
+        except Exception as e:
+            # Log the error but don't fail user creation
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to send welcome email to {user.email}: {str(e)}")
+
+class TenantUserSerializer(serializers.ModelSerializer):
+    """Serializer for tenant user display"""
+    user = serializers.SerializerMethodField()
+    designation = serializers.SerializerMethodField()
+    full_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = TenantUserProfile
+        fields = [
+            'id', 'user', 'full_name', 'display_name', 'phone_number', 
+            'employee_id', 'department', 'employment_type', 'designation',
+            'is_active', 'created_at', 'updated_at'
+        ]
+    
+    def get_user(self, obj):
+        return {
+            'id': obj.user.id,
+            'email': obj.user.email,
+            'first_name': obj.user.first_name,
+            'last_name': obj.user.last_name,
+            'last_login': obj.user.last_login,
+            'is_active': obj.user.is_active
+        }
+    
+    def get_full_name(self, obj):
+        return obj.user.full_name
+    
+    def get_designation(self, obj):
+        primary_designation = obj.primary_designation
+        if primary_designation:
+            return {
+                'id': primary_designation.id,
+                'name': primary_designation.designation_name,
+                'level': primary_designation.designation_level
+            }
+        return None 

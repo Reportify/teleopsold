@@ -15,9 +15,8 @@ from django.utils import timezone
 from datetime import date, timedelta
 from typing import Dict, Any
 
-from apps.tenants.models import Tenant
+from apps.tenants.models import Tenant, TenantDepartment
 from apps.users.models import (
-    Department,
     CertificationType,
     VendorOperationalDesignation,
     VendorEmployee,
@@ -76,7 +75,7 @@ class DepartmentListCreateView(TenantContextMixin, generics.ListCreateAPIView):
         return DepartmentSerializer
     
     def get_queryset(self):
-        queryset = Department.objects.filter(tenant=self.get_tenant())
+        queryset = TenantDepartment.objects.filter(tenant=self.get_tenant())
         
         # Filter parameters
         is_operational = self.request.query_params.get('is_operational')
@@ -106,7 +105,7 @@ class DepartmentDetailView(TenantContextMixin, generics.RetrieveUpdateDestroyAPI
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return Department.objects.filter(tenant=self.get_tenant(), is_active=True)
+        return TenantDepartment.objects.filter(tenant=self.get_tenant(), is_active=True)
     
     def perform_destroy(self, instance):
         """Soft delete department"""
@@ -615,7 +614,7 @@ def operational_dashboard(request, tenant_id):
     ).count()
     
     # Department metrics
-    departments_with_employees = Department.objects.filter(
+    departments_with_employees = TenantDepartment.objects.filter(
         tenant=tenant,
         is_active=True,
         designations__employees__status='Active'

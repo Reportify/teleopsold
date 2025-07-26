@@ -16,7 +16,7 @@ from ..models import (
     Tenant, TenantUserProfile, PermissionRegistry, DesignationBasePermission,
     UserPermissionOverride, PermissionGroup, PermissionGroupPermission,
     UserPermissionGroupAssignment, UserEffectivePermissionsCache,
-    PermissionAuditTrail, ComprehensiveDesignation
+    PermissionAuditTrail, TenantDesignation
 )
 
 User = get_user_model()

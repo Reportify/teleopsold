@@ -20,16 +20,15 @@ from ..models import (
     Tenant, TenantUserProfile, PermissionRegistry, PermissionGroup,
     PermissionGroupPermission, UserPermissionGroupAssignment,
     UserPermissionOverride, DesignationBasePermission, 
-    ComprehensiveDesignation, PermissionAuditTrail
+    TenantDesignation, TenantDepartment, PermissionAuditTrail
 )
-from apps.users.models import Department
 from ..serializers.rbac_serializers import (
     PermissionRegistrySerializer, PermissionGroupSerializer,
     UserPermissionGroupAssignmentSerializer, UserPermissionOverrideSerializer,
     DesignationBasePermissionSerializer, UserEffectivePermissionsSerializer,
     PermissionCheckRequestSerializer, PermissionCheckResponseSerializer,
     PermissionAuditTrailSerializer, DepartmentSerializer, 
-    ComprehensiveDesignationSerializer
+    TenantDesignationSerializer, TenantDepartmentSerializer
 )
 from ..services import get_rbac_service, get_permission_management_service
 
@@ -47,7 +46,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get permissions for current tenant."""
         return PermissionRegistry.objects.filter(
-            tenant=self.request.user.tenant_profile.tenant
+            tenant=self.request.user.tenant_user_profile.tenant
         ).order_by('permission_category', 'permission_name')
     
     @extend_schema(
@@ -58,7 +57,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     def create(self, request: Request) -> Response:
         """Create a new permission."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             serializer = self.get_serializer(data=request.data)
@@ -84,7 +83,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     def update(self, request: Request, pk=None) -> Response:
         """Update an existing permission."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             serializer = self.get_serializer(data=request.data, partial=True)
@@ -110,7 +109,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     def destroy(self, request: Request, pk=None) -> Response:
         """Soft delete a permission."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             permission_service.delete_permission(int(pk))
@@ -181,7 +180,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Get permission groups for current tenant."""
         return PermissionGroup.objects.filter(
-            tenant=self.request.user.tenant_profile.tenant
+            tenant=self.request.user.tenant_user_profile.tenant
         ).prefetch_related(
             'group_permissions__permission',
             'user_assignments__user_profile__user'
@@ -197,7 +196,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     def assign_permissions(self, request: Request, pk=None) -> Response:
         """Assign permissions to a group."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             permission_assignments = request.data.get('permissions', [])
@@ -242,7 +241,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     def assign_user(self, request: Request, pk=None) -> Response:
         """Assign a user to a permission group."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             user_profile_id = request.data.get('user_profile_id')
@@ -306,7 +305,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
     def effective_permissions(self, request: Request) -> Response:
         """Get effective permissions for a user."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             rbac_service = get_rbac_service(tenant)
             
             # Get target user (default to current user)
@@ -323,7 +322,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
                     tenant=tenant
                 )
             else:
-                target_user_profile = request.user.tenant_profile
+                target_user_profile = request.user.tenant_user_profile
             
             force_refresh = request.query_params.get('force_refresh', '').lower() == 'true'
             
@@ -356,7 +355,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
     def check_permission(self, request: Request) -> Response:
         """Check if user has a specific permission."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             rbac_service = get_rbac_service(tenant)
             
             serializer = PermissionCheckRequestSerializer(data=request.data)
@@ -379,7 +378,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
                     tenant=tenant
                 )
             else:
-                target_user_profile = request.user.tenant_profile
+                target_user_profile = request.user.tenant_user_profile
             
             has_permission, details = rbac_service.check_permission(
                 target_user_profile,
@@ -426,7 +425,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
                     status=status.HTTP_403_FORBIDDEN
                 )
             
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             permission_service = get_permission_management_service(tenant, request.user)
             
             serializer = UserPermissionOverrideSerializer(data=request.data)
@@ -460,7 +459,7 @@ class PermissionAuditViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Get audit trail for current tenant."""
         return PermissionAuditTrail.objects.filter(
-            tenant=self.request.user.tenant_profile.tenant
+            tenant=self.request.user.tenant_user_profile.tenant
         ).select_related(
             'performed_by'
         ).order_by('-performed_at')
@@ -535,10 +534,10 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         """Get departments for current tenant."""
-        return Department.objects.filter(
-            tenant=self.request.user.tenant_profile.tenant,
+        return TenantDepartment.objects.filter(
+            tenant=self.request.user.tenant_user_profile.tenant,
             is_active=True
-        ).order_by('name')
+        ).order_by('department_name')
     
     @extend_schema(
         summary="List departments",
@@ -549,20 +548,17 @@ class DepartmentViewSet(viewsets.ModelViewSet):
         """List all departments."""
         try:
             queryset = self.get_queryset()
-            
             # Search filter
             search = request.query_params.get('search')
             if search:
                 queryset = queryset.filter(
-                    Q(name__icontains=search) | Q(description__icontains=search)
+                    Q(department_name__icontains=search) | Q(description__icontains=search)
                 )
-            
             serializer = self.get_serializer(queryset, many=True)
             return Response({
                 'departments': serializer.data,
                 'count': queryset.count()
             })
-            
         except Exception as e:
             logger.error(f"Error listing departments: {str(e)}")
             return Response(
@@ -578,18 +574,19 @@ class DepartmentViewSet(viewsets.ModelViewSet):
     def create(self, request: Request) -> Response:
         """Create a new department."""
         try:
-            tenant = request.user.tenant_profile.tenant
+            tenant = request.user.tenant_user_profile.tenant
             
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
             
-            # Auto-generate code from name
+            # Auto-generate department_code from department_name if not provided
             validated_data = serializer.validated_data
-            validated_data['code'] = validated_data['name'].lower().replace(' ', '_')
+            if not validated_data.get('department_code'):
+                validated_data['department_code'] = validated_data['department_name'].lower().replace(' ', '_')
             validated_data['tenant'] = tenant
             validated_data['created_by'] = request.user
             
-            department = Department.objects.create(**validated_data)
+            department = TenantDepartment.objects.create(**validated_data)
             
             response_serializer = self.get_serializer(department)
             return Response(response_serializer.data, status=status.HTTP_201_CREATED)
@@ -602,24 +599,24 @@ class DepartmentViewSet(viewsets.ModelViewSet):
             )
 
 
-class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
+class TenantDesignationViewSet(viewsets.ModelViewSet):
     """
     API endpoints for managing tenant designations.
     """
-    serializer_class = ComprehensiveDesignationSerializer
+    serializer_class = TenantDesignationSerializer
     permission_classes = [IsTenantMember]
     
     def get_queryset(self):
         """Get designations for current tenant."""
-        return ComprehensiveDesignation.objects.filter(
-            tenant=self.request.user.tenant_profile.tenant,
+        return TenantDesignation.objects.filter(
+            tenant=self.request.user.tenant_user_profile.tenant,
             is_active=True
-        ).order_by('designation_level', 'designation_name')
+        ).select_related('department', 'created_by').order_by('designation_level', 'designation_name')
     
     @extend_schema(
         summary="List designations",
         description="Get all designations for the current tenant",
-        responses={200: ComprehensiveDesignationSerializer(many=True)}
+        responses={200: TenantDesignationSerializer(many=True)}
     )
     def list(self, request: Request) -> Response:
         """List all designations."""
@@ -631,7 +628,7 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
             if search:
                 queryset = queryset.filter(
                     Q(designation_name__icontains=search) | 
-                    Q(department__icontains=search) |
+                    Q(department__department_name__icontains=search) |
                     Q(description__icontains=search)
                 )
             
@@ -642,8 +639,12 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
             
             # Department filter
             department = request.query_params.get('department')
-            if department:
-                queryset = queryset.filter(department=department)
+            if department and str(department).strip() and department != '0':
+                try:
+                    department_id = int(department)
+                    queryset = queryset.filter(department=department_id)
+                except (ValueError, TypeError):
+                    pass  # Skip invalid department filter
             
             serializer = self.get_serializer(queryset, many=True)
             
@@ -651,7 +652,7 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
             total = queryset.count()
             field_count = queryset.filter(designation_type='field').count()
             non_field_count = queryset.filter(designation_type='non_field').count()
-            departments = queryset.values_list('department', flat=True).distinct()
+            departments = queryset.values_list('department__department_name', flat=True).distinct()
             
             return Response({
                 'designations': serializer.data,
@@ -673,7 +674,7 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Create designation",
         description="Create a new designation",
-        responses={201: ComprehensiveDesignationSerializer}
+        responses={201: TenantDesignationSerializer}
     )
     def create(self, request: Request) -> Response:
         """Create a new designation."""
@@ -697,7 +698,7 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Update designation",
         description="Update an existing designation",
-        responses={200: ComprehensiveDesignationSerializer}
+        responses={200: TenantDesignationSerializer}
     )
     def update(self, request: Request, pk=None) -> Response:
         """Update an existing designation."""
@@ -749,6 +750,132 @@ class ComprehensiveDesignationViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Error deleting designation: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class TenantDepartmentViewSet(viewsets.ModelViewSet):
+    """
+    API endpoints for managing tenant departments.
+    """
+    serializer_class = TenantDepartmentSerializer
+    permission_classes = [IsTenantMember]
+    
+    def get_queryset(self):
+        """Get departments for current tenant."""
+        return TenantDepartment.objects.filter(
+            tenant=self.request.user.tenant_user_profile.tenant,
+            is_active=True
+        ).order_by('department_level', 'department_name')
+    
+    @extend_schema(
+        summary="List departments",
+        description="Get all departments for the current tenant",
+        responses={200: TenantDepartmentSerializer(many=True)}
+    )
+    def list(self, request: Request) -> Response:
+        """List all departments for the tenant."""
+        try:
+            queryset = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+            
+            # Get statistics
+            total = queryset.count()
+            operational_count = queryset.filter(is_operational=True).count()
+            non_operational_count = queryset.filter(is_operational=False).count()
+            
+            return Response({
+                'departments': serializer.data,
+                'statistics': {
+                    'total': total,
+                    'operational': operational_count,
+                    'non_operational': non_operational_count
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error listing departments: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Create department",
+        description="Create a new department",
+        responses={201: TenantDepartmentSerializer}
+    )
+    def create(self, request: Request) -> Response:
+        """Create a new department."""
+        try:
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            department = serializer.save()
+            
+            return Response(
+                self.get_serializer(department).data, 
+                status=status.HTTP_201_CREATED
+            )
+            
+        except Exception as e:
+            logger.error(f"Error creating department: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Update department",
+        description="Update an existing department",
+        responses={200: TenantDepartmentSerializer}
+    )
+    def update(self, request: Request, pk=None) -> Response:
+        """Update an existing department."""
+        try:
+            department = self.get_object()
+            serializer = self.get_serializer(department, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            department = serializer.save()
+            
+            return Response(self.get_serializer(department).data)
+            
+        except Exception as e:
+            logger.error(f"Error updating department: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Delete department",
+        description="Delete a department (soft delete)",
+        responses={204: None}
+    )
+    def destroy(self, request: Request, pk=None) -> Response:
+        """Delete a department (soft delete)."""
+        try:
+            department = self.get_object()
+            
+            # Check if department has users assigned
+            assigned_users = department.tenant_user_profiles.filter(is_active=True).count()
+            
+            if assigned_users > 0:
+                return Response(
+                    {'error': f'Cannot delete department. {assigned_users} users are assigned to this department.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Soft delete
+            department.is_active = False
+            department.deleted_at = timezone.now()
+            department.save()
+            
+            return Response(status=status.HTTP_204_NO_CONTENT)
+            
+        except Exception as e:
+            logger.error(f"Error deleting department: {str(e)}")
             return Response(
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST

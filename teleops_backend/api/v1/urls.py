@@ -26,6 +26,12 @@ urlpatterns = [
     # Site Management endpoints
     path('sites/', include('apps.sites.urls')),
     
+    # Project Management endpoints
+    path('projects/', include('apps.projects.urls')),
+    
+    # Task Management endpoints
+    path('tasks/', include('apps.tasks.urls')),
+    
     path('internal/', include('teleops_internal.api.urls')),
     path('public/corporate/register/', CorporateOnboardingView.as_view(), name='corporate-onboarding'),
     # Tenant invitation endpoints

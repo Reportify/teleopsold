@@ -34,8 +34,6 @@ const VerifyEmailPage: React.FC = () => {
     first_name: "",
     last_name: "",
     phone_number: "",
-    department: "",
-    designation: "",
     employee_id: "",
     reporting_manager: "",
     profile_photo: null as File | null,
@@ -112,7 +110,7 @@ const VerifyEmailPage: React.FC = () => {
       return;
     }
     // Basic required field check (frontend)
-    const required = ["first_name", "last_name", "phone_number", "department", "designation"];
+    const required = ["first_name", "last_name", "phone_number"];
     const missing = required.filter((f) => !form[f as keyof typeof form]);
     if (missing.length > 0) {
       setError(`Please fill all required fields: ${missing.join(", ")}`);
@@ -126,8 +124,6 @@ const VerifyEmailPage: React.FC = () => {
       data.append("first_name", form.first_name);
       data.append("last_name", form.last_name);
       data.append("phone_number", form.phone_number);
-      data.append("department", form.department);
-      data.append("designation", form.designation);
       if (form.employee_id) data.append("employee_id", form.employee_id);
       if (form.reporting_manager) data.append("reporting_manager", form.reporting_manager);
       if (form.profile_photo) data.append("profile_photo", form.profile_photo);
@@ -202,6 +198,20 @@ const VerifyEmailPage: React.FC = () => {
             Welcome, {userInfo.name}! Please complete your profile to activate your account.
           </Typography>
         )}
+
+        {/* Administrator Role Information */}
+        <Alert severity="info" sx={{ mb: 3 }}>
+          <Typography variant="body2" fontWeight={600} gutterBottom>
+            Administrator Setup
+          </Typography>
+          <Typography variant="body2">
+            As the first user, you'll be assigned Administrator privileges with full access to:
+            <br />• Create and manage departments and designations
+            <br />• Add and manage team members
+            <br />• Access all system features and settings
+            <br />• You can later assign yourself specific job designations while keeping Administrator role
+          </Typography>
+        </Alert>
         {success ? (
           <Box sx={{ textAlign: "center" }}>
             {/* Success Icon and Header */}
@@ -233,7 +243,7 @@ const VerifyEmailPage: React.FC = () => {
                     <ListItemIcon>
                       <Person color="primary" fontSize="small" />
                     </ListItemIcon>
-                    <ListItemText primary="User Profile Configured" secondary={`Your profile with role, department, and contact details`} />
+                    <ListItemText primary="Administrator Profile Created" secondary={`Your profile with Administrator role and full system access`} />
                   </ListItem>
                   <ListItem>
                     <ListItemIcon>
@@ -325,30 +335,6 @@ const VerifyEmailPage: React.FC = () => {
                   required
                   error={!!fieldErrors.phone_number}
                   helperText={fieldErrors.phone_number}
-                />
-              </Grid>
-              <Grid size={{ xs: 12 }}>
-                <TextField
-                  label="Department / Team"
-                  name="department"
-                  value={form.department}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  error={!!fieldErrors.department}
-                  helperText={fieldErrors.department}
-                />
-              </Grid>
-              <Grid size={{ xs: 12 }}>
-                <TextField
-                  label="Designation"
-                  name="designation"
-                  value={form.designation}
-                  onChange={handleChange}
-                  fullWidth
-                  required
-                  error={!!fieldErrors.designation}
-                  helperText={fieldErrors.designation}
                 />
               </Grid>
               <Grid size={{ xs: 12, sm: 6 }}>
