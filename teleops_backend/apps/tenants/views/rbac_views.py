@@ -17,23 +17,37 @@ from drf_spectacular.types import OpenApiTypes
 
 from core.permissions.tenant_permissions import IsTenantAdmin, IsTenantMember
 from ..models import (
-    Tenant, TenantUserProfile, PermissionRegistry, PermissionGroup,
-    PermissionGroupPermission, UserPermissionGroupAssignment,
-    UserPermissionOverride, DesignationBasePermission, 
-    TenantDesignation, TenantDepartment, PermissionAuditTrail
+    Tenant, PermissionRegistry, DesignationBasePermission, 
+    UserPermissionOverride, PermissionGroup, PermissionGroupPermission,
+    UserPermissionGroupAssignment, PermissionAuditTrail, TenantUserProfile,
+    TenantDesignation, PermissionCategory
 )
 from ..serializers.rbac_serializers import (
-    PermissionRegistrySerializer, PermissionGroupSerializer,
-    UserPermissionGroupAssignmentSerializer, UserPermissionOverrideSerializer,
-    DesignationBasePermissionSerializer, UserEffectivePermissionsSerializer,
+    PermissionRegistrySerializer, DesignationBasePermissionSerializer,
+    UserPermissionOverrideSerializer, PermissionGroupSerializer,
+    UserPermissionGroupAssignmentSerializer, PermissionAuditTrailSerializer,
+    PermissionCategorySerializer, UserEffectivePermissionsSerializer,
     PermissionCheckRequestSerializer, PermissionCheckResponseSerializer,
-    PermissionAuditTrailSerializer, DepartmentSerializer, 
-    TenantDesignationSerializer, TenantDepartmentSerializer
+    DepartmentSerializer, TenantDesignationSerializer, TenantDepartmentSerializer
 )
 from ..services import get_rbac_service, get_permission_management_service
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class PermissionCategoryViewSet(viewsets.ModelViewSet):
+    """
+    API endpoints for managing permission categories.
+    """
+    serializer_class = PermissionCategorySerializer
+    permission_classes = [IsTenantAdmin]
+    
+    def get_queryset(self):
+        """Get permission categories for current tenant."""
+        return PermissionCategory.objects.filter(
+            tenant=self.request.user.tenant_user_profile.tenant
+        ).order_by('sort_order', 'category_name')
 
 
 class PermissionRegistryViewSet(viewsets.ModelViewSet):
@@ -168,6 +182,423 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
+    
+    @extend_schema(
+        summary="Bulk grant permissions",
+        description="Grant permissions to multiple targets (users, designations, groups)",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_grant(self, request: Request) -> Response:
+        """Bulk grant permissions."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            rbac_service = get_rbac_service(tenant)
+            
+            permission_ids = request.data.get('permission_ids', [])
+            target_type = request.data.get('target_type')  # 'users', 'designations', 'groups'
+            target_ids = request.data.get('target_ids', [])
+            reason = request.data.get('reason', '')
+            
+            if not all([permission_ids, target_type, target_ids]):
+                return Response(
+                    {'error': 'Missing required fields: permission_ids, target_type, target_ids'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            results = []
+            for permission_id in permission_ids:
+                for target_id in target_ids:
+                    try:
+                        if target_type == 'users':
+                            # Grant to user via override
+                            user_profile = TenantUserProfile.objects.get(id=target_id, tenant=tenant)
+                            permission = PermissionRegistry.objects.get(id=permission_id, tenant=tenant)
+                            
+                            override_data = {
+                                'user_profile': user_profile,
+                                'permission': permission,
+                                'override_type': 'addition',
+                                'permission_level': 'granted',
+                                'override_reason': reason,
+                                'granted_by': request.user.tenant_user_profile
+                            }
+                            
+                            override, created = UserPermissionOverride.objects.get_or_create(
+                                user_profile=user_profile,
+                                permission=permission,
+                                defaults=override_data
+                            )
+                            
+                            results.append({
+                                'permission_id': permission_id,
+                                'target_id': target_id,
+                                'target_type': target_type,
+                                'success': True,
+                                'created': created
+                            })
+                            
+                        elif target_type == 'designations':
+                            # Grant to designation
+                            designation = TenantDesignation.objects.get(id=target_id, tenant=tenant)
+                            permission = PermissionRegistry.objects.get(id=permission_id, tenant=tenant)
+                            
+                            perm_data = {
+                                'designation': designation,
+                                'permission': permission,
+                                'permission_level': 'granted',
+                                'granted_by': request.user.tenant_user_profile
+                            }
+                            
+                            perm, created = DesignationBasePermission.objects.get_or_create(
+                                designation=designation,
+                                permission=permission,
+                                defaults=perm_data
+                            )
+                            
+                            results.append({
+                                'permission_id': permission_id,
+                                'target_id': target_id,
+                                'target_type': target_type,
+                                'success': True,
+                                'created': created
+                            })
+                            
+                    except Exception as e:
+                        results.append({
+                            'permission_id': permission_id,
+                            'target_id': target_id,
+                            'target_type': target_type,
+                            'success': False,
+                            'error': str(e)
+                        })
+            
+            return Response({
+                'success': True,
+                'message': f'Bulk grant operation completed',
+                'results': results
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in bulk grant: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Bulk revoke permissions",
+        description="Revoke permissions from multiple targets",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['post'])
+    def bulk_revoke(self, request: Request) -> Response:
+        """Bulk revoke permissions."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            permission_ids = request.data.get('permission_ids', [])
+            target_type = request.data.get('target_type')
+            target_ids = request.data.get('target_ids', [])
+            reason = request.data.get('reason', '')
+            
+            results = []
+            for permission_id in permission_ids:
+                for target_id in target_ids:
+                    try:
+                        if target_type == 'users':
+                            # Remove user overrides or add restriction
+                            UserPermissionOverride.objects.filter(
+                                user_profile_id=target_id,
+                                permission_id=permission_id,
+                                user_profile__tenant=tenant
+                            ).update(is_active=False)
+                            
+                        elif target_type == 'designations':
+                            # Deactivate designation permissions
+                            DesignationBasePermission.objects.filter(
+                                designation_id=target_id,
+                                permission_id=permission_id,
+                                designation__tenant=tenant
+                            ).update(is_active=False)
+                        
+                        results.append({
+                            'permission_id': permission_id,
+                            'target_id': target_id,
+                            'target_type': target_type,
+                            'success': True
+                        })
+                        
+                    except Exception as e:
+                        results.append({
+                            'permission_id': permission_id,
+                            'target_id': target_id,
+                            'target_type': target_type,
+                            'success': False,
+                            'error': str(e)
+                        })
+            
+            return Response({
+                'success': True,
+                'message': f'Bulk revoke operation completed',
+                'results': results
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in bulk revoke: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Get permission matrix",
+        description="Get comprehensive permission matrix for all users and permissions",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['get'])
+    def matrix(self, request: Request) -> Response:
+        """Get permission matrix."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Get all active permissions
+            permissions = PermissionRegistry.objects.filter(
+                tenant=tenant,
+                is_active=True
+            ).values('id', 'permission_code', 'permission_name')
+            
+            # Get all users in tenant
+            users = TenantUserProfile.objects.filter(
+                tenant=tenant,
+                is_active=True
+            ).select_related('user').values(
+                'id', 
+                'user__username', 
+                'user__first_name', 
+                'user__last_name'
+            )
+            
+            # Create matrix (simplified version)
+            matrix = {}
+            for user in users:
+                user_key = f"user_{user['id']}"
+                matrix[user_key] = {}
+                for permission in permissions:
+                    perm_key = permission['permission_code']
+                    # In a real implementation, check actual permissions
+                    matrix[user_key][perm_key] = False  # Placeholder
+            
+            return Response({
+                'users': list(users),
+                'permissions': list(permissions),
+                'matrix': matrix
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting permission matrix: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Get permission usage analytics",
+        description="Get analytics on permission usage patterns",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['get'])
+    def usage_analytics(self, request: Request) -> Response:
+        """Get permission usage analytics."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Basic analytics (can be expanded)
+            permissions = PermissionRegistry.objects.filter(tenant=tenant, is_active=True)
+            
+            usage_by_permission = {}
+            usage_by_user = {}
+            
+            for permission in permissions:
+                # Count usage across different assignment types
+                designation_count = DesignationBasePermission.objects.filter(
+                    permission=permission, is_active=True
+                ).count()
+                
+                group_count = PermissionGroupPermission.objects.filter(
+                    permission=permission, is_active=True
+                ).count()
+                
+                override_count = UserPermissionOverride.objects.filter(
+                    permission=permission, is_active=True
+                ).count()
+                
+                usage_by_permission[permission.permission_code] = {
+                    'total': designation_count + group_count + override_count,
+                    'designation_assignments': designation_count,
+                    'group_assignments': group_count,
+                    'user_overrides': override_count
+                }
+            
+            return Response({
+                'usage_by_permission': usage_by_permission,
+                'usage_by_user': usage_by_user,
+                'usage_trends': [],  # Placeholder for trend data
+                'risk_analysis': {}  # Placeholder for risk analysis
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting usage analytics: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Get compliance report",
+        description="Generate compliance report for permissions",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['get'])
+    def compliance_report(self, request: Request) -> Response:
+        """Get compliance report."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Basic compliance metrics
+            total_permissions = PermissionRegistry.objects.filter(tenant=tenant, is_active=True).count()
+            high_risk_permissions = PermissionRegistry.objects.filter(
+                tenant=tenant, 
+                is_active=True,
+                risk_level__in=['high', 'critical']
+            ).count()
+            
+            compliance_score = max(0, 100 - (high_risk_permissions * 10))  # Simple scoring
+            
+            return Response({
+                'compliance_score': compliance_score,
+                'violations': [],  # Placeholder
+                'recommendations': [
+                    'Review high-risk permission assignments',
+                    'Implement regular permission audits',
+                    'Enable multi-factor authentication for critical permissions'
+                ],
+                'audit_summary': {
+                    'total_permissions': total_permissions,
+                    'high_risk_permissions': high_risk_permissions,
+                    'last_audit_date': timezone.now().isoformat()
+                }
+            })
+            
+        except Exception as e:
+            logger.error(f"Error getting compliance report: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Validate permission assignment",
+        description="Validate if a permission assignment is valid",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['post'])
+    def validate(self, request: Request) -> Response:
+        """Validate permission assignment."""
+        try:
+            permission_id = request.data.get('permission_id')
+            target_type = request.data.get('target_type')
+            target_id = request.data.get('target_id')
+            assignment_type = request.data.get('assignment_type')
+            
+            if not all([permission_id, target_type, target_id, assignment_type]):
+                return Response(
+                    {'error': 'Missing required fields'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Basic validation (can be expanded)
+            conflicts = []
+            warnings = []
+            recommendations = []
+            
+            # Check if permission exists
+            try:
+                permission = PermissionRegistry.objects.get(
+                    id=permission_id,
+                    tenant=request.user.tenant_user_profile.tenant,
+                    is_active=True
+                )
+                
+                if permission.risk_level in ['high', 'critical']:
+                    warnings.append(f'This is a {permission.risk_level} risk permission')
+                
+                if permission.requires_mfa:
+                    recommendations.append('Multi-factor authentication recommended')
+                    
+            except PermissionRegistry.DoesNotExist:
+                conflicts.append('Permission not found or inactive')
+            
+            return Response({
+                'is_valid': len(conflicts) == 0,
+                'conflicts': conflicts,
+                'warnings': warnings,
+                'recommendations': recommendations
+            })
+            
+        except Exception as e:
+            logger.error(f"Error validating permission assignment: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Simulate permission changes",
+        description="Simulate the effects of permission changes",
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=False, methods=['post'])
+    def simulate(self, request: Request) -> Response:
+        """Simulate permission changes."""
+        try:
+            changes = request.data.get('changes', [])
+            
+            simulated_results = []
+            potential_conflicts = []
+            affected_users = set()
+            
+            for change in changes:
+                permission_id = change.get('permission_id')
+                target_type = change.get('target_type')
+                target_id = change.get('target_id')
+                action = change.get('action')
+                
+                # Simulate the change
+                if target_type == 'users':
+                    affected_users.add(target_id)
+                
+                simulated_results.append({
+                    'permission_id': permission_id,
+                    'target_type': target_type,
+                    'target_id': target_id,
+                    'action': action,
+                    'result': 'success',  # Simplified simulation
+                    'impact': 'low'
+                })
+            
+            return Response({
+                'simulated_results': simulated_results,
+                'potential_conflicts': potential_conflicts,
+                'affected_users': list(affected_users)
+            })
+            
+        except Exception as e:
+            logger.error(f"Error simulating permission changes: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
 
 class PermissionGroupViewSet(viewsets.ModelViewSet):
@@ -226,6 +657,62 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Error assigning permissions to group: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Assign users to group",
+        description="Assign multiple users to a permission group",
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=True, methods=['post'])
+    def assign_users(self, request: Request, pk=None) -> Response:
+        """Assign users to a group."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            user_ids = request.data.get('user_ids', [])
+            
+            if not user_ids:
+                return Response(
+                    {'error': 'No user IDs provided'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            group = self.get_object()
+            assigned_users = []
+            
+            for user_id in user_ids:
+                try:
+                    user_profile = TenantUserProfile.objects.get(id=user_id, tenant=tenant)
+                    assignment, created = UserPermissionGroupAssignment.objects.get_or_create(
+                        user_profile=user_profile,
+                        group=group,
+                        defaults={
+                            'assigned_by': request.user.tenant_user_profile,
+                            'assignment_reason': 'Manual group assignment'
+                        }
+                    )
+                    
+                    assigned_users.append({
+                        'user_id': user_id,
+                        'username': user_profile.user.username,
+                        'created': created
+                    })
+                    
+                except TenantUserProfile.DoesNotExist:
+                    continue
+            
+            return Response({
+                'success': True,
+                'message': f'Assigned {len(assigned_users)} users to group',
+                'assigned_users': assigned_users
+            })
+            
+        except Exception as e:
+            logger.error(f"Error assigning users to group: {str(e)}")
             return Response(
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -403,6 +890,71 @@ class UserPermissionViewSet(viewsets.ViewSet):
             )
         except Exception as e:
             logger.error(f"Error checking permission: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Create user permission override",
+        description="Create a permission override for a specific user",
+        request=UserPermissionOverrideSerializer,
+        responses={201: UserPermissionOverrideSerializer}
+    )
+    @action(detail=False, methods=['post'])
+    def create_override(self, request: Request) -> Response:
+        """Create a user permission override."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Check if user has admin permissions
+            if not request.user.is_staff:
+                return Response(
+                    {'error': 'Permission denied'}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = UserPermissionOverrideSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            
+            # Ensure user belongs to same tenant
+            user_profile = TenantUserProfile.objects.get(
+                id=serializer.validated_data['user_profile_id'],
+                tenant=tenant
+            )
+            
+            # Ensure permission belongs to same tenant
+            permission = PermissionRegistry.objects.get(
+                id=serializer.validated_data['permission_id'],
+                tenant=tenant
+            )
+            
+            override_data = serializer.validated_data.copy()
+            override_data['user_profile'] = user_profile
+            override_data['permission'] = permission
+            override_data['granted_by'] = request.user.tenant_user_profile
+            
+            # Remove the ID fields since we're using the objects
+            override_data.pop('user_profile_id', None)
+            override_data.pop('permission_id', None)
+            
+            override = UserPermissionOverride.objects.create(**override_data)
+            
+            response_serializer = UserPermissionOverrideSerializer(override)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except TenantUserProfile.DoesNotExist:
+            return Response(
+                {'error': 'User profile not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except PermissionRegistry.DoesNotExist:
+            return Response(
+                {'error': 'Permission not found'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Error creating permission override: {str(e)}")
             return Response(
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
@@ -750,6 +1302,100 @@ class TenantDesignationViewSet(viewsets.ModelViewSet):
             
         except Exception as e:
             logger.error(f"Error deleting designation: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+    @extend_schema(
+        summary="Get designation permissions",
+        description="Get all permissions assigned to a designation",
+        responses={200: DesignationBasePermissionSerializer(many=True)}
+    )
+    @action(detail=True, methods=['get'])
+    def permissions(self, request: Request, pk=None) -> Response:
+        """Get permissions for a designation."""
+        try:
+            designation = self.get_object()
+            permissions = DesignationBasePermission.objects.filter(
+                designation=designation,
+                is_active=True
+            ).select_related('permission')
+            
+            serializer = DesignationBasePermissionSerializer(permissions, many=True)
+            return Response(serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Error getting designation permissions: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Grant permission to designation",
+        description="Grant a permission to a designation",
+        request=OpenApiTypes.OBJECT,
+        responses={201: DesignationBasePermissionSerializer}
+    )
+    @action(detail=True, methods=['post'], url_path='permissions')
+    def grant_permission(self, request: Request, pk=None) -> Response:
+        """Grant a permission to a designation."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            designation = self.get_object()
+            
+            permission_code = request.data.get('permission_code')
+            permission_level = request.data.get('permission_level', 'granted')
+            
+            if not permission_code:
+                return Response(
+                    {'error': 'permission_code is required'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get the permission
+            try:
+                permission = PermissionRegistry.objects.get(
+                    permission_code=permission_code,
+                    tenant=tenant,
+                    is_active=True
+                )
+            except PermissionRegistry.DoesNotExist:
+                return Response(
+                    {'error': 'Permission not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Create or update the designation permission
+            designation_permission, created = DesignationBasePermission.objects.get_or_create(
+                designation=designation,
+                permission=permission,
+                defaults={
+                    'permission_level': permission_level,
+                    'scope_configuration': request.data.get('scope_configuration', {}),
+                    'geographic_scope': request.data.get('geographic_scope', []),
+                    'functional_scope': request.data.get('functional_scope', []),
+                    'temporal_scope': request.data.get('temporal_scope', {}),
+                    'is_inherited': request.data.get('is_inherited', True),
+                    'is_mandatory': request.data.get('is_mandatory', False),
+                    'priority_level': request.data.get('priority_level', 100),
+                    'granted_by': request.user.tenant_user_profile
+                }
+            )
+            
+            if not created:
+                # Update existing permission
+                designation_permission.permission_level = permission_level
+                designation_permission.is_active = True
+                designation_permission.save()
+            
+            serializer = DesignationBasePermissionSerializer(designation_permission)
+            return Response(serializer.data, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error granting permission to designation: {str(e)}")
             return Response(
                 {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST

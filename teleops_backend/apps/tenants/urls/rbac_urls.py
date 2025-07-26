@@ -8,28 +8,23 @@ from rest_framework.routers import DefaultRouter
 from django.http import HttpResponse
 
 from ..views.rbac_views import (
-    PermissionRegistryViewSet,
-    PermissionGroupViewSet,
-    UserPermissionViewSet,
-    PermissionAuditViewSet,
-    DepartmentViewSet,
-    TenantDesignationViewSet,
-    TenantDepartmentViewSet
+    PermissionRegistryViewSet, PermissionGroupViewSet,
+    TenantDesignationViewSet, UserPermissionViewSet,
+    PermissionCategoryViewSet, PermissionAuditViewSet
 )
 
 # Create router for RBAC viewsets
-rbac_router = DefaultRouter()
-rbac_router.register(r'permissions', PermissionRegistryViewSet, basename='permission-registry')
-rbac_router.register(r'groups', PermissionGroupViewSet, basename='permission-groups')
-rbac_router.register(r'user-permissions', UserPermissionViewSet, basename='user-permissions')
-rbac_router.register(r'audit', PermissionAuditViewSet, basename='permission-audit')
-rbac_router.register(r'departments', DepartmentViewSet, basename='departments')
-rbac_router.register(r'designations', TenantDesignationViewSet, basename='designations')
-rbac_router.register(r'tenant-departments', TenantDepartmentViewSet, basename='tenant-departments')
+router = DefaultRouter()
+router.register(r'categories', PermissionCategoryViewSet, basename='permission-categories')
+router.register(r'permissions', PermissionRegistryViewSet, basename='permissions')
+router.register(r'groups', PermissionGroupViewSet, basename='permission-groups')
+router.register(r'audit', PermissionAuditViewSet, basename='permission-audit')
+router.register(r'user-permissions', UserPermissionViewSet, basename='user-permissions')
+router.register(r'designations', TenantDesignationViewSet, basename='tenant-designations')
 
 urlpatterns = [
     # RBAC API endpoints
-    path('rbac/', include(rbac_router.urls)),
+    path('rbac/', include(router.urls)),
     
     # Additional RBAC endpoints (if needed)
     path('rbac/health/', lambda request: HttpResponse('RBAC API is healthy'), name='rbac-health'),

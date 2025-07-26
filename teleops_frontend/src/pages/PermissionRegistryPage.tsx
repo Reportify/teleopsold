@@ -1,21 +1,15 @@
-// Permission Registry Management Page
+/**
+ * Permission Registry Management Page
+ * Provides comprehensive CRUD operations for tenant permissions
+ */
+
 import React, { useState, useEffect } from "react";
 import {
   Box,
   Card,
   CardContent,
-  Grid,
   Typography,
   Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  TextField,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Table,
   TableBody,
   TableCell,
@@ -23,413 +17,457 @@ import {
   TableHead,
   TableRow,
   Paper,
-  IconButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
   Chip,
-  Switch,
-  FormControlLabel,
-  Divider,
-  Alert,
-  Tabs,
-  Tab,
-  Autocomplete,
-  Tooltip,
+  IconButton,
   Menu,
-  ListItemIcon,
-  ListItemText,
+  Pagination,
+  Grid,
+  Alert,
+  LinearProgress,
+  FormControlLabel,
+  Switch,
+  Autocomplete,
 } from "@mui/material";
-import { Add, Edit, Delete, MoreVert, Security, Warning, Info, CheckCircle, FilterList, Search, Visibility, Code, Category, Assignment, Shield, Key, Lock } from "@mui/icons-material";
-import { useAuth } from "../contexts/AuthContext";
-import { ModernSnackbar } from "../components";
+import { Add, Edit, Delete, MoreVert, Search, FilterList, Refresh, Security, Warning, CheckCircle, Info, ArrowBack } from "@mui/icons-material";
+import { useRBAC } from "../hooks/useRBAC";
+import { Permission } from "../services/rbacAPI";
+import { ModernSnackbar, AppBreadcrumbs } from "../components";
+import type { BreadcrumbItem } from "../components";
 
-interface Permission {
-  id: number;
+interface PermissionFormData {
   permission_name: string;
   permission_code: string;
   permission_category: string;
   description: string;
-  permission_type: string;
-  risk_level: string;
+  permission_type: "action" | "access" | "data" | "administrative" | "system";
+  risk_level: "low" | "medium" | "high" | "critical";
   resource_type: string;
   action_type: string;
-  is_system_permission: boolean;
+  effect: "allow" | "deny";
   requires_scope: boolean;
   is_delegatable: boolean;
-  is_active: boolean;
   is_auditable: boolean;
-  usage_count: number;
-  created_at: string;
-  created_by_name: string;
 }
 
-interface PermissionForm {
-  permission_name: string;
-  permission_code: string;
-  permission_category: string;
-  description: string;
-  permission_type: string;
-  risk_level: string;
-  resource_type: string;
-  action_type: string;
-  is_system_permission: boolean;
-  requires_scope: boolean;
-  is_delegatable: boolean;
-  is_auditable: boolean;
-}
+const defaultFormData: PermissionFormData = {
+  permission_name: "",
+  permission_code: "",
+  permission_category: "",
+  description: "",
+  permission_type: "action",
+  risk_level: "low",
+  resource_type: "",
+  action_type: "",
+  effect: "allow",
+  requires_scope: false,
+  is_delegatable: true,
+  is_auditable: true,
+};
 
 const PermissionRegistryPage: React.FC = () => {
-  const { getCurrentTenant } = useAuth();
-  const [permissions, setPermissions] = useState<Permission[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [dialogOpen, setDialogOpen] = useState(false);
+  const {
+    state: { permissions, loading, error },
+    loadPermissions,
+    createPermission,
+    updatePermission,
+    deletePermission,
+  } = useRBAC();
+
+  // UI State
+  const [openDialog, setOpenDialog] = useState(false);
   const [editingPermission, setEditingPermission] = useState<Permission | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState("");
-  const [riskFilter, setRiskFilter] = useState("");
-  const [tabValue, setTabValue] = useState(0);
-  const [menuAnchor, setMenuAnchor] = useState<null | HTMLElement>(null);
+  const [formData, setFormData] = useState<PermissionFormData>(defaultFormData);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [selectedPermission, setSelectedPermission] = useState<Permission | null>(null);
 
-  const [formData, setFormData] = useState<PermissionForm>({
-    permission_name: "",
-    permission_code: "",
-    permission_category: "",
-    description: "",
-    permission_type: "action",
-    risk_level: "low",
-    resource_type: "",
-    action_type: "",
-    is_system_permission: false,
-    requires_scope: false,
-    is_delegatable: true,
-    is_auditable: true,
-  });
+  // Filters and Search
+  const [searchTerm, setSearchTerm] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [riskFilter, setRiskFilter] = useState("");
 
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [rowsPerPage] = useState(10);
+
+  // Snackbar
   const [snackbar, setSnackbar] = useState({
     open: false,
     message: "",
-    severity: "info" as "info" | "success" | "warning" | "error",
+    severity: "success" as "success" | "error" | "warning" | "info",
   });
 
-  const currentTenant = getCurrentTenant();
-
-  // Permission categories and types
-  const permissionCategories = [
-    "User Management",
-    "Data Access",
-    "Administrative",
-    "System",
-    "Project Management",
-    "Billing & Finance",
-    "Reports & Analytics",
-    "Equipment",
-    "Sites",
-    "Tasks",
-    "Teams",
-    "Custom",
-  ];
-
-  const permissionTypes = [
-    { value: "action", label: "Action" },
-    { value: "access", label: "Access" },
-    { value: "data", label: "Data" },
-    { value: "administrative", label: "Administrative" },
-    { value: "system", label: "System" },
-  ];
-
-  const riskLevels = [
-    { value: "low", label: "Low", color: "success" },
-    { value: "medium", label: "Medium", color: "info" },
-    { value: "high", label: "High", color: "warning" },
-    { value: "critical", label: "Critical", color: "error" },
-  ];
+  // Add step state and better form organization
+  const [currentStep, setCurrentStep] = useState(0);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   useEffect(() => {
-    loadPermissions();
+    if (permissions.length === 0) {
+      loadPermissions();
+    }
+
+    // Handle URL parameters for direct actions
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("action") === "create") {
+      handleOpenDialog();
+      // Clean up URL without reloading page
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
-  const loadPermissions = async () => {
-    setLoading(true);
-    try {
-      // TODO: Replace with actual API call
-      // Mock data for demonstration
-      const mockPermissions: Permission[] = [
-        {
-          id: 1,
-          permission_name: "View User Profiles",
-          permission_code: "users.view_profiles",
-          permission_category: "User Management",
-          description: "Allows viewing of user profile information",
-          permission_type: "access",
-          risk_level: "low",
-          resource_type: "user_profile",
-          action_type: "view",
-          is_system_permission: false,
-          requires_scope: true,
-          is_delegatable: true,
-          is_active: true,
-          is_auditable: true,
-          usage_count: 25,
-          created_at: "2025-01-15T10:00:00Z",
-          created_by_name: "Admin User",
-        },
-        {
-          id: 2,
-          permission_name: "Delete User Accounts",
-          permission_code: "users.delete_accounts",
-          permission_category: "User Management",
-          description: "Allows permanent deletion of user accounts",
-          permission_type: "action",
-          risk_level: "critical",
-          resource_type: "user_account",
-          action_type: "delete",
-          is_system_permission: false,
-          requires_scope: true,
-          is_delegatable: false,
-          is_active: true,
-          is_auditable: true,
-          usage_count: 3,
-          created_at: "2025-01-10T14:30:00Z",
-          created_by_name: "System Admin",
-        },
-        {
-          id: 3,
-          permission_name: "Generate Financial Reports",
-          permission_code: "reports.financial_generate",
-          permission_category: "Reports & Analytics",
-          description: "Create and export financial reports",
-          permission_type: "action",
-          risk_level: "medium",
-          resource_type: "financial_report",
-          action_type: "generate",
-          is_system_permission: false,
-          requires_scope: false,
-          is_delegatable: true,
-          is_active: true,
-          is_auditable: true,
-          usage_count: 12,
-          created_at: "2025-01-18T09:15:00Z",
-          created_by_name: "Finance Admin",
-        },
-      ];
-      setPermissions(mockPermissions);
-    } catch (error) {
-      console.error("Failed to load permissions:", error);
-      setSnackbar({
-        open: true,
-        message: "Failed to load permissions",
-        severity: "error",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
+  // Filter and search logic
+  const filteredPermissions = permissions.filter((permission) => {
+    const matchesSearch =
+      permission.permission_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      permission.permission_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      permission.description?.toLowerCase().includes(searchTerm.toLowerCase());
 
-  const handleCreatePermission = () => {
-    setEditingPermission(null);
-    setFormData({
-      permission_name: "",
-      permission_code: "",
-      permission_category: "",
-      description: "",
-      permission_type: "action",
-      risk_level: "low",
-      resource_type: "",
-      action_type: "",
-      is_system_permission: false,
-      requires_scope: false,
-      is_delegatable: true,
-      is_auditable: true,
-    });
-    setDialogOpen(true);
-  };
+    const matchesCategory = !categoryFilter || permission.permission_category === categoryFilter;
+    const matchesType = !typeFilter || permission.permission_type === typeFilter;
+    const matchesRisk = !riskFilter || permission.risk_level === riskFilter;
 
-  const handleEditPermission = (permission: Permission) => {
-    setEditingPermission(permission);
-    setFormData({
-      permission_name: permission.permission_name,
-      permission_code: permission.permission_code,
-      permission_category: permission.permission_category,
-      description: permission.description,
-      permission_type: permission.permission_type,
-      risk_level: permission.risk_level,
-      resource_type: permission.resource_type,
-      action_type: permission.action_type,
-      is_system_permission: permission.is_system_permission,
-      requires_scope: permission.requires_scope,
-      is_delegatable: permission.is_delegatable,
-      is_auditable: permission.is_auditable,
-    });
-    setDialogOpen(true);
-  };
+    return matchesSearch && matchesCategory && matchesType && matchesRisk;
+  });
 
-  const handleSavePermission = async () => {
-    try {
-      // TODO: Replace with actual API call
-      if (editingPermission) {
-        // Update existing permission
-        console.log("Updating permission:", formData);
-      } else {
-        // Create new permission
-        console.log("Creating permission:", formData);
-      }
+  // Pagination
+  const totalPages = Math.ceil(filteredPermissions.length / rowsPerPage);
+  const paginatedPermissions = filteredPermissions.slice((page - 1) * rowsPerPage, page * rowsPerPage);
 
-      setSnackbar({
-        open: true,
-        message: `Permission ${editingPermission ? "updated" : "created"} successfully`,
-        severity: "success",
-      });
+  // Get unique values for filters
+  const categories = Array.from(new Set(permissions.map((p) => p.permission_category))).filter(Boolean);
+  const types = Array.from(new Set(permissions.map((p) => p.permission_type)));
+  const riskLevels = Array.from(new Set(permissions.map((p) => p.risk_level)));
 
-      setDialogOpen(false);
-      loadPermissions();
-    } catch (error) {
-      console.error("Failed to save permission:", error);
-      setSnackbar({
-        open: true,
-        message: "Failed to save permission",
-        severity: "error",
-      });
-    }
-  };
+  // Helper function to generate permission code from name
+  const generatePermissionCode = (name: string, category: string): string => {
+    const cleanName = name
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, "")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "");
 
-  const generatePermissionCode = (name: string, category: string) => {
-    const categoryMap: Record<string, string> = {
-      "User Management": "users",
-      "Data Access": "data",
-      Administrative: "admin",
-      System: "system",
-      "Project Management": "projects",
-      "Billing & Finance": "billing",
-      "Reports & Analytics": "reports",
-      Equipment: "equipment",
-      Sites: "sites",
-      Tasks: "tasks",
-      Teams: "teams",
-      Custom: "custom",
-    };
-
-    const prefix = categoryMap[category] || "custom";
-    const suffix = name
+    const cleanCategory = category
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .replace(/\s+/g, "_");
 
-    return `${prefix}.${suffix}`;
+    return cleanCategory ? `${cleanCategory}.${cleanName}` : cleanName;
   };
 
-  const getFilteredPermissions = () => {
-    let filtered = permissions;
+  const handlePermissionNameChange = (name: string) => {
+    setFormData((prev) => {
+      const newCode = !editingPermission && !prev.permission_code ? generatePermissionCode(name, prev.permission_category) : prev.permission_code;
 
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter((p) => p.permission_name.toLowerCase().includes(search) || p.permission_code.toLowerCase().includes(search) || p.description.toLowerCase().includes(search));
-    }
-
-    if (categoryFilter) {
-      filtered = filtered.filter((p) => p.permission_category === categoryFilter);
-    }
-
-    if (riskFilter) {
-      filtered = filtered.filter((p) => p.risk_level === riskFilter);
-    }
-
-    if (tabValue === 1) {
-      filtered = filtered.filter((p) => p.risk_level === "high" || p.risk_level === "critical");
-    } else if (tabValue === 2) {
-      filtered = filtered.filter((p) => !p.is_active);
-    }
-
-    return filtered;
+      return {
+        ...prev,
+        permission_name: name,
+        permission_code: newCode,
+      };
+    });
   };
 
-  const getRiskLevelColor = (level: string) => {
-    const riskLevel = riskLevels.find((r) => r.value === level);
-    return riskLevel?.color || "default";
+  const handleCategoryChange = (category: string) => {
+    setFormData((prev) => {
+      const newCode = !editingPermission && prev.permission_name ? generatePermissionCode(prev.permission_name, category) : prev.permission_code;
+
+      return {
+        ...prev,
+        permission_category: category,
+        permission_code: newCode,
+      };
+    });
+  };
+
+  const handleOpenDialog = (permission?: Permission) => {
+    if (permission) {
+      setEditingPermission(permission);
+      setFormData({
+        permission_name: permission.permission_name,
+        permission_code: permission.permission_code,
+        permission_category: permission.permission_category,
+        description: permission.description || "",
+        permission_type: permission.permission_type,
+        risk_level: permission.risk_level,
+        resource_type: permission.resource_type || "",
+        action_type: permission.action_type || "",
+        effect: permission.effect,
+        requires_scope: permission.requires_scope,
+        is_delegatable: permission.is_delegatable,
+        is_auditable: permission.is_auditable,
+      });
+    } else {
+      setEditingPermission(null);
+      setFormData(defaultFormData);
+    }
+    setFormErrors({});
+    setOpenDialog(true);
+  };
+
+  const handleCloseDialog = () => {
+    setOpenDialog(false);
+    setEditingPermission(null);
+    setFormData(defaultFormData);
+    setFormErrors({});
+    setCurrentStep(0); // Reset step when closing
+    setShowAdvanced(false); // Reset advanced toggle
+  };
+
+  const validateForm = (): boolean => {
+    const errors: Record<string, string> = {};
+
+    // Required fields validation
+    if (!formData.permission_name.trim()) {
+      errors.permission_name = "Permission name is required";
+    } else if (formData.permission_name.length < 3) {
+      errors.permission_name = "Permission name must be at least 3 characters";
+    } else if (formData.permission_name.length > 100) {
+      errors.permission_name = "Permission name must be less than 100 characters";
+    }
+
+    if (!formData.permission_code.trim()) {
+      errors.permission_code = "Permission code is required";
+    } else if (!/^[a-z0-9_\.]+$/.test(formData.permission_code)) {
+      errors.permission_code = "Permission code can only contain lowercase letters, numbers, underscores, and dots";
+    } else if (formData.permission_code.length < 3) {
+      errors.permission_code = "Permission code must be at least 3 characters";
+    } else if (formData.permission_code.length > 100) {
+      errors.permission_code = "Permission code must be less than 100 characters";
+    } else {
+      // Check for duplicate codes (excluding current permission when editing)
+      const duplicatePermission = permissions.find((p) => p.permission_code === formData.permission_code && (!editingPermission || p.id !== editingPermission.id));
+      if (duplicatePermission) {
+        errors.permission_code = "Permission code already exists";
+      }
+    }
+
+    if (!formData.permission_category.trim()) {
+      errors.permission_category = "Category is required";
+    }
+
+    // Business validation
+    if (formData.risk_level === "critical" && formData.effect === "allow" && !formData.description.trim()) {
+      errors.description = "Critical permissions require a description explaining the security implications";
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleSubmit = async () => {
+    if (!validateForm()) {
+      return;
+    }
+
+    try {
+      if (editingPermission) {
+        await updatePermission(editingPermission.id, formData);
+        setSnackbar({
+          open: true,
+          message: "Permission updated successfully",
+          severity: "success",
+        });
+      } else {
+        await createPermission(formData);
+        setSnackbar({
+          open: true,
+          message: "Permission created successfully",
+          severity: "success",
+        });
+      }
+      handleCloseDialog();
+    } catch (error: any) {
+      setSnackbar({
+        open: true,
+        message: error.message || "Failed to save permission",
+        severity: "error",
+      });
+    }
+  };
+
+  const handleDelete = async (permission: Permission) => {
+    if (window.confirm(`Are you sure you want to delete "${permission.permission_name}"?`)) {
+      try {
+        await deletePermission(permission.id);
+        setSnackbar({
+          open: true,
+          message: "Permission deleted successfully",
+          severity: "success",
+        });
+      } catch (error: any) {
+        setSnackbar({
+          open: true,
+          message: error.message || "Failed to delete permission",
+          severity: "error",
+        });
+      }
+    }
+    setAnchorEl(null);
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, permission: Permission) => {
-    setMenuAnchor(event.currentTarget);
+    setAnchorEl(event.currentTarget);
     setSelectedPermission(permission);
   };
 
   const handleMenuClose = () => {
-    setMenuAnchor(null);
+    setAnchorEl(null);
     setSelectedPermission(null);
   };
 
+  const getRiskLevelColor = (level: string) => {
+    switch (level) {
+      case "critical":
+        return "error";
+      case "high":
+        return "warning";
+      case "medium":
+        return "info";
+      case "low":
+        return "success";
+      default:
+        return "default";
+    }
+  };
+
+  const getRiskLevelIcon = (level: string) => {
+    switch (level) {
+      case "critical":
+      case "high":
+        return <Warning fontSize="small" />;
+      case "medium":
+        return <Info fontSize="small" />;
+      case "low":
+        return <CheckCircle fontSize="small" />;
+      default:
+        return <Security fontSize="small" />;
+    }
+  };
+
+  const steps = [
+    {
+      label: "Basic Information",
+      description: "Essential permission details",
+      fields: ["permission_name", "permission_category", "description"],
+    },
+    {
+      label: "Classification",
+      description: "Risk level and type settings",
+      fields: ["permission_type", "risk_level", "effect"],
+    },
+    {
+      label: "Advanced Options",
+      description: "Resource scoping and delegation",
+      fields: ["resource_type", "action_type", "requires_scope", "is_delegatable", "is_auditable"],
+    },
+  ];
+
+  const isStepValid = (stepIndex: number): boolean => {
+    const stepFields = steps[stepIndex].fields;
+    return stepFields.every((field) => {
+      if (field === "permission_name" && !formData.permission_name.trim()) return false;
+      if (field === "permission_category" && !formData.permission_category.trim()) return false;
+      if (field === "description" && formData.risk_level === "critical" && !formData.description.trim()) return false;
+      return true;
+    });
+  };
+
+  const handleNext = () => {
+    if (isStepValid(currentStep)) {
+      setCurrentStep((prev) => Math.min(prev + 1, steps.length - 1));
+    }
+  };
+
+  const handlePrevious = () => {
+    setCurrentStep((prev) => Math.max(prev - 1, 0));
+  };
+
+  if (loading && permissions.length === 0) {
+    return (
+      <Box sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          Permission Registry
+        </Typography>
+        <LinearProgress />
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+          Loading permissions...
+        </Typography>
+      </Box>
+    );
+  }
+
+  // Breadcrumb configuration
+  const breadcrumbItems: BreadcrumbItem[] = [
+    {
+      label: "Dashboard",
+      path: "/dashboard",
+      icon: "dashboard",
+    },
+    {
+      label: "RBAC Management",
+      path: "/rbac",
+      icon: "security",
+    },
+    {
+      label: "Permission Registry",
+      icon: "security",
+      chip: {
+        label: `${permissions.length} permissions`,
+        color: "primary",
+      },
+    },
+  ];
+
   return (
     <Box sx={{ p: { xs: 2, md: 4 } }}>
+      {/* Breadcrumb Navigation */}
+      <AppBreadcrumbs items={breadcrumbItems} />
+
       {/* Header */}
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
         <Box>
           <Typography variant="h4" fontWeight={700} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Key color="primary" />
+            <Security color="primary" />
             Permission Registry
           </Typography>
           <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-            Manage tenant-specific permissions and access controls
+            Manage tenant permissions and access control
           </Typography>
         </Box>
-        <Button variant="contained" startIcon={<Add />} onClick={handleCreatePermission} sx={{ borderRadius: 2 }}>
-          Create Permission
-        </Button>
+        <Box sx={{ display: "flex", gap: 2 }}>
+          <Button variant="outlined" startIcon={<ArrowBack />} onClick={() => (window.location.href = "/rbac")}>
+            Back to RBAC
+          </Button>
+          <Button variant="outlined" startIcon={<Refresh />} onClick={() => loadPermissions()}>
+            Refresh
+          </Button>
+          <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+            Create Permission
+          </Button>
+        </Box>
       </Box>
 
-      {/* Summary Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                Total Permissions
-              </Typography>
-              <Typography variant="h5" fontWeight={600} color="primary.main">
-                {permissions.length}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                High Risk
-              </Typography>
-              <Typography variant="h5" fontWeight={600} color="warning.main">
-                {permissions.filter((p) => p.risk_level === "high" || p.risk_level === "critical").length}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                Categories
-              </Typography>
-              <Typography variant="h5" fontWeight={600} color="secondary.main">
-                {new Set(permissions.map((p) => p.permission_category)).size}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Typography variant="body2" color="text.secondary">
-                Active Usage
-              </Typography>
-              <Typography variant="h5" fontWeight={600} color="success.main">
-                {permissions.reduce((sum, p) => sum + p.usage_count, 0)}
-              </Typography>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
+      {/* Error Alert */}
+      {error && (
+        <Alert severity="error" sx={{ mb: 3 }}>
+          {error}
+        </Alert>
+      )}
 
-      {/* Filters and Search */}
-      <Card elevation={2} sx={{ mb: 3 }}>
+      {/* Filters */}
+      <Card sx={{ mb: 3 }}>
         <CardContent>
-          <Grid container spacing={3} alignItems="center">
+          <Grid container spacing={2} alignItems="center">
             <Grid size={{ xs: 12, md: 4 }}>
               <TextField
                 fullWidth
@@ -442,12 +480,12 @@ const PermissionRegistryPage: React.FC = () => {
                 }}
               />
             </Grid>
-            <Grid size={{ xs: 12, md: 3 }}>
+            <Grid size={{ xs: 12, md: 2 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Category</InputLabel>
-                <Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} label="Category">
+                <Select value={categoryFilter} label="Category" onChange={(e) => setCategoryFilter(e.target.value)}>
                   <MenuItem value="">All Categories</MenuItem>
-                  {permissionCategories.map((category) => (
+                  {categories.map((category) => (
                     <MenuItem key={category} value={category}>
                       {category}
                     </MenuItem>
@@ -455,14 +493,27 @@ const PermissionRegistryPage: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid size={{ xs: 12, md: 3 }}>
+            <Grid size={{ xs: 12, md: 2 }}>
+              <FormControl fullWidth size="small">
+                <InputLabel>Type</InputLabel>
+                <Select value={typeFilter} label="Type" onChange={(e) => setTypeFilter(e.target.value)}>
+                  <MenuItem value="">All Types</MenuItem>
+                  {types.map((type) => (
+                    <MenuItem key={type} value={type}>
+                      {type}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid size={{ xs: 12, md: 2 }}>
               <FormControl fullWidth size="small">
                 <InputLabel>Risk Level</InputLabel>
-                <Select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)} label="Risk Level">
-                  <MenuItem value="">All Risk Levels</MenuItem>
+                <Select value={riskFilter} label="Risk Level" onChange={(e) => setRiskFilter(e.target.value)}>
+                  <MenuItem value="">All Levels</MenuItem>
                   {riskLevels.map((level) => (
-                    <MenuItem key={level.value} value={level.value}>
-                      <Chip label={level.label} size="small" color={level.color as any} />
+                    <MenuItem key={level} value={level}>
+                      {level}
                     </MenuItem>
                   ))}
                 </Select>
@@ -471,11 +522,13 @@ const PermissionRegistryPage: React.FC = () => {
             <Grid size={{ xs: 12, md: 2 }}>
               <Button
                 variant="outlined"
-                fullWidth
+                startIcon={<FilterList />}
                 onClick={() => {
                   setSearchTerm("");
                   setCategoryFilter("");
+                  setTypeFilter("");
                   setRiskFilter("");
+                  setPage(1);
                 }}
               >
                 Clear Filters
@@ -485,238 +538,561 @@ const PermissionRegistryPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Main Content */}
-      <Card elevation={3}>
-        <Box sx={{ borderBottom: 1, borderColor: "divider" }}>
-          <Tabs value={tabValue} onChange={(e, newValue) => setTabValue(newValue)}>
-            <Tab icon={<Shield />} label="All Permissions" />
-            <Tab icon={<Warning />} label="High Risk" />
-            <Tab icon={<Lock />} label="Inactive" />
-          </Tabs>
-        </Box>
-
-        <CardContent>
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>Permission Details</TableCell>
-                  <TableCell>Category</TableCell>
-                  <TableCell align="center">Risk Level</TableCell>
-                  <TableCell align="center">Type</TableCell>
-                  <TableCell align="center">Usage</TableCell>
-                  <TableCell align="center">Status</TableCell>
-                  <TableCell align="center">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {getFilteredPermissions().map((permission) => (
-                  <TableRow key={permission.id} hover>
-                    <TableCell>
-                      <Box>
-                        <Typography variant="body1" fontWeight={600}>
-                          {permission.permission_name}
-                        </Typography>
-                        <Typography variant="body2" color="text.secondary">
-                          <Code sx={{ fontSize: 14, mr: 0.5 }} />
-                          {permission.permission_code}
-                        </Typography>
+      {/* Permissions Table */}
+      <Card>
+        <TableContainer>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell>Permission</TableCell>
+                <TableCell>Code</TableCell>
+                <TableCell>Category</TableCell>
+                <TableCell>Type</TableCell>
+                <TableCell>Risk Level</TableCell>
+                <TableCell>Effect</TableCell>
+                <TableCell>Status</TableCell>
+                <TableCell align="center">Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {paginatedPermissions.map((permission) => (
+                <TableRow key={permission.id} hover>
+                  <TableCell>
+                    <Box>
+                      <Typography variant="body2" fontWeight={600}>
+                        {permission.permission_name}
+                      </Typography>
+                      {permission.description && (
                         <Typography variant="caption" color="text.secondary">
                           {permission.description}
                         </Typography>
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Chip label={permission.permission_category} size="small" variant="outlined" icon={<Category />} />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip label={permission.risk_level} size="small" color={getRiskLevelColor(permission.risk_level) as any} sx={{ textTransform: "capitalize" }} />
-                    </TableCell>
-                    <TableCell align="center">
-                      <Typography variant="body2" sx={{ textTransform: "capitalize" }}>
-                        {permission.permission_type}
+                      )}
+                    </Box>
+                  </TableCell>
+                  <TableCell>
+                    <Typography
+                      variant="body2"
+                      component="code"
+                      sx={{
+                        bgcolor: "grey.100",
+                        px: 1,
+                        py: 0.5,
+                        borderRadius: 1,
+                        fontFamily: "monospace",
+                        fontSize: "0.875rem",
+                      }}
+                    >
+                      {permission.permission_code}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{permission.permission_category}</TableCell>
+                  <TableCell>
+                    <Chip label={permission.permission_type} size="small" variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={permission.risk_level} size="small" color={getRiskLevelColor(permission.risk_level) as any} icon={getRiskLevelIcon(permission.risk_level)} />
+                  </TableCell>
+                  <TableCell>
+                    <Chip label={permission.effect} size="small" color={permission.effect === "allow" ? "success" : "error"} variant={permission.effect === "allow" ? "outlined" : "filled"} />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={permission.is_active ? "Active" : "Inactive"}
+                      size="small"
+                      color={permission.is_active ? "success" : "default"}
+                      variant={permission.is_active ? "filled" : "outlined"}
+                    />
+                  </TableCell>
+                  <TableCell align="center">
+                    <IconButton size="small" onClick={(e) => handleMenuOpen(e, permission)}>
+                      <MoreVert />
+                    </IconButton>
+                  </TableCell>
+                </TableRow>
+              ))}
+              {paginatedPermissions.length === 0 && permissions.length === 0 && !loading && (
+                <TableRow>
+                  <TableCell colSpan={8} sx={{ py: 6, px: 4 }}>
+                    <Box sx={{ textAlign: "center" }}>
+                      <Security sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
+                      <Typography variant="h6" gutterBottom>
+                        No Permissions Created Yet
                       </Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Tooltip title="Number of assignments">
-                        <Chip label={permission.usage_count} size="small" color={permission.usage_count > 0 ? "primary" : "default"} />
-                      </Tooltip>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Chip
-                        label={permission.is_active ? "Active" : "Inactive"}
-                        size="small"
-                        color={permission.is_active ? "success" : "default"}
-                        icon={permission.is_active ? <CheckCircle /> : <Lock />}
-                      />
-                    </TableCell>
-                    <TableCell align="center">
-                      <IconButton onClick={(e) => handleMenuOpen(e, permission)}>
-                        <MoreVert />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </CardContent>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Start by creating your first custom permission for this tenant
+                      </Typography>
+                      <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+                        Create First Permission
+                      </Button>
+                    </Box>
+                  </TableCell>
+                </TableRow>
+              )}
+
+              {paginatedPermissions.length === 0 && permissions.length > 0 && !loading && (
+                <TableRow>
+                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      No permissions found matching your search criteria
+                    </Typography>
+                    <Button
+                      size="small"
+                      onClick={() => {
+                        setSearchTerm("");
+                        setCategoryFilter("");
+                        setTypeFilter("");
+                        setRiskFilter("");
+                        setPage(1);
+                      }}
+                      sx={{ mt: 1 }}
+                    >
+                      Clear Filters
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
+            <Pagination count={totalPages} page={page} onChange={(e, value) => setPage(value)} color="primary" />
+          </Box>
+        )}
       </Card>
 
-      {/* Permission Actions Menu */}
-      <Menu anchorEl={menuAnchor} open={Boolean(menuAnchor)} onClose={handleMenuClose}>
-        <MenuItem onClick={() => selectedPermission && handleEditPermission(selectedPermission)}>
-          <ListItemIcon>
-            <Edit />
-          </ListItemIcon>
-          <ListItemText>Edit Permission</ListItemText>
+      {/* Actions Menu */}
+      <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
+        <MenuItem
+          onClick={() => {
+            handleOpenDialog(selectedPermission!);
+            handleMenuClose();
+          }}
+        >
+          <Edit sx={{ mr: 1 }} fontSize="small" />
+          Edit Permission
         </MenuItem>
-        <MenuItem onClick={handleMenuClose}>
-          <ListItemIcon>
-            <Visibility />
-          </ListItemIcon>
-          <ListItemText>View Usage</ListItemText>
-        </MenuItem>
-        <MenuItem onClick={handleMenuClose}>
-          <ListItemIcon>
-            <Assignment />
-          </ListItemIcon>
-          <ListItemText>Copy Permission Code</ListItemText>
-        </MenuItem>
-        <Divider />
-        <MenuItem onClick={handleMenuClose} sx={{ color: "error.main" }}>
-          <ListItemIcon>
-            <Delete color="error" />
-          </ListItemIcon>
-          <ListItemText>Deactivate</ListItemText>
+        <MenuItem onClick={() => selectedPermission && handleDelete(selectedPermission)}>
+          <Delete sx={{ mr: 1 }} fontSize="small" />
+          Delete Permission
         </MenuItem>
       </Menu>
 
-      {/* Create/Edit Permission Dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>{editingPermission ? "Edit Permission" : "Create New Permission"}</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Permission Name"
-                fullWidth
-                value={formData.permission_name}
-                onChange={(e) => {
-                  setFormData({ ...formData, permission_name: e.target.value });
-                  if (!editingPermission && formData.permission_category) {
-                    setFormData((prev) => ({
-                      ...prev,
-                      permission_name: e.target.value,
-                      permission_code: generatePermissionCode(e.target.value, prev.permission_category),
-                    }));
-                  }
-                }}
-                required
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Permission Code"
-                fullWidth
-                value={formData.permission_code}
-                onChange={(e) => setFormData({ ...formData, permission_code: e.target.value })}
-                required
-                helperText="Auto-generated based on name and category"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <Autocomplete
-                options={permissionCategories}
-                value={formData.permission_category}
-                onChange={(e, value) => {
-                  setFormData({ ...formData, permission_category: value || "" });
-                  if (!editingPermission && formData.permission_name && value) {
-                    setFormData((prev) => ({
-                      ...prev,
-                      permission_category: value || "",
-                      permission_code: generatePermissionCode(prev.permission_name, value || ""),
-                    }));
-                  }
-                }}
-                renderInput={(params) => <TextField {...params} label="Category" required />}
-                freeSolo
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth required>
-                <InputLabel>Permission Type</InputLabel>
-                <Select value={formData.permission_type} onChange={(e) => setFormData({ ...formData, permission_type: e.target.value })} label="Permission Type">
-                  {permissionTypes.map((type) => (
-                    <MenuItem key={type.value} value={type.value}>
-                      {type.label}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Description"
-                fullWidth
-                multiline
-                rows={3}
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                helperText="Describe what this permission allows users to do"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Resource Type"
-                fullWidth
-                value={formData.resource_type}
-                onChange={(e) => setFormData({ ...formData, resource_type: e.target.value })}
-                helperText="What resource this permission applies to"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Action Type"
-                fullWidth
-                value={formData.action_type}
-                onChange={(e) => setFormData({ ...formData, action_type: e.target.value })}
-                helperText="What action this permission allows"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth required>
-                <InputLabel>Risk Level</InputLabel>
-                <Select value={formData.risk_level} onChange={(e) => setFormData({ ...formData, risk_level: e.target.value })} label="Risk Level">
-                  {riskLevels.map((level) => (
-                    <MenuItem key={level.value} value={level.value}>
-                      <Chip label={level.label} size="small" color={level.color as any} />
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <FormControlLabel
-                  control={<Switch checked={formData.requires_scope} onChange={(e) => setFormData({ ...formData, requires_scope: e.target.checked })} />}
-                  label="Requires Scope Validation"
-                />
-                <FormControlLabel control={<Switch checked={formData.is_delegatable} onChange={(e) => setFormData({ ...formData, is_delegatable: e.target.checked })} />} label="Can be Delegated" />
-                <FormControlLabel control={<Switch checked={formData.is_auditable} onChange={(e) => setFormData({ ...formData, is_auditable: e.target.checked })} />} label="Audit All Usage" />
-                <FormControlLabel
-                  control={<Switch checked={formData.is_system_permission} onChange={(e) => setFormData({ ...formData, is_system_permission: e.target.checked })} />}
-                  label="System Permission"
-                />
+      {/* Create/Edit Dialog - Enhanced with Stepper */}
+      <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="lg" fullWidth>
+        <DialogTitle>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Security color="primary" />
+              {editingPermission ? "Edit Permission" : "Create New Permission"}
+            </Box>
+            {!editingPermission && <Chip label={`Step ${currentStep + 1} of ${steps.length}`} size="small" color="primary" variant="outlined" />}
+          </Box>
+          {!editingPermission && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" color="text.secondary">
+                {steps[currentStep].description}
+              </Typography>
+              <LinearProgress variant="determinate" value={((currentStep + 1) / steps.length) * 100} sx={{ mt: 1, height: 6, borderRadius: 3 }} />
+            </Box>
+          )}
+        </DialogTitle>
+
+        <DialogContent sx={{ pb: 1 }}>
+          {/* Permission Preview */}
+          {formData.permission_name && formData.permission_code && (
+            <Alert severity="info" sx={{ mb: 3 }}>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                <Box>
+                  <Typography variant="body2" fontWeight={600}>
+                    {formData.permission_name}
+                  </Typography>
+                  <Typography variant="caption" sx={{ fontFamily: "monospace" }}>
+                    {formData.permission_code}
+                  </Typography>
+                </Box>
+                <Chip label={formData.permission_category} size="small" variant="outlined" sx={{ ml: "auto" }} />
               </Box>
-            </Grid>
-          </Grid>
+            </Alert>
+          )}
+
+          {/* Step Content */}
+          <Box sx={{ minHeight: 400 }}>
+            {(!editingPermission && currentStep === 0) || (editingPermission && (currentStep === 0 || showAdvanced)) ? (
+              /* Step 1: Basic Information */
+              <Grid container spacing={3}>
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Info color="primary" />
+                      Basic Information
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Define the core identity and purpose of this permission
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Permission Name"
+                    value={formData.permission_name}
+                    onChange={(e) => handlePermissionNameChange(e.target.value)}
+                    error={!!formErrors.permission_name}
+                    helperText={formErrors.permission_name || "Clear, descriptive name (e.g., 'Create Projects')"}
+                    required
+                    placeholder="Enter a human-readable permission name"
+                    InputProps={{
+                      endAdornment: formData.permission_name && <CheckCircle color="success" fontSize="small" />,
+                    }}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Autocomplete
+                    freeSolo
+                    options={categories}
+                    value={formData.permission_category}
+                    onChange={(e, value) => handleCategoryChange(value || "")}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Category"
+                        error={!!formErrors.permission_category}
+                        helperText={formErrors.permission_category || "Group related permissions (e.g., 'Project Management')"}
+                        required
+                        placeholder="Select or create a category"
+                        InputProps={{
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {params.InputProps.endAdornment}
+                              {formData.permission_category && <CheckCircle color="success" fontSize="small" sx={{ mr: 1 }} />}
+                            </>
+                          ),
+                        }}
+                      />
+                    )}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    label="Permission Code"
+                    value={formData.permission_code}
+                    onChange={(e) => setFormData({ ...formData, permission_code: e.target.value })}
+                    error={!!formErrors.permission_code}
+                    helperText={formErrors.permission_code || "Auto-generated unique identifier"}
+                    required
+                    placeholder="Automatically generated from name and category"
+                    InputProps={{
+                      startAdornment: (
+                        <Typography variant="caption" sx={{ mr: 1, color: "text.secondary" }}>
+                          CODE:
+                        </Typography>
+                      ),
+                      endAdornment: formData.permission_code && !formErrors.permission_code && <CheckCircle color="success" fontSize="small" />,
+                      sx: { fontFamily: "monospace" },
+                    }}
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <TextField
+                    fullWidth
+                    label="Description"
+                    multiline
+                    rows={4}
+                    value={formData.description}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    error={!!formErrors.description}
+                    helperText={formErrors.description || "Explain what actions this permission enables (required for critical permissions)"}
+                    placeholder="Describe what users can do with this permission..."
+                    required={formData.risk_level === "critical"}
+                  />
+                </Grid>
+              </Grid>
+            ) : null}
+
+            {(!editingPermission && currentStep === 1) || (editingPermission && (currentStep === 1 || showAdvanced)) ? (
+              /* Step 2: Classification */
+              <Grid container spacing={3}>
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Security color="primary" />
+                      Security Classification
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Configure the security level and behavioral properties
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Permission Type</InputLabel>
+                    <Select value={formData.permission_type} label="Permission Type" onChange={(e) => setFormData({ ...formData, permission_type: e.target.value as any })}>
+                      <MenuItem value="action">
+                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <Typography variant="body2">Action</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Allows specific operations
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="access">
+                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <Typography variant="body2">Access</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Controls visibility/entry
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="data">
+                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <Typography variant="body2">Data</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Data manipulation rights
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="administrative">
+                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <Typography variant="body2">Administrative</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            System configuration
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="system">
+                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+                          <Typography variant="body2">System</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            Core system functions
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Risk Level</InputLabel>
+                    <Select value={formData.risk_level} label="Risk Level" onChange={(e) => setFormData({ ...formData, risk_level: e.target.value as any })}>
+                      <MenuItem value="low">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <CheckCircle fontSize="small" color="success" />
+                          <Box>
+                            <Typography variant="body2">Low Risk</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Minimal security impact
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="medium">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Info fontSize="small" color="info" />
+                          <Box>
+                            <Typography variant="body2">Medium Risk</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Moderate security considerations
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="high">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Warning fontSize="small" color="warning" />
+                          <Box>
+                            <Typography variant="body2">High Risk</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Requires careful assignment
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="critical">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Warning fontSize="small" color="error" />
+                          <Box>
+                            <Typography variant="body2">Critical Risk</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              May require approval
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
+
+                  {/* Risk Level Warning */}
+                  {(formData.risk_level === "high" || formData.risk_level === "critical") && (
+                    <Alert severity="warning" sx={{ mt: 2 }}>
+                      <Typography variant="caption">
+                        {formData.risk_level === "critical" ? "Critical permissions may require approval before assignment" : "High-risk permissions should be assigned carefully"}
+                      </Typography>
+                    </Alert>
+                  )}
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 4 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Effect</InputLabel>
+                    <Select value={formData.effect} label="Effect" onChange={(e) => setFormData({ ...formData, effect: e.target.value as any })}>
+                      <MenuItem value="allow">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <CheckCircle fontSize="small" color="success" />
+                          <Box>
+                            <Typography variant="body2">Allow</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Grants access/capability
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                      <MenuItem value="deny">
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                          <Warning fontSize="small" color="error" />
+                          <Box>
+                            <Typography variant="body2">Deny</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Explicitly blocks access
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+            ) : null}
+
+            {(!editingPermission && currentStep === 2) || (editingPermission && showAdvanced) ? (
+              /* Step 3: Advanced Options */
+              <Grid container spacing={3}>
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Security color="primary" />
+                      Advanced Configuration
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Optional settings for resource scoping and delegation
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Resource Type"
+                    value={formData.resource_type}
+                    onChange={(e) => setFormData({ ...formData, resource_type: e.target.value })}
+                    placeholder="e.g., project, user, site"
+                    helperText="What type of resource this permission applies to (optional)"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Action Type"
+                    value={formData.action_type}
+                    onChange={(e) => setFormData({ ...formData, action_type: e.target.value })}
+                    placeholder="e.g., create, read, update, delete"
+                    helperText="Specific action this permission enables (optional)"
+                  />
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <Card variant="outlined" sx={{ p: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>
+                      Permission Behaviors
+                    </Typography>
+                    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                      <FormControlLabel
+                        control={<Switch checked={formData.requires_scope} onChange={(e) => setFormData({ ...formData, requires_scope: e.target.checked })} />}
+                        label={
+                          <Box>
+                            <Typography variant="body2">Requires Scope</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Permission must be scoped to specific resources
+                            </Typography>
+                          </Box>
+                        }
+                      />
+                      <FormControlLabel
+                        control={<Switch checked={formData.is_delegatable} onChange={(e) => setFormData({ ...formData, is_delegatable: e.target.checked })} />}
+                        label={
+                          <Box>
+                            <Typography variant="body2">Delegatable</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Users can delegate this permission to others
+                            </Typography>
+                          </Box>
+                        }
+                      />
+                      <FormControlLabel
+                        control={<Switch checked={formData.is_auditable} onChange={(e) => setFormData({ ...formData, is_auditable: e.target.checked })} />}
+                        label={
+                          <Box>
+                            <Typography variant="body2">Auditable</Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              Usage of this permission will be logged
+                            </Typography>
+                          </Box>
+                        }
+                      />
+                    </Box>
+                  </Card>
+                </Grid>
+              </Grid>
+            ) : null}
+
+            {/* Show Advanced Toggle for Edit Mode */}
+            {editingPermission && (
+              <Box sx={{ mt: 3, textAlign: "center" }}>
+                <Button variant="outlined" onClick={() => setShowAdvanced(!showAdvanced)} startIcon={showAdvanced ? <Warning /> : <Add />}>
+                  {showAdvanced ? "Hide Advanced Options" : "Show Advanced Options"}
+                </Button>
+              </Box>
+            )}
+          </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleSavePermission} disabled={!formData.permission_name || !formData.permission_code || !formData.permission_category}>
-            {editingPermission ? "Update" : "Create"} Permission
-          </Button>
+
+        <DialogActions sx={{ px: 3, pb: 2, justifyContent: "space-between" }}>
+          {/* Left side - Previous/Cancel */}
+          <Box>
+            {!editingPermission && currentStep > 0 ? (
+              <Button onClick={handlePrevious} disabled={loading}>
+                Previous
+              </Button>
+            ) : (
+              <Button onClick={handleCloseDialog} disabled={loading}>
+                Cancel
+              </Button>
+            )}
+          </Box>
+
+          {/* Right side - Next/Create */}
+          <Box sx={{ display: "flex", gap: 1 }}>
+            {!editingPermission && currentStep < steps.length - 1 ? (
+              <Button variant="contained" onClick={handleNext} disabled={!isStepValid(currentStep)} endIcon={<Add />}>
+                Next: {steps[currentStep + 1].label}
+              </Button>
+            ) : (
+              <Button variant="contained" onClick={handleSubmit} disabled={loading || !formData.permission_name || !formData.permission_code} startIcon={editingPermission ? <Edit /> : <Add />}>
+                {loading ? "Saving..." : editingPermission ? "Update Permission" : "Create Permission"}
+              </Button>
+            )}
+          </Box>
         </DialogActions>
       </Dialog>
 

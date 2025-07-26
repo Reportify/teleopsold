@@ -66,6 +66,7 @@ import VendorOperationsManagementPage from "./pages/VendorOperationsManagementPa
 // RBAC Management Pages
 import RBACDashboardPage from "./pages/RBACDashboardPage";
 import PermissionRegistryPage from "./pages/PermissionRegistryPage";
+import PermissionGroupsPage from "./pages/PermissionGroupsPage";
 import MyPermissionsPage from "./pages/MyPermissionsPage";
 import DesignationManagementPage from "./pages/DesignationManagementPage";
 
@@ -441,6 +442,14 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <PermissionRegistryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/groups"
+          element={
+            <ProtectedRoute>
+              <PermissionGroupsPage />
             </ProtectedRoute>
           }
         />

@@ -1,9 +1,87 @@
+"""
+Tenant signals for automatic RBAC initialization
+"""
+
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.core.management import call_command
 from .models import Tenant, CircleVendorRelationship
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+@receiver(post_save, sender=Tenant)
+def initialize_tenant_rbac(sender, instance, created, **kwargs):
+    """
+    Automatically initialize RBAC system when a new tenant is created
+    """
+    if created:
+        try:
+            logger.info(f"Auto-initializing RBAC for new tenant: {instance.organization_name}")
+            
+            # Call the Circle Portal RBAC initialization command
+            call_command('init_circle_portal_rbac', tenant_id=str(instance.id))
+            
+            logger.info(f"✓ RBAC successfully initialized for tenant: {instance.organization_name}")
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize RBAC for tenant {instance.organization_name}: {str(e)}")
+            # Don't raise the exception to avoid breaking tenant creation
+            # The admin can manually run the command later if needed
+
+
+@receiver(post_save, sender=Tenant)
+def create_default_admin_user(sender, instance, created, **kwargs):
+    """
+    Create a default administrator user profile when tenant is created
+    """
+    if created and hasattr(instance, '_creating_admin_email'):
+        try:
+            from django.contrib.auth import get_user_model
+            from .models import TenantUserProfile, PermissionGroup, UserPermissionGroupAssignment
+            
+            User = get_user_model()
+            admin_email = instance._creating_admin_email
+            
+            # Get the user who will become admin
+            try:
+                admin_user = User.objects.get(email=admin_email)
+                
+                # Create user profile for this tenant
+                user_profile, profile_created = TenantUserProfile.objects.get_or_create(
+                    user=admin_user,
+                    tenant=instance,
+                    defaults={
+                        'display_name': f'{admin_user.first_name} {admin_user.last_name}'.strip() or admin_user.email,
+                        'is_active': True,
+                        'job_title': 'Tenant Administrator'
+                    }
+                )
+                
+                # Assign to tenant administrators group
+                admin_group = PermissionGroup.objects.get(
+                    tenant=instance,
+                    group_code='tenant_administrators'
+                )
+                
+                UserPermissionGroupAssignment.objects.get_or_create(
+                    user_profile=user_profile,
+                    group=admin_group,
+                    defaults={
+                        'assigned_by': admin_user,
+                        'assignment_reason': 'Tenant creation - initial administrator',
+                        'is_active': True
+                    }
+                )
+                
+                logger.info(f"✓ Default admin user created for tenant: {instance.organization_name}")
+                
+            except User.DoesNotExist:
+                logger.warning(f"Admin user {admin_email} not found for tenant {instance.organization_name}")
+                
+        except Exception as e:
+            logger.error(f"Failed to create default admin for tenant {instance.organization_name}: {str(e)}")
 
 
 @receiver(post_save, sender=Tenant)

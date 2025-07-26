@@ -6,15 +6,51 @@ Serializers for tenant RBAC API endpoints.
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+import logging
 
 from ..models import (
     PermissionRegistry, PermissionGroup, PermissionGroupPermission,
     UserPermissionGroupAssignment, UserPermissionOverride,
     DesignationBasePermission, PermissionAuditTrail,
-    TenantUserProfile, TenantDesignation, TenantDepartment
+    TenantUserProfile, TenantDesignation, TenantDepartment,
+    PermissionCategory
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+class PermissionCategorySerializer(serializers.ModelSerializer):
+    """Serializer for permission categories."""
+    
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    permission_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = PermissionCategory
+        fields = [
+            'id', 'category_name', 'category_code', 'description', 
+            'is_system_category', 'is_active', 'sort_order',
+            'created_by_name', 'created_at', 'updated_at', 'permission_count'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_name']
+    
+    def get_permission_count(self, obj):
+        """Get count of permissions in this category."""
+        return PermissionRegistry.objects.filter(
+            tenant=obj.tenant,
+            permission_category=obj.category_name,
+            is_active=True
+        ).count()
+    
+    def create(self, validated_data):
+        """Create a new permission category."""
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['created_by'] = request.user
+            if hasattr(request.user, 'tenant_user_profile'):
+                validated_data['tenant'] = request.user.tenant_user_profile.tenant
+        return super().create(validated_data)
 
 
 class PermissionRegistrySerializer(serializers.ModelSerializer):
@@ -52,6 +88,49 @@ class PermissionRegistrySerializer(serializers.ModelSerializer):
             )
         return value
 
+    def create(self, validated_data):
+        """Create a new permission with audit logging."""
+        request = self.context.get('request')
+        
+        # Set created_by to the current user
+        if request and hasattr(request, 'user'):
+            validated_data['created_by'] = request.user
+            
+            # Set tenant from user's profile
+            if hasattr(request.user, 'tenant_user_profile'):
+                validated_data['tenant'] = request.user.tenant_user_profile.tenant
+        
+        # Create the permission
+        permission = super().create(validated_data)
+        
+        # Log audit trail for permission creation
+        try:
+            if request and hasattr(request, 'user') and hasattr(request.user, 'tenant_user_profile'):
+                PermissionAuditTrail.objects.create(
+                    tenant=permission.tenant,
+                    user_profile=request.user.tenant_user_profile,
+                    action_type='permission_created',
+                    resource_type='permission',
+                    resource_id=str(permission.id),
+                    resource_name=permission.permission_name,
+                    action_details={
+                        'permission_code': permission.permission_code,
+                        'permission_category': permission.permission_category,
+                        'risk_level': permission.risk_level,
+                        'permission_type': permission.permission_type,
+                        'is_system_permission': permission.is_system_permission
+                    },
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:255]
+                )
+        except Exception as e:
+            # Don't fail the operation if audit logging fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to log permission creation audit trail: {e}")
+        
+        return permission
+
 
 class PermissionGroupPermissionSerializer(serializers.ModelSerializer):
     """Serializer for permissions within a group."""
@@ -77,6 +156,12 @@ class PermissionGroupSerializer(serializers.ModelSerializer):
     
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
     group_permissions = PermissionGroupPermissionSerializer(many=True, read_only=True)
+    permissions = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False,
+        help_text="List of permission IDs to assign to this group"
+    )
     user_count = serializers.SerializerMethodField()
     permission_count = serializers.SerializerMethodField()
     
@@ -86,7 +171,7 @@ class PermissionGroupSerializer(serializers.ModelSerializer):
             'id', 'group_name', 'group_code', 'description', 'group_type',
             'is_system_group', 'is_assignable', 'auto_assign_conditions',
             'is_active', 'created_by_name', 'created_at', 'updated_at',
-            'group_permissions', 'user_count', 'permission_count'
+            'group_permissions', 'permissions', 'user_count', 'permission_count'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_name']
     
@@ -97,6 +182,169 @@ class PermissionGroupSerializer(serializers.ModelSerializer):
     def get_permission_count(self, obj):
         """Get count of permissions in this group."""
         return obj.group_permissions.filter(is_active=True).count()
+
+    def _log_audit_trail(self, group, action, request, details=None):
+        """Log audit trail for group operations."""
+        try:
+            if request and hasattr(request, 'user') and hasattr(request.user, 'tenant_user_profile'):
+                PermissionAuditTrail.objects.create(
+                    tenant=group.tenant,
+                    user_profile=request.user.tenant_user_profile,
+                    action_type=action,
+                    resource_type='permission_group',
+                    resource_id=str(group.id),
+                    resource_name=group.group_name,
+                    action_details=details or {},
+                    ip_address=request.META.get('REMOTE_ADDR'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', '')[:255]
+                )
+        except Exception as e:
+            # Don't fail the operation if audit logging fails
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to log audit trail: {e}")
+
+    def create(self, validated_data):
+        """Create a new permission group with permissions."""
+        permissions_data = validated_data.pop('permissions', [])
+        
+        # Set created_by to the current user
+        request = self.context.get('request')
+        if request and hasattr(request, 'user'):
+            validated_data['created_by'] = request.user
+            
+            # Set tenant from user's profile
+            if hasattr(request.user, 'tenant_user_profile'):
+                validated_data['tenant'] = request.user.tenant_user_profile.tenant
+        
+        # Create the group
+        group = super().create(validated_data)
+        
+        # Assign permissions to the group
+        self._update_group_permissions(group, permissions_data, request)
+        
+        # Log audit trail for group creation
+        self._log_audit_trail(
+            group, 
+            'group_created', 
+            request,
+            {
+                'group_type': group.group_type,
+                'permissions_assigned': len(permissions_data),
+                'is_system_group': group.is_system_group
+            }
+        )
+        
+        return group
+
+    def update(self, instance, validated_data):
+        """Update permission group with permissions."""
+        permissions_data = validated_data.pop('permissions', None)
+        request = self.context.get('request')
+        
+        # Track changes for audit trail
+        changes = {}
+        old_permissions = set(instance.group_permissions.filter(is_active=True).values_list('permission_id', flat=True))
+        
+        # Update basic fields
+        for attr, value in validated_data.items():
+            if getattr(instance, attr) != value:
+                changes[attr] = {
+                    'old': getattr(instance, attr),
+                    'new': value
+                }
+                setattr(instance, attr, value)
+        
+        instance.save()
+        
+        # Update permissions if provided
+        if permissions_data is not None:
+            self._update_group_permissions(instance, permissions_data, request)
+            
+            # Track permission changes
+            new_permissions = set(permissions_data)
+            added_permissions = new_permissions - old_permissions
+            removed_permissions = old_permissions - new_permissions
+            
+            if added_permissions or removed_permissions:
+                changes['permissions'] = {
+                    'added': list(added_permissions),
+                    'removed': list(removed_permissions),
+                    'total_before': len(old_permissions),
+                    'total_after': len(new_permissions)
+                }
+        
+        # Log audit trail for group update
+        if changes:
+            self._log_audit_trail(
+                instance, 
+                'group_updated', 
+                request,
+                {
+                    'changes': changes,
+                    'fields_changed': list(changes.keys())
+                }
+            )
+        
+        return instance
+
+    def _log_group_activity(self, group, action_type, request, details):
+        """Log group activity to audit trail."""
+        if not request or not hasattr(request.user, 'tenant_user_profile'):
+            return
+            
+        try:
+            from ..models import PermissionAuditTrail
+            
+            PermissionAuditTrail.objects.create(
+                tenant=group.tenant,
+                action_type=action_type,
+                entity_type='group',
+                entity_id=group.id,
+                old_value=details.get('old_values'),
+                new_value=details.get('new_values', {
+                    'group_name': group.group_name,
+                    'group_type': group.group_type
+                }),
+                change_reason=f'Permission group {action_type}',
+                performed_by=request.user,
+                additional_context=details
+            )
+        except Exception as e:
+            # Don't fail the main operation if logging fails
+            logger.error(f"Failed to log group activity: {str(e)}")
+
+    def _update_group_permissions(self, group, permission_ids, request):
+        """Update group permissions."""
+        from ..models import PermissionRegistry, PermissionGroupPermission
+        
+        # Get current user for audit trail
+        current_user = request.user if request else None
+        
+        # Get the tenant
+        tenant = group.tenant
+        
+        # Clear existing permissions
+        PermissionGroupPermission.objects.filter(group=group).delete()
+        
+        # Add new permissions
+        for permission_id in permission_ids:
+            try:
+                permission = PermissionRegistry.objects.get(
+                    id=permission_id, 
+                    tenant=tenant
+                )
+                
+                PermissionGroupPermission.objects.create(
+                    group=group,
+                    permission=permission,
+                    permission_level='granted',
+                    added_by=current_user,
+                    is_active=True
+                )
+            except PermissionRegistry.DoesNotExist:
+                # Skip invalid permission IDs
+                continue
 
 
 class UserPermissionGroupAssignmentSerializer(serializers.ModelSerializer):

@@ -27,7 +27,10 @@ import {
 } from "@mui/material";
 import { Security, Group, Person, Assignment, History, Add, MoreVert, TrendingUp, Warning, CheckCircle, Schedule, AdminPanelSettings, Shield, Key, Visibility, Assessment } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
-import { ModernSnackbar } from "../components";
+import { ModernSnackbar, AppBreadcrumbs } from "../components";
+import type { BreadcrumbItem } from "../components";
+import { useRBAC } from "../hooks/useRBAC";
+import { Permission, PermissionGroup, PermissionAuditTrail } from "../services/rbacAPI";
 
 interface PermissionSummary {
   total_permissions: number;
@@ -56,8 +59,15 @@ interface RecentActivity {
 
 const RBACDashboardPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
+  const {
+    state: { permissions, permissionGroups, auditTrail, totalPermissions, totalGroups, loading, error },
+    loadPermissions,
+    loadPermissionGroups,
+    loadAuditTrail,
+    loadUserEffectivePermissions,
+  } = useRBAC();
+
   const [tabValue, setTabValue] = useState(0);
-  const [loading, setLoading] = useState(true);
   const [permissionSummary, setPermissionSummary] = useState<PermissionSummary | null>(null);
   const [groupSummary, setGroupSummary] = useState<GroupSummary | null>(null);
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
@@ -73,67 +83,26 @@ const RBACDashboardPage: React.FC = () => {
     loadDashboardData();
   }, []);
 
+  useEffect(() => {
+    // Update summary when data changes
+    if (permissions.length > 0) {
+      calculatePermissionSummary();
+    }
+    if (permissionGroups.length > 0) {
+      calculateGroupSummary();
+    }
+    if (auditTrail.length > 0) {
+      formatRecentActivity();
+    }
+  }, [permissions, permissionGroups, auditTrail]);
+
   const loadDashboardData = async () => {
-    setLoading(true);
     try {
-      // TODO: Replace with actual API calls
-      // Mock data for demonstration
-      setPermissionSummary({
-        total_permissions: 145,
-        active_permissions: 142,
-        by_category: {
-          "User Management": 25,
-          "Data Access": 35,
-          Administrative: 15,
-          System: 8,
-          Project: 32,
-          Billing: 12,
-          Reports: 18,
-        },
-        by_risk_level: {
-          low: 85,
-          medium: 42,
-          high: 15,
-          critical: 3,
-        },
-        recent_changes: 7,
-      });
-
-      setGroupSummary({
-        total_groups: 12,
-        active_groups: 11,
-        total_assignments: 89,
-        recent_assignments: 5,
-      });
-
-      setRecentActivity([
-        {
-          id: "1",
-          action: "Permission Created",
-          entity_type: "permission",
-          entity_name: "project.create_milestone",
-          performed_by: "Admin User",
-          performed_at: "2025-01-22T10:30:00Z",
-          risk_level: "medium",
-        },
-        {
-          id: "2",
-          action: "User Added to Group",
-          entity_type: "group_assignment",
-          entity_name: "Project Managers",
-          performed_by: "HR Manager",
-          performed_at: "2025-01-22T09:15:00Z",
-          risk_level: "low",
-        },
-        {
-          id: "3",
-          action: "Permission Override",
-          entity_type: "user_override",
-          entity_name: "billing.view_all_invoices",
-          performed_by: "Finance Admin",
-          performed_at: "2025-01-22T08:45:00Z",
-          risk_level: "high",
-        },
+      await Promise.all([
+        loadPermissions(),
+        loadPermissionGroups(),
+        loadAuditTrail({ page_size: 10 }), // Load recent activity
+        loadUserEffectivePermissions(), // Load current user permissions
       ]);
     } catch (error) {
       console.error("Failed to load dashboard data:", error);
@@ -142,9 +111,97 @@ const RBACDashboardPage: React.FC = () => {
         message: "Failed to load dashboard data",
         severity: "error",
       });
-    } finally {
-      setLoading(false);
     }
+  };
+
+  const calculatePermissionSummary = () => {
+    const activePermissions = permissions.filter((p) => p.is_active);
+
+    // Calculate by category - use current page data for breakdown
+    const byCategory = permissions.reduce((acc, permission) => {
+      const category = permission.permission_category || "Other";
+      acc[category] = (acc[category] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    // Calculate by risk level - use current page data for breakdown
+    const byRiskLevel = permissions.reduce((acc, permission) => {
+      const risk = permission.risk_level || "low";
+      acc[risk] = (acc[risk] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    // Calculate recent changes (permissions created in last 7 days)
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const recentChanges = permissions.filter((p) => new Date(p.created_at) > oneWeekAgo).length;
+
+    setPermissionSummary({
+      total_permissions: totalPermissions || permissions.length, // Use total count from API
+      active_permissions: activePermissions.length,
+      by_category: byCategory,
+      by_risk_level: byRiskLevel,
+      recent_changes: recentChanges,
+    });
+  };
+
+  const calculateGroupSummary = () => {
+    const activeGroups = permissionGroups.filter((g) => g.is_active);
+
+    // Note: We don't have assignment counts from the API yet, so we'll estimate
+    // In a real implementation, this would come from the API
+    const totalAssignments = activeGroups.length * 8; // Estimate 8 users per group
+    const recentAssignments = Math.floor(totalAssignments * 0.1); // Estimate 10% recent
+
+    setGroupSummary({
+      total_groups: totalGroups || permissionGroups.length, // Use total count from API
+      active_groups: activeGroups.length,
+      total_assignments: totalAssignments,
+      recent_assignments: recentAssignments,
+    });
+  };
+
+  const formatRecentActivity = () => {
+    const formattedActivity = auditTrail.slice(0, 10).map((activity, index) => ({
+      id: activity.id.toString(),
+      action: formatActionType(activity.action_type),
+      entity_type: activity.entity_type,
+      entity_name: getEntityName(activity),
+      performed_by: `User ${activity.performed_by}`, // In real app, would resolve user name
+      performed_at: activity.performed_at,
+      risk_level: getRiskLevelFromAction(activity.action_type),
+    }));
+
+    setRecentActivity(formattedActivity);
+  };
+
+  const formatActionType = (actionType: string): string => {
+    const actionMap: Record<string, string> = {
+      grant: "Permission Granted",
+      revoke: "Permission Revoked",
+      modify: "Permission Modified",
+      restrict: "Permission Restricted",
+      escalate: "Permission Escalated",
+      expire: "Permission Expired",
+    };
+    return actionMap[actionType] || actionType;
+  };
+
+  const getEntityName = (activity: PermissionAuditTrail): string => {
+    // In a real implementation, this would resolve entity names from IDs
+    return `${activity.entity_type}_${activity.entity_id}`;
+  };
+
+  const getRiskLevelFromAction = (actionType: string): string => {
+    const riskMap: Record<string, string> = {
+      grant: "medium",
+      revoke: "high",
+      modify: "medium",
+      restrict: "low",
+      escalate: "critical",
+      expire: "low",
+    };
+    return riskMap[actionType] || "low";
   };
 
   const getRiskLevelColor = (level: string) => {
@@ -185,8 +242,45 @@ const RBACDashboardPage: React.FC = () => {
     );
   }
 
+  if (error) {
+    return (
+      <Box sx={{ p: 4 }}>
+        <Typography variant="h4" gutterBottom>
+          RBAC Dashboard
+        </Typography>
+        <Alert severity="error" sx={{ mt: 2 }}>
+          <Typography variant="h6">Failed to load RBAC data</Typography>
+          <Typography variant="body2">{error}</Typography>
+          <Button variant="contained" sx={{ mt: 2 }} onClick={() => loadDashboardData()}>
+            Retry
+          </Button>
+        </Alert>
+      </Box>
+    );
+  }
+
+  // Breadcrumb configuration
+  const breadcrumbItems: BreadcrumbItem[] = [
+    {
+      label: "Dashboard",
+      path: "/dashboard",
+      icon: "dashboard",
+    },
+    {
+      label: "RBAC Management",
+      icon: "security",
+      chip: {
+        label: "Role-Based Access Control",
+        color: "primary",
+      },
+    },
+  ];
+
   return (
     <Box sx={{ p: { xs: 2, md: 4 } }}>
+      {/* Breadcrumb Navigation */}
+      <AppBreadcrumbs items={breadcrumbItems} />
+
       {/* Header */}
       <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
         <Box>
@@ -199,11 +293,11 @@ const RBACDashboardPage: React.FC = () => {
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 2 }}>
-          <Button variant="outlined" startIcon={<Visibility />} onClick={() => (window.location.href = "/my-permissions")}>
+          <Button variant="outlined" startIcon={<Visibility />} onClick={() => loadUserEffectivePermissions()}>
             My Permissions
           </Button>
-          <Button variant="contained" startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions/create")}>
-            Quick Setup
+          <Button variant="contained" startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions")}>
+            Manage Permissions
           </Button>
         </Box>
       </Box>
@@ -386,7 +480,8 @@ const RBACDashboardPage: React.FC = () => {
                 </Button>
               </Box>
 
-              <Grid container spacing={3}>
+              {/* Summary Cards */}
+              <Grid container spacing={3} sx={{ mb: 4 }}>
                 <Grid size={{ xs: 12, md: 4 }}>
                   <Card variant="outlined">
                     <CardContent>
@@ -424,6 +519,89 @@ const RBACDashboardPage: React.FC = () => {
                   </Card>
                 </Grid>
               </Grid>
+
+              {/* Permission Groups Table */}
+              <Card sx={{ mb: 4 }}>
+                <CardContent>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                    <Typography variant="h6" fontWeight={600}>
+                      Permission Groups
+                    </Typography>
+                    <Button variant="outlined" size="small" onClick={() => (window.location.href = "/rbac/groups")}>
+                      View All
+                    </Button>
+                  </Box>
+
+                  {permissionGroups.length > 0 ? (
+                    <TableContainer>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>Group Name</TableCell>
+                            <TableCell>Type</TableCell>
+                            <TableCell>Permissions</TableCell>
+                            <TableCell>Status</TableCell>
+                            <TableCell align="center">Actions</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {permissionGroups.slice(0, 5).map((group) => (
+                            <TableRow key={group.id} hover>
+                              <TableCell>
+                                <Box>
+                                  <Typography variant="body2" fontWeight={600}>
+                                    {group.group_name}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {group.group_code}
+                                  </Typography>
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={group.group_type}
+                                  size="small"
+                                  variant="outlined"
+                                  color={group.group_type === "administrative" ? "error" : group.group_type === "functional" ? "primary" : group.group_type === "project" ? "secondary" : "default"}
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Chip
+                                  label={`${group.group_permissions?.length || 0} permissions`}
+                                  size="small"
+                                  color={(group.group_permissions?.length || 0) > 0 ? "primary" : "default"}
+                                  variant="outlined"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Chip label={group.is_active ? "Active" : "Inactive"} size="small" color={group.is_active ? "success" : "default"} variant={group.is_active ? "filled" : "outlined"} />
+                              </TableCell>
+                              <TableCell align="center">
+                                <IconButton size="small" onClick={() => (window.location.href = `/rbac/groups?edit=${group.id}`)}>
+                                  <MoreVert />
+                                </IconButton>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  ) : (
+                    <Box sx={{ textAlign: "center", py: 4 }}>
+                      <Group sx={{ fontSize: 48, color: "text.secondary", mb: 2 }} />
+                      <Typography variant="h6" color="text.secondary" gutterBottom>
+                        No Permission Groups
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                        Create your first permission group to organize user access control
+                      </Typography>
+                      <Button variant="contained" startIcon={<Add />} onClick={() => (window.location.href = "/rbac/groups?action=create")}>
+                        Create Group
+                      </Button>
+                    </Box>
+                  )}
+                </CardContent>
+              </Card>
             </Box>
           )}
 
@@ -514,7 +692,7 @@ const RBACDashboardPage: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Quick Actions Panel */}
+      {/* Global Quick Actions Panel */}
       <Card elevation={2} sx={{ mt: 3 }}>
         <CardContent>
           <Typography variant="h6" fontWeight={600} gutterBottom>
@@ -522,23 +700,23 @@ const RBACDashboardPage: React.FC = () => {
           </Typography>
           <Grid container spacing={2}>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Button variant="outlined" fullWidth startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions/create")} sx={{ height: 56 }}>
+              <Button variant="outlined" fullWidth startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions?action=create")} sx={{ height: 56 }}>
                 Create Permission
               </Button>
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Button variant="outlined" fullWidth startIcon={<Group />} onClick={() => (window.location.href = "/rbac/groups/create")} sx={{ height: 56 }}>
+              <Button variant="outlined" fullWidth startIcon={<Group />} onClick={() => (window.location.href = "/rbac/groups?action=create")} sx={{ height: 56 }}>
                 Create Group
               </Button>
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Button variant="outlined" fullWidth startIcon={<Person />} onClick={() => (window.location.href = "/rbac/user-permissions")} sx={{ height: 56 }}>
-                Manage User Access
+              <Button variant="outlined" fullWidth startIcon={<Person />} onClick={() => (window.location.href = "/users")} sx={{ height: 56 }}>
+                Manage Users
               </Button>
             </Grid>
             <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <Button variant="outlined" fullWidth startIcon={<History />} onClick={() => (window.location.href = "/rbac/audit")} sx={{ height: 56 }}>
-                View Audit Trail
+              <Button variant="outlined" fullWidth startIcon={<History />} onClick={() => setTabValue(2)} sx={{ height: 56 }}>
+                View Activity
               </Button>
             </Grid>
           </Grid>
