@@ -481,14 +481,9 @@ export const useEmployeeManagement = () => {
   // ==================
 
   const loadDesignations = useCallback(async () => {
-    console.log("loadDesignations: Starting to load designations...");
     try {
       const response = await userManagementAPI.designations.list();
-      console.log("loadDesignations: Full API response:", response);
-      console.log("loadDesignations: response.designations:", response.designations);
-
       const designationsArray = response.designations || [];
-      console.log("loadDesignations: Setting designations array:", designationsArray);
       setDesignations(designationsArray);
     } catch (error) {
       console.error("loadDesignations: Failed to load designations:", error);
@@ -497,14 +492,9 @@ export const useEmployeeManagement = () => {
   }, []);
 
   const loadDepartments = useCallback(async () => {
-    console.log("loadDepartments: Starting to load departments...");
     try {
       const response = await userManagementAPI.departments.list();
-      console.log("loadDepartments: Full API response:", response);
-      console.log("loadDepartments: response.departments:", response.departments);
-
       const departmentsArray = response.departments || [];
-      console.log("loadDepartments: Setting departments array:", departmentsArray);
       setDepartments(departmentsArray);
     } catch (error) {
       console.error("loadDepartments: Failed to load departments:", error);

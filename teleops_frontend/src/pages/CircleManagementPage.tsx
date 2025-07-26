@@ -135,12 +135,8 @@ const CircleManagementPage: React.FC = () => {
         return;
       }
 
-      console.log("Loading circle data for corporate tenant:", currentTenant.id);
-
       // Get circles for current corporate tenant
       const response = await corporateCircleApi.getCircleTenants();
-
-      console.log("Circle API response:", response as any);
 
       // Tenant API returns data directly
       const circleData = (response as any).circles || [];
@@ -148,9 +144,6 @@ const CircleManagementPage: React.FC = () => {
 
       setCircles(circleData);
       setCorporateMetrics(metrics);
-
-      console.log("Loaded circles:", circleData.length);
-      console.log("Corporate metrics:", metrics);
     } catch (error: any) {
       console.error("Error loading circle data:", error);
       setSnackbar({
@@ -170,7 +163,6 @@ const CircleManagementPage: React.FC = () => {
     try {
       setLoadingCircles(true);
       const response = await telecomCircleApi.list();
-      console.log("Available circles response:", response);
       setAvailableCircles((response as any) || []);
     } catch (error: any) {
       console.error("Error loading available circles:", error);
@@ -188,7 +180,6 @@ const CircleManagementPage: React.FC = () => {
     try {
       setLoadingInvitations(true);
       const response = await corporateCircleApi.getPendingInvitations();
-      console.log("Pending invitations response:", response);
       setPendingInvitations((response as any)?.invitations || []);
     } catch (error: any) {
       console.error("Error loading pending invitations:", error);
@@ -275,13 +266,6 @@ const CircleManagementPage: React.FC = () => {
         return;
       }
 
-      console.log("Sending circle invitation:", inviteForm);
-
-      // Debug: Check authentication context
-      console.log("🔍 Debug - Current Tenant:", currentTenant);
-      console.log("🔍 Debug - Tenant Type:", currentTenant?.tenant_type);
-      console.log("🔍 Debug - Tenant ID:", currentTenant?.id);
-
       // Send invitation with only the required fields
       const invitationData = {
         selected_circle_id: inviteForm.selected_circle_id,
@@ -292,8 +276,6 @@ const CircleManagementPage: React.FC = () => {
       };
 
       const response = await corporateCircleApi.inviteCircleTenant(invitationData);
-
-      console.log("Invitation response:", response as any);
 
       // Tenant API returns success response directly
       setSnackbar({
@@ -370,8 +352,7 @@ const CircleManagementPage: React.FC = () => {
 
   const testEndpoint = async () => {
     try {
-      const response = await corporateCircleApi.testInviteEndpoint();
-      console.log("✅ Endpoint test successful:", response);
+      const response = await corporateCircleApi.testInviteEndpoint(); // eslint-disable-line @typescript-eslint/no-unused-vars
       setSnackbar({
         open: true,
         message: "Endpoint is working! Check console for details.",

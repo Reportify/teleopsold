@@ -8,18 +8,19 @@ class Command(BaseCommand):
     help = 'Create a super admin for Teleops internal portal'
 
     def add_arguments(self, parser):
-        parser.add_argument('--email', type=str, required=True, help='Email address for the super admin')
-        parser.add_argument('--first-name', type=str, required=True, help='First name for the super admin')
-        parser.add_argument('--last-name', type=str, required=True, help='Last name for the super admin')
-        parser.add_argument('--password', type=str, required=True, help='Password for the super admin')
+        parser.add_argument('--email', type=str, help='Email address for the super admin')
+        parser.add_argument('--first-name', type=str, help='First name for the super admin')
+        parser.add_argument('--last-name', type=str, help='Last name for the super admin')
+        parser.add_argument('--password', type=str, help='Password for the super admin')
         parser.add_argument('--employee-id', type=str, help='Employee ID (optional)')
 
     def handle(self, *args, **options):
-        email = options['email']
-        first_name = options['first_name']
-        last_name = options['last_name']
-        password = options['password']
-        employee_id = options.get('employee_id')
+        import getpass
+        email = options.get('email') or input('Email: ')
+        first_name = options.get('first_name') or input('First name: ')
+        last_name = options.get('last_name') or input('Last name: ')
+        password = options.get('password') or getpass.getpass('Password: ')
+        employee_id = options.get('employee_id') or input('Employee ID (optional): ') or None
 
         # Check if user already exists
         if User.objects.filter(email=email).exists():
@@ -46,6 +47,7 @@ class Command(BaseCommand):
                 employee_id=employee_id,
                 role='super_admin',
                 access_level='admin',
+                display_name=f"{first_name} {last_name}",
             )
 
             self.stdout.write(

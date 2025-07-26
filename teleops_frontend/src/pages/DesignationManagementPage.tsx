@@ -180,7 +180,7 @@ const DesignationManagementPage: React.FC = () => {
       setLoading(true);
       const response = await api.get("/tenant/designations/");
       setDesignations(response.data.designations || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error loading designations:", error);
       showSnackbar("Failed to load designations", "error");
     } finally {
@@ -192,7 +192,7 @@ const DesignationManagementPage: React.FC = () => {
     try {
       const response = await api.get("/tenant/departments/");
       setDepartments(response.data.departments || []);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error loading departments:", error);
       showSnackbar("Failed to load departments", "error");
     }

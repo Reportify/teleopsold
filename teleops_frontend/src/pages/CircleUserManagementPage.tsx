@@ -76,7 +76,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { StatsCard } from "../components";
 import useEmployeeManagement from "../hooks/useEmployeeManagement";
-import { EnhancedUserProfile, UserCreateData } from "../types/user";
+import { EnhancedUserProfile, UserCreateData, UserUpdateData } from "../types/user";
 import api from "../services/api";
 
 // Using types from the hook - CircleUser is now EnhancedUserProfile
@@ -96,6 +96,16 @@ interface CreateUserForm {
   password: string; // Adding password field
 }
 
+interface EditUserForm {
+  first_name: string;
+  last_name: string;
+  phone_number: string;
+  designation_id: number;
+  is_active: boolean;
+  employee_id: string;
+  email: string;
+}
+
 const CircleUserManagementPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
   const { darkMode } = useDarkMode();
@@ -107,8 +117,6 @@ const CircleUserManagementPage: React.FC = () => {
     total,
     loading,
     error,
-    selectedEmployee,
-    setSelectedEmployee,
 
     // Employee operations
     loadEmployees,
@@ -116,6 +124,7 @@ const CircleUserManagementPage: React.FC = () => {
     deleteEmployee,
     activateEmployee,
     deactivateEmployee,
+    updateEmployee,
 
     // Operation states
     creating,
@@ -142,16 +151,27 @@ const CircleUserManagementPage: React.FC = () => {
   // Local UI state
   const [activeTab, setActiveTab] = useState(0);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  const [editDialog, setEditDialog] = useState<{
+    open: boolean;
+    user: CircleUser | null;
+    form: EditUserForm | null;
+  }>({
+    open: false,
+    user: null,
+    form: null,
+  });
   const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // 1. Add menuUser state
+  const [menuUser, setMenuUser] = useState<CircleUser | null>(null);
+
   const currentTenant = getCurrentTenant();
 
   // Map hook data to existing component variables for compatibility
   const users = employees; // Use employees from hook
-  const selectedUser = selectedEmployee; // Use selectedEmployee from hook
 
   // Calculate statistics from actual user data instead of relying on potentially null stats
   const statistics = {
@@ -194,28 +214,6 @@ const CircleUserManagementPage: React.FC = () => {
 
   // Use designations from hook instead of separate state
   const availableDesignations = designations;
-
-  // Debug logging to check data
-  useEffect(() => {
-    console.log("=== DESIGNATION DEBUG ===");
-    console.log("Designations from hook:", designations);
-    console.log("Designations length:", designations?.length);
-    console.log("Designations type:", typeof designations);
-    console.log("Designations is array:", Array.isArray(designations));
-    if (designations && designations.length > 0) {
-      console.log("First designation:", designations[0]);
-    }
-
-    console.log("=== DEPARTMENT DEBUG ===");
-    console.log("Departments from hook:", departments);
-    console.log("Departments length:", departments?.length);
-    console.log("Departments type:", typeof departments);
-    console.log("Departments is array:", Array.isArray(departments));
-    if (departments && departments.length > 0) {
-      console.log("First department:", departments[0]);
-    }
-    console.log("=== END DEBUG ===");
-  }, [designations, departments]);
 
   // Load circle users using hook
   const loadCircleUsers = async () => {
@@ -271,6 +269,51 @@ const CircleUserManagementPage: React.FC = () => {
       console.error("Error creating user:", error);
       // Handle error display
     }
+  };
+
+  // Handle user editing
+  const handleEditUser = async () => {
+    if (!editDialog.user || !editDialog.form) return;
+
+    try {
+      const payload: UserUpdateData = {
+        first_name: editDialog.form.first_name,
+        last_name: editDialog.form.last_name,
+        phone_number: editDialog.form.phone_number,
+        designation_id: editDialog.form.designation_id > 0 ? editDialog.form.designation_id : undefined,
+        is_active: editDialog.form.is_active,
+        employee_id: editDialog.form.employee_id,
+        email: editDialog.form.email,
+      };
+
+      await updateEmployee(editDialog.user.id.toString(), payload);
+
+      // Close dialog and refresh data
+      setEditDialog({ open: false, user: null, form: null });
+      await loadCircleUsers();
+    } catch (error: any) {
+      console.error("Error updating user:", error);
+      // Handle error display
+    }
+  };
+
+  // Open edit dialog with user data
+  const handleOpenEditDialog = (user: CircleUser) => {
+    // setSelectedEmployee(user); // This line is removed
+    setEditDialog({
+      open: true,
+      user,
+      form: {
+        first_name: user.user?.first_name || "",
+        last_name: user.user?.last_name || "",
+        phone_number: user.phone_number || "",
+        designation_id: user.designation?.id || 0,
+        is_active: user.is_active,
+        employee_id: user.employee_id || "",
+        email: user.user?.email || "",
+      },
+    });
+    handleUserMenuClose();
   };
 
   // Handle resend invitation
@@ -340,14 +383,16 @@ const CircleUserManagementPage: React.FC = () => {
     return new Date(dateString).toLocaleDateString();
   };
 
+  // 2. Update handleUserMenuClick to set menuUser
   const handleUserMenuClick = (event: React.MouseEvent<HTMLButtonElement>, user: CircleUser) => {
     setUserMenuAnchor(event.currentTarget);
-    setSelectedEmployee(user);
+    setMenuUser(user);
   };
 
+  // 3. Update handleUserMenuClose to clear menuUser
   const handleUserMenuClose = () => {
     setUserMenuAnchor(null);
-    setSelectedEmployee(null);
+    setMenuUser(null);
   };
 
   return (
@@ -548,8 +593,9 @@ const CircleUserManagementPage: React.FC = () => {
         </MenuItem>
         <MenuItem
           onClick={() => {
-            // Handle edit user
-            handleUserMenuClose();
+            if (menuUser) {
+              handleOpenEditDialog(menuUser);
+            }
           }}
         >
           <ListItemIcon>
@@ -557,11 +603,11 @@ const CircleUserManagementPage: React.FC = () => {
           </ListItemIcon>
           Edit User
         </MenuItem>
-        {selectedUser && !selectedUser.user?.last_login && (
+        {menuUser && !menuUser.user?.last_login && (
           <MenuItem
             onClick={() => {
-              if (selectedUser) {
-                handleResendInvitation(selectedUser.id);
+              if (menuUser) {
+                handleResendInvitation(menuUser.id);
               }
               handleUserMenuClose();
             }}
@@ -575,8 +621,8 @@ const CircleUserManagementPage: React.FC = () => {
         <Divider />
         <MenuItem
           onClick={() => {
-            if (selectedUser) {
-              handleDeactivateUser(selectedUser.id);
+            if (menuUser) {
+              handleDeactivateUser(menuUser.id);
             }
             handleUserMenuClose();
           }}
@@ -711,8 +757,138 @@ const CircleUserManagementPage: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateUser} variant="contained" disabled={loading}>
-            {loading ? "Creating..." : "Create User"}
+          <Button onClick={handleCreateUser} variant="contained" disabled={creating}>
+            {creating ? "Creating..." : "Create User"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit User Dialog */}
+      <Dialog open={editDialog.open} onClose={() => setEditDialog({ open: false, user: null, form: null })} maxWidth="md" fullWidth>
+        <DialogTitle>Edit User</DialogTitle>
+        <DialogContent>
+          {editDialog.user && editDialog.form ? (
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              {/* User Info Header */}
+              <Grid size={{ xs: 12 }}>
+                <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+                  <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{editDialog.user.full_name.charAt(0)}</Avatar>
+                  <Box>
+                    <Typography variant="h6">{editDialog.user.full_name}</Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      {editDialog.user.user?.email || "No email"}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Employee ID: {editDialog.user.employee_id || "Not set"}
+                    </Typography>
+                  </Box>
+                </Box>
+                <Divider />
+              </Grid>
+              {/* Basic Information */}
+              <Grid size={{ xs: 12 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Basic Information
+                </Typography>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="First Name"
+                  value={editDialog.form.first_name}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, first_name: e.target.value } }))}
+                  fullWidth
+                  required
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Last Name"
+                  value={editDialog.form.last_name}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, last_name: e.target.value } }))}
+                  fullWidth
+                  required
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Email Address"
+                  type="email"
+                  value={editDialog.form.email}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, email: e.target.value } }))}
+                  fullWidth
+                  required
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Employee ID"
+                  value={editDialog.form.employee_id}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, employee_id: e.target.value } }))}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField
+                  label="Phone Number"
+                  value={editDialog.form.phone_number}
+                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, phone_number: e.target.value } }))}
+                  fullWidth
+                />
+              </Grid>
+              {/* Job Information */}
+              <Grid size={{ xs: 12 }}>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Job Information
+                </Typography>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Job Title (Designation)</InputLabel>
+                  <Select
+                    value={editDialog.form.designation_id}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, designation_id: e.target.value as number } }))}
+                    label="Job Title (Designation)"
+                  >
+                    <MenuItem value={0}>No Designation</MenuItem>
+                    {designations && designations.length > 0
+                      ? designations.map((designation) => (
+                          <MenuItem key={designation.id} value={designation.id}>
+                            {designation.designation_name || (designation as any).name}
+                            {(designation.department_name || (designation as any).department) && ` (${designation.department_name || (designation as any).department})`}
+                          </MenuItem>
+                        ))
+                      : null}
+                  </Select>
+                </FormControl>
+              </Grid>
+              {/* Account Status */}
+              <Grid size={{ xs: 12 }}>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Account Status
+                </Typography>
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <FormControlLabel
+                  control={<Checkbox checked={editDialog.form.is_active} onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, is_active: e.target.checked } }))} />}
+                  label="User is active"
+                />
+                <FormHelperText>Inactive users cannot log in to the system. Use this to temporarily disable user access.</FormHelperText>
+              </Grid>
+            </Grid>
+          ) : (
+            <Box sx={{ textAlign: "center", py: 4 }}>
+              <Typography variant="body1" color="text.secondary">
+                No user selected for editing.
+              </Typography>
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDialog({ open: false, user: null, form: null })}>Cancel</Button>
+          <Button onClick={handleEditUser} variant="contained" disabled={updating}>
+            {updating ? "Updating..." : "Update User"}
           </Button>
         </DialogActions>
       </Dialog>

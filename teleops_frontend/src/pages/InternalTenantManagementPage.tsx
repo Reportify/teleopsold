@@ -438,7 +438,6 @@ const InternalTenantManagementPage: React.FC = () => {
 
   // Handle resend invitation (now also opens dialog)
   const handleResendInvitation = (invitation: any) => {
-    console.log("handleResendInvitation called with:", invitation);
     setResendInvitation(invitation);
     // Reset to default: 1 day
     setResendExpiryOption("1");
@@ -453,7 +452,6 @@ const InternalTenantManagementPage: React.FC = () => {
     setResendCustomExpiry(`${year}-${month}-${day}T${hours}:${minutes}`);
     setOpenResendDialog(true);
     handleInvitationMenuClose(); // Close the menu when opening dialog
-    console.log("Dialog should be opening now for regular resend");
   };
 
   // Handle cancel invitation (change status to Cancelled)
@@ -798,7 +796,6 @@ const InternalTenantManagementPage: React.FC = () => {
 
   // Handle resend expired invitation
   const handleResendExpiredInvitation = (invitation: any) => {
-    console.log("handleResendExpiredInvitation called with:", invitation);
     setResendInvitation(invitation);
     // Reset to default: 1 day
     setResendExpiryOption("1");
@@ -813,7 +810,6 @@ const InternalTenantManagementPage: React.FC = () => {
     setResendCustomExpiry(`${year}-${month}-${day}T${hours}:${minutes}`);
     setOpenResendDialog(true);
     handleInvitationMenuClose(); // Close the menu when opening dialog
-    console.log("Dialog should be opening now");
   };
 
   // Handle raising warning for tenant
@@ -821,9 +817,6 @@ const InternalTenantManagementPage: React.FC = () => {
     if (!selectedTenant) return;
 
     try {
-      // Mock API call - replace with actual API
-      console.log("Raising warning for tenant:", selectedTenant.id, warningForm);
-
       setSnackbar({
         open: true,
         message: `Warning raised for ${selectedTenant.organization_name}. Tenant can continue operations while addressing this issue.`,
@@ -856,9 +849,6 @@ const InternalTenantManagementPage: React.FC = () => {
     if (!selectedTenant) return;
 
     try {
-      // Mock API call - replace with actual API
-      console.log("Requesting clarification from tenant:", selectedTenant.id, clarificationForm);
-
       setSnackbar({
         open: true,
         message: `Clarification request sent to ${selectedTenant.organization_name}. Tenant can continue operations while responding.`,

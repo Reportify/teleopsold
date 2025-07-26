@@ -3,6 +3,20 @@ import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosR
 import { AuthService } from "./authService";
 import { internalApi } from "./internalApi";
 
+// Global throttle handler - will be set by ThrottleProvider
+let globalThrottleHandler: ((waitSeconds: number) => void) | null = null;
+let globalNotificationHandler: ((message: string, severity: "error" | "warning" | "info" | "success") => void) | null = null;
+
+// Function to set the global throttle handler
+export const setGlobalThrottleHandler = (handler: (waitSeconds: number) => void) => {
+  globalThrottleHandler = handler;
+};
+
+// Function to set the global notification handler
+export const setGlobalNotificationHandler = (handler: (message: string, severity: "error" | "warning" | "info" | "success") => void) => {
+  globalNotificationHandler = handler;
+};
+
 // API Configuration
 const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:8000/api/v1";
 
@@ -158,6 +172,12 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    console.log("API Interceptor - Error caught:", {
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url,
+    });
+
     // Debug logging for errors
     if (process.env.NODE_ENV === "development") {
       console.error("API Response Error:", {
@@ -168,6 +188,36 @@ api.interceptors.response.use(
         data: error.response?.data,
         headers: error.response?.headers,
       });
+    }
+
+    // Handle 429 Throttle errors FIRST (before 401 handling)
+    if (error.response?.status === 429) {
+      const detail = error.response.data?.detail || "";
+      const match = detail.match(/available in (\d+) seconds/);
+      let waitMsg = "You have made too many requests. Please wait and try again.";
+      let waitSeconds = null;
+
+      if (match) {
+        waitSeconds = parseInt(match[1], 10);
+        const minutes = Math.ceil(waitSeconds / 60);
+        waitMsg = `You have made too many requests. Please wait ${minutes} minute(s) and try again.`;
+      }
+
+      // Call global handlers if available
+      console.log("Global handlers status:", {
+        hasNotificationHandler: !!globalNotificationHandler,
+        hasThrottleHandler: !!globalThrottleHandler,
+        waitSeconds,
+      });
+
+      if (globalNotificationHandler) {
+        globalNotificationHandler(waitMsg, "warning");
+      }
+      if (globalThrottleHandler && waitSeconds) {
+        globalThrottleHandler(waitSeconds);
+      }
+
+      return Promise.reject(error);
     }
 
     // Handle 401 Unauthorized errors

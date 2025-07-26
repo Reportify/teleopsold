@@ -185,6 +185,8 @@ export interface UserUpdateData {
   phone_number?: string;
   designation_id?: number;
   is_active?: boolean;
+  employee_id?: string;
+  email?: string;
 }
 
 // =====================================================

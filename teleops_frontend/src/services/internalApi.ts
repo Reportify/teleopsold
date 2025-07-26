@@ -1,5 +1,19 @@
 // Internal API Service for Teleops Internal Portal
 import axios, { AxiosInstance, AxiosResponse } from "axios";
+import { setGlobalThrottleHandler, setGlobalNotificationHandler } from "./api";
+
+// Global throttle handler references (same as main api.ts)
+let globalThrottleHandler: ((waitSeconds: number) => void) | null = null;
+let globalNotificationHandler: ((message: string, severity: "error" | "warning" | "info" | "success") => void) | null = null;
+
+// Functions to set the global handlers (called from App.tsx)
+export const setInternalThrottleHandler = (handler: (waitSeconds: number) => void) => {
+  globalThrottleHandler = handler;
+};
+
+export const setInternalNotificationHandler = (handler: (message: string, severity: "error" | "warning" | "info" | "success") => void) => {
+  globalNotificationHandler = handler;
+};
 
 // API Configuration
 const INTERNAL_API_BASE_URL = process.env.REACT_APP_INTERNAL_API_BASE_URL || "http://localhost:8000/internal";
@@ -48,6 +62,49 @@ internalApi.interceptors.request.use(
 internalApi.interceptors.response.use(
   (response) => response,
   async (error) => {
+    console.log("Internal API Interceptor - Error caught:", {
+      status: error.response?.status,
+      data: error.response?.data,
+      url: error.config?.url,
+    });
+
+    // Handle 429 Throttle errors FIRST (before 401 handling)
+    if (error.response?.status === 429) {
+      // Try multiple ways to extract the throttle information
+      const errorData = error.response.data;
+
+      const detail = errorData?.detail || errorData?.message || "";
+      const match = detail.match(/available in (\d+) seconds/);
+      let waitMsg = "You have made too many requests. Please wait and try again.";
+      let waitSeconds = null;
+
+      if (match) {
+        waitSeconds = parseInt(match[1], 10);
+        const minutes = Math.ceil(waitSeconds / 60);
+        waitMsg = `You have made too many requests. Please wait ${minutes} minute(s) and try again.`;
+      } else {
+        // Fallback: use a default wait time if we can't parse the exact time
+        waitSeconds = 300; // 5 minutes default
+        waitMsg = "You have made too many requests. Please wait 5 minutes and try again.";
+      }
+
+      // Call global handlers if available
+      console.log("Internal API Global handlers status:", {
+        hasNotificationHandler: !!globalNotificationHandler,
+        hasThrottleHandler: !!globalThrottleHandler,
+        waitSeconds,
+      });
+
+      if (globalNotificationHandler) {
+        globalNotificationHandler(waitMsg, "warning");
+      }
+      if (globalThrottleHandler && waitSeconds) {
+        globalThrottleHandler(waitSeconds);
+      }
+
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401) {
       // Handle token expiration
       clearInternalTokens();
@@ -342,11 +399,7 @@ export class InternalAPIService {
         activated_at: new Date().toISOString(),
       };
 
-      console.log("🚀 Sending tenant approval request:", { tenantId, updateData });
-
       const response: AxiosResponse<APIResponse> = await internalApi.put(`/tenants/${tenantId}/update/`, updateData);
-
-      console.log("📥 Tenant approval response:", response.data);
 
       return response.data;
     } catch (error: any) {

@@ -213,9 +213,6 @@ const ComplianceCenterPage: React.FC = () => {
     if (!selectedIssue || !responseText.trim()) return;
 
     try {
-      // Mock API call - replace with actual API
-      console.log("Submitting response:", { issueId: selectedIssue.id, response: responseText });
-
       // Update local state
       setIssues(
         issues.map((issue) =>

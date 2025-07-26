@@ -1,5 +1,5 @@
 // Main App Component for Circle-Based Multi-Tenant Platform
-import React from "react";
+import React, { useEffect } from "react";
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { ThemeProvider } from "@mui/material/styles";
 import { CssBaseline, Box, CircularProgress } from "@mui/material";
@@ -9,6 +9,14 @@ import { Provider as ReduxProvider } from "react-redux";
 // Contexts
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import { ThemeProvider as DarkModeProvider } from "./contexts/ThemeContext";
+import { ThrottleProvider, useThrottle } from "./contexts/ThrottleContext";
+
+// Components
+import ThrottleBanner from "./components/common/ThrottleBanner";
+
+// API Services
+import { setGlobalThrottleHandler, setGlobalNotificationHandler } from "./services/api";
+import { setInternalThrottleHandler, setInternalNotificationHandler } from "./services/internalApi";
 
 // Store
 import { store } from "./store";
@@ -139,6 +147,340 @@ const InternalProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ child
   return <TeleopsInternalLayout>{children}</TeleopsInternalLayout>;
 };
 
+// App Inner component to access throttle context
+const AppInner: React.FC = () => {
+  const { setThrottleWait } = useThrottle();
+
+  // Set up global handlers on app startup
+  useEffect(() => {
+    // Set global throttle handler
+    const throttleHandler = (waitSeconds: number) => {
+      setThrottleWait(waitSeconds);
+    };
+
+    const notificationHandler = (message: string, severity: "error" | "warning" | "info" | "success") => {
+      console.log(`[${severity.toUpperCase()}] ${message}`);
+      // TODO: Connect to your global notification/snackbar system here
+    };
+
+    // Set handlers for both main API and internal API
+    setGlobalThrottleHandler(throttleHandler);
+    setGlobalNotificationHandler(notificationHandler);
+    setInternalThrottleHandler(throttleHandler);
+    setInternalNotificationHandler(notificationHandler);
+  }, [setThrottleWait]);
+
+  return (
+    <>
+      <ThrottleBanner />
+      <Routes>
+        {/* Public routes */}
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/corporate-onboarding" element={<OnboardingPage />} />
+        {/* Primary invitation route - matches API structure */}
+        <Route path="/public/invitations/:token" element={<OnboardingPage />} />
+        {/* Legacy route for backward compatibility */}
+        <Route path="/onboarding/:token" element={<OnboardingPage />} />
+        <Route path="/onboarding/status/:invitation_id" element={<OnboardingStatusPage />} />
+        <Route path="/terms-and-conditions" element={<TermsAndConditionsPage />} />
+        <Route path="/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/internal/login" element={<InternalLoginPage />} />
+
+        {/* Teleops Internal Portal routes (superuser only) */}
+        <Route
+          path="/internal/dashboard"
+          element={
+            <InternalProtectedRoute>
+              <InternalDashboardPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/tenants"
+          element={
+            <InternalProtectedRoute>
+              <InternalTenantManagementPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/tenants/:tenantId"
+          element={
+            <InternalProtectedRoute>
+              <TenantDetailsPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/billing"
+          element={
+            <InternalProtectedRoute>
+              <InternalBillingPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/plans"
+          element={
+            <InternalProtectedRoute>
+              <InternalPlansPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/support"
+          element={
+            <InternalProtectedRoute>
+              <InternalSupportPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/analytics"
+          element={
+            <InternalProtectedRoute>
+              <InternalAnalyticsPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/vendors"
+          element={
+            <InternalProtectedRoute>
+              <InternalVendorManagementPage />
+            </InternalProtectedRoute>
+          }
+        />
+        <Route
+          path="/internal/profile"
+          element={
+            <InternalProtectedRoute>
+              <ProfilePage />
+            </InternalProtectedRoute>
+          }
+        />
+
+        {/* Protected routes for regular users */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute>
+              <DashboardPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/projects"
+          element={
+            <ProtectedRoute>
+              <ProjectsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/sites"
+          element={
+            <ProtectedRoute>
+              <SitesPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/tasks"
+          element={
+            <ProtectedRoute>
+              <TasksPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/equipment"
+          element={
+            <ProtectedRoute>
+              <EquipmentPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/teams"
+          element={
+            <ProtectedRoute>
+              <TeamsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/warehouse"
+          element={
+            <ProtectedRoute>
+              <WarehousePage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/transport"
+          element={
+            <ProtectedRoute>
+              <TransportPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/analytics"
+          element={
+            <ProtectedRoute>
+              <AnalyticsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute>
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/profile"
+          element={
+            <ProtectedRoute>
+              <ProfilePage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/compliance-center"
+          element={
+            <ProtectedRoute>
+              <ComplianceCenterPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Corporate tenant portal routes */}
+        <Route
+          path="/circles"
+          element={
+            <ProtectedRoute>
+              <CircleManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/vendors"
+          element={
+            <ProtectedRoute>
+              <CircleVendorManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/vendor-operations"
+          element={
+            <ProtectedRoute>
+              <VendorOperationsManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <ProtectedRoute>
+              <CircleUserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/vendor-oversight"
+          element={
+            <ProtectedRoute>
+              <VendorOversightPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/governance"
+          element={
+            <ProtectedRoute>
+              <GovernancePage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* RBAC Management Routes */}
+        <Route
+          path="/rbac"
+          element={
+            <ProtectedRoute>
+              <RBACDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/dashboard"
+          element={
+            <ProtectedRoute>
+              <RBACDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/permissions"
+          element={
+            <ProtectedRoute>
+              <PermissionRegistryPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/my-permissions"
+          element={
+            <ProtectedRoute>
+              <MyPermissionsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/designations"
+          element={
+            <ProtectedRoute>
+              <DesignationManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/designations"
+          element={
+            <ProtectedRoute>
+              <DesignationManagementPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route path="/support" element={<RaiseTicketPage />} />
+
+        {/* Default redirect */}
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+        {/* 404 page */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </>
+  );
+};
+
 // App component
 const App: React.FC = () => {
   return (
@@ -149,310 +491,9 @@ const App: React.FC = () => {
             <CssBaseline />
             <Router>
               <AuthProvider>
-                <Routes>
-                  {/* Public routes */}
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/corporate-onboarding" element={<OnboardingPage />} />
-                  {/* Primary invitation route - matches API structure */}
-                  <Route path="/public/invitations/:token" element={<OnboardingPage />} />
-                  {/* Legacy route for backward compatibility */}
-                  <Route path="/onboarding/:token" element={<OnboardingPage />} />
-                  <Route path="/onboarding/status/:invitation_id" element={<OnboardingStatusPage />} />
-                  <Route path="/terms-and-conditions" element={<TermsAndConditionsPage />} />
-                  <Route path="/verify-email" element={<VerifyEmailPage />} />
-                  <Route path="/internal/login" element={<InternalLoginPage />} />
-
-                  {/* Teleops Internal Portal routes (superuser only) */}
-                  <Route
-                    path="/internal/dashboard"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalDashboardPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/tenants"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalTenantManagementPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/tenants/:tenantId"
-                    element={
-                      <InternalProtectedRoute>
-                        <TenantDetailsPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/billing"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalBillingPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/plans"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalPlansPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/support"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalSupportPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/analytics"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalAnalyticsPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/vendors"
-                    element={
-                      <InternalProtectedRoute>
-                        <InternalVendorManagementPage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/internal/profile"
-                    element={
-                      <InternalProtectedRoute>
-                        <ProfilePage />
-                      </InternalProtectedRoute>
-                    }
-                  />
-
-                  {/* Protected routes for regular users */}
-                  <Route
-                    path="/dashboard"
-                    element={
-                      <ProtectedRoute>
-                        <DashboardPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/projects"
-                    element={
-                      <ProtectedRoute>
-                        <ProjectsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/sites"
-                    element={
-                      <ProtectedRoute>
-                        <SitesPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/tasks"
-                    element={
-                      <ProtectedRoute>
-                        <TasksPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/equipment"
-                    element={
-                      <ProtectedRoute>
-                        <EquipmentPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/teams"
-                    element={
-                      <ProtectedRoute>
-                        <TeamsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/warehouse"
-                    element={
-                      <ProtectedRoute>
-                        <WarehousePage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/transport"
-                    element={
-                      <ProtectedRoute>
-                        <TransportPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/analytics"
-                    element={
-                      <ProtectedRoute>
-                        <AnalyticsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/settings"
-                    element={
-                      <ProtectedRoute>
-                        <SettingsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/profile"
-                    element={
-                      <ProtectedRoute>
-                        <ProfilePage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route
-                    path="/compliance-center"
-                    element={
-                      <ProtectedRoute>
-                        <ComplianceCenterPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  {/* Corporate tenant portal routes */}
-                  <Route
-                    path="/circles"
-                    element={
-                      <ProtectedRoute>
-                        <CircleManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/vendors"
-                    element={
-                      <ProtectedRoute>
-                        <CircleVendorManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/vendor-operations"
-                    element={
-                      <ProtectedRoute>
-                        <VendorOperationsManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/users"
-                    element={
-                      <ProtectedRoute>
-                        <CircleUserManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/vendor-oversight"
-                    element={
-                      <ProtectedRoute>
-                        <VendorOversightPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/governance"
-                    element={
-                      <ProtectedRoute>
-                        <GovernancePage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  {/* RBAC Management Routes */}
-                  <Route
-                    path="/rbac"
-                    element={
-                      <ProtectedRoute>
-                        <RBACDashboardPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/rbac/dashboard"
-                    element={
-                      <ProtectedRoute>
-                        <RBACDashboardPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/rbac/permissions"
-                    element={
-                      <ProtectedRoute>
-                        <PermissionRegistryPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/my-permissions"
-                    element={
-                      <ProtectedRoute>
-                        <MyPermissionsPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/designations"
-                    element={
-                      <ProtectedRoute>
-                        <DesignationManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-                  <Route
-                    path="/rbac/designations"
-                    element={
-                      <ProtectedRoute>
-                        <DesignationManagementPage />
-                      </ProtectedRoute>
-                    }
-                  />
-
-                  <Route path="/support" element={<RaiseTicketPage />} />
-
-                  {/* Default redirect */}
-                  <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-                  {/* 404 page */}
-                  <Route path="*" element={<NotFoundPage />} />
-                </Routes>
+                <ThrottleProvider>
+                  <AppInner />
+                </ThrottleProvider>
               </AuthProvider>
             </Router>
           </DynamicThemeProvider>
