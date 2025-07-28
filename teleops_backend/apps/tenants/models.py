@@ -2491,6 +2491,14 @@ class PermissionRegistry(models.Model):
         ('allow', 'Allow'),
         ('deny', 'Deny'),
     ]
+    
+    BUSINESS_TEMPLATE_CHOICES = [
+        ('view_only', 'View-Only Access'),
+        ('contributor', 'Contributor/Editor'),
+        ('creator_only', 'Creator Only'),
+        ('full_access', 'Full Access/Administrator'),
+        ('custom', 'Custom Permission'),
+    ]
 
     id = models.BigAutoField(primary_key=True)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='permission_registry')
@@ -2503,14 +2511,16 @@ class PermissionRegistry(models.Model):
 
     # Permission Configuration
     permission_type = models.CharField(max_length=50, choices=PERMISSION_TYPE_CHOICES, default='action')
+    business_template = models.CharField(max_length=50, choices=BUSINESS_TEMPLATE_CHOICES, default='custom', 
+                                       help_text="Business-friendly template used to create this permission")
     is_system_permission = models.BooleanField(default=False)
     requires_scope = models.BooleanField(default=False)
     is_delegatable = models.BooleanField(default=True)
     risk_level = models.CharField(max_length=20, choices=RISK_LEVEL_CHOICES, default='low')
 
     # Permission Metadata
-    resource_type = models.CharField(max_length=50, blank=True, help_text="What resource this permission applies to")
-    action_type = models.CharField(max_length=50, blank=True, help_text="What action this permission allows")
+    resource_type = models.CharField(max_length=50, blank=True, help_text="Resource category this permission applies to (e.g., project, user, site)")
+    # action_type field removed - redundant with business_template and permission_type
     effect = models.CharField(max_length=20, choices=EFFECT_CHOICES, default='allow')
 
     # Status
@@ -2687,7 +2697,7 @@ class UserPermissionOverride(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.user_profile.user.full_name} - {self.permission.permission_name} ({self.override_type})"
+        return f"{self.user_profile.user.get_full_name()} - {self.permission.permission_name} ({self.override_type})"
 
 
 class PermissionGroup(models.Model):

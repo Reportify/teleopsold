@@ -1,5 +1,5 @@
 // RBAC Dashboard Page - Main Permission Management Interface
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   Box,
   Card,
@@ -55,6 +55,7 @@ interface RecentActivity {
   performed_by: string;
   performed_at: string;
   risk_level: string;
+  change_summary?: string[];
 }
 
 const RBACDashboardPage: React.FC = () => {
@@ -114,7 +115,7 @@ const RBACDashboardPage: React.FC = () => {
     }
   };
 
-  const calculatePermissionSummary = () => {
+  const calculatePermissionSummary = useCallback(() => {
     const activePermissions = permissions.filter((p) => p.is_active);
 
     // Calculate by category - use current page data for breakdown
@@ -131,10 +132,10 @@ const RBACDashboardPage: React.FC = () => {
       return acc;
     }, {} as Record<string, number>);
 
-    // Calculate recent changes (permissions created in last 7 days)
+    // Calculate recent changes (permissions created in last 7 days, excluding system permissions)
     const oneWeekAgo = new Date();
     oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
-    const recentChanges = permissions.filter((p) => new Date(p.created_at) > oneWeekAgo).length;
+    const recentChanges = permissions.filter((p) => new Date(p.created_at) > oneWeekAgo && !p.is_system_permission).length;
 
     setPermissionSummary({
       total_permissions: totalPermissions || permissions.length, // Use total count from API
@@ -143,9 +144,9 @@ const RBACDashboardPage: React.FC = () => {
       by_risk_level: byRiskLevel,
       recent_changes: recentChanges,
     });
-  };
+  }, [permissions, totalPermissions]);
 
-  const calculateGroupSummary = () => {
+  const calculateGroupSummary = useCallback(() => {
     const activeGroups = permissionGroups.filter((g) => g.is_active);
 
     // Note: We don't have assignment counts from the API yet, so we'll estimate
@@ -159,21 +160,21 @@ const RBACDashboardPage: React.FC = () => {
       total_assignments: totalAssignments,
       recent_assignments: recentAssignments,
     });
-  };
+  }, [permissionGroups, totalGroups]);
 
-  const formatRecentActivity = () => {
+  const formatRecentActivity = useCallback(() => {
     const formattedActivity = auditTrail.slice(0, 10).map((activity, index) => ({
       id: activity.id.toString(),
-      action: formatActionType(activity.action_type),
+      action: activity.action_description || formatActionType(activity.action_type),
       entity_type: activity.entity_type,
-      entity_name: getEntityName(activity),
-      performed_by: `User ${activity.performed_by}`, // In real app, would resolve user name
+      entity_name: activity.entity_name || getEntityName(activity),
+      performed_by: activity.performed_by_name || `User ${activity.performed_by}`,
       performed_at: activity.performed_at,
       risk_level: getRiskLevelFromAction(activity.action_type),
+      change_summary: activity.change_summary || [],
     }));
-
     setRecentActivity(formattedActivity);
-  };
+  }, [auditTrail]);
 
   const formatActionType = (actionType: string): string => {
     const actionMap: Record<string, string> = {
@@ -295,6 +296,9 @@ const RBACDashboardPage: React.FC = () => {
         <Box sx={{ display: "flex", gap: 2 }}>
           <Button variant="outlined" startIcon={<Visibility />} onClick={() => loadUserEffectivePermissions()}>
             My Permissions
+          </Button>
+          <Button variant="outlined" startIcon={<Assessment />} onClick={() => (window.location.href = "/rbac/permission-dashboard")}>
+            Permission Dashboard
           </Button>
           <Button variant="contained" startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions")}>
             Manage Permissions
@@ -625,19 +629,44 @@ const RBACDashboardPage: React.FC = () => {
                   <TableBody>
                     {recentActivity.map((activity) => (
                       <TableRow key={activity.id} hover>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={600}>
-                            {activity.action}
-                          </Typography>
+                        <TableCell sx={{ maxWidth: 350 }}>
+                          <Box>
+                            <Typography variant="body2" fontWeight={600} color="primary.main" sx={{ mb: 0.5 }}>
+                              {activity.action}
+                            </Typography>
+                            <Typography variant="body2" fontWeight={500} sx={{ mb: 1 }}>
+                              {activity.entity_name}
+                            </Typography>
+                            {activity.change_summary && activity.change_summary.length > 0 && (
+                              <Box
+                                sx={{
+                                  mt: 1,
+                                  p: 1.5,
+                                  backgroundColor: "grey.50",
+                                  borderRadius: 1,
+                                  border: "1px solid",
+                                  borderColor: "grey.200",
+                                }}
+                              >
+                                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, mb: 0.5, display: "block" }}>
+                                  Changes Made:
+                                </Typography>
+                                {activity.change_summary.map((summary, idx) => (
+                                  <Typography key={idx} variant="caption" color="text.primary" display="block" sx={{ mb: 0.3, lineHeight: 1.4 }}>
+                                    {summary}
+                                  </Typography>
+                                ))}
+                              </Box>
+                            )}
+                          </Box>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">{activity.entity_name}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {activity.entity_type}
-                          </Typography>
+                          <Chip label={activity.entity_type.charAt(0).toUpperCase() + activity.entity_type.slice(1)} size="small" variant="outlined" color="default" />
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2">{activity.performed_by}</Typography>
+                          <Typography variant="body2" fontWeight={500}>
+                            {activity.performed_by}
+                          </Typography>
                         </TableCell>
                         <TableCell>
                           <Chip label={activity.risk_level} size="small" color={getRiskLevelColor(activity.risk_level) as any} />
@@ -699,22 +728,32 @@ const RBACDashboardPage: React.FC = () => {
             Quick Actions
           </Typography>
           <Grid container spacing={2}>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
               <Button variant="outlined" fullWidth startIcon={<Add />} onClick={() => (window.location.href = "/rbac/permissions?action=create")} sx={{ height: 56 }}>
                 Create Permission
               </Button>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
               <Button variant="outlined" fullWidth startIcon={<Group />} onClick={() => (window.location.href = "/rbac/groups?action=create")} sx={{ height: 56 }}>
                 Create Group
               </Button>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
               <Button variant="outlined" fullWidth startIcon={<Person />} onClick={() => (window.location.href = "/users")} sx={{ height: 56 }}>
                 Manage Users
               </Button>
             </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+              <Button variant="outlined" fullWidth startIcon={<Assessment />} onClick={() => (window.location.href = "/rbac/permission-dashboard")} sx={{ height: 56 }}>
+                Permission Dashboard
+              </Button>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+              <Button variant="outlined" fullWidth startIcon={<Assignment />} onClick={() => (window.location.href = "/rbac/assignment-panel")} sx={{ height: 56 }}>
+                Assignment Panel
+              </Button>
+            </Grid>
+            <Grid size={{ xs: 12, sm: 6, md: 2 }}>
               <Button variant="outlined" fullWidth startIcon={<History />} onClick={() => setTabValue(2)} sx={{ height: 56 }}>
                 View Activity
               </Button>

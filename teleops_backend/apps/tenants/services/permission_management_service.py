@@ -70,7 +70,14 @@ class PermissionManagementService:
                 self._log_permission_action(
                     'create_permission',
                     permission.id,
-                    {'permission_code': permission.permission_code}
+                    {
+                        'permission_code': permission.permission_code,
+                        'permission_name': permission.permission_name,
+                        'entity_name': permission.permission_name,
+                        'operation': 'create',
+                        'is_new_creation': True
+                    },
+                    entity_type='permission'
                 )
                 
                 logger.info(f"Created permission {permission.permission_code} for tenant {self.tenant.id}")
@@ -114,7 +121,8 @@ class PermissionManagementService:
                 self._log_permission_action(
                     'update_permission',
                     permission.id,
-                    {'old_values': old_values, 'new_values': update_data}
+                    {'old_values': old_values, 'new_values': update_data},
+                    entity_type='system'
                 )
                 
                 # Invalidate caches if permission was deactivated
@@ -162,7 +170,8 @@ class PermissionManagementService:
                 self._log_permission_action(
                     'delete_permission',
                     permission.id,
-                    {'permission_code': permission.permission_code}
+                    {'permission_code': permission.permission_code},
+                    entity_type='system'
                 )
                 
                 # Invalidate caches
@@ -203,13 +212,109 @@ class PermissionManagementService:
                 self._log_permission_action(
                     'create_group',
                     group.id,
-                    {'group_code': group.group_code}
+                    {
+                        'group_code': group.group_code,
+                        'group_name': group.group_name,
+                        'entity_name': group.group_name,
+                        'operation': 'create',
+                        'is_new_creation': True
+                    },
+                    entity_type='group'
                 )
                 
                 return group
                 
         except Exception as e:
             logger.error(f"Error creating permission group: {str(e)}")
+            raise
+    
+    def update_permission_group(self, group_id: int, update_data: Dict[str, Any]) -> PermissionGroup:
+        """Update an existing permission group."""
+        try:
+            with transaction.atomic():
+                group = PermissionGroup.objects.get(
+                    id=group_id,
+                    tenant=self.tenant
+                )
+                
+                # Store old values for audit including current permissions
+                current_permissions = list(group.group_permissions.filter(is_active=True).values_list('permission_id', flat=True))
+                old_values = {
+                    'group_name': group.group_name,
+                    'group_code': group.group_code,
+                    'description': group.description,
+                    'group_type': group.group_type,
+                    'is_system_group': group.is_system_group,
+                    'is_assignable': group.is_assignable,
+                    'is_active': group.is_active,
+                    'auto_assign_conditions': group.auto_assign_conditions,
+                    'permissions': current_permissions
+                }
+                
+                # Build new values to match old values structure
+                new_values = old_values.copy()
+                new_values.update(update_data)
+                
+                # If permissions are being updated, use those
+                if 'permissions' in update_data:
+                    new_values['permissions'] = update_data['permissions']
+                
+                # Validate update data
+                if 'group_code' in update_data:
+                    # Don't allow changing system group codes
+                    if group.is_system_group and update_data['group_code'] != group.group_code:
+                        raise ValidationError("Cannot change group code for system groups")
+                    
+                    # Check for duplicates (excluding current group)
+                    if PermissionGroup.objects.filter(
+                        tenant=self.tenant,
+                        group_code=update_data['group_code']
+                    ).exclude(id=group_id).exists():
+                        raise ValidationError(f"Group with code '{update_data['group_code']}' already exists")
+                
+                # Don't allow changing system group status
+                if 'is_system_group' in update_data and update_data['is_system_group'] != group.is_system_group:
+                    raise ValidationError("Cannot change system group status")
+                
+                # Update fields
+                for field, value in update_data.items():
+                    if hasattr(group, field) and field not in ['id', 'tenant', 'created_by', 'created_at', 'permissions']:
+                        setattr(group, field, value)
+                
+                group.save()
+                
+                # Build changed fields only (comparing like with like)
+                changed_fields = {}
+                for field in set(old_values.keys()).union(new_values.keys()):
+                    old_value = old_values.get(field)
+                    new_value = new_values.get(field)
+                    if old_value != new_value:
+                        changed_fields[field] = {'old': old_value, 'new': new_value}
+                
+                # Log update with only changed fields
+                self._log_permission_action(
+                    'update_group',
+                    group.id,
+                    {
+                        'group_name': group.group_name,
+                        'group_code': group.group_code,
+                        'changed_fields': changed_fields,
+                        'old_values': {k: v for k, v in old_values.items() if k in changed_fields},
+                        'new_values': {k: v for k, v in new_values.items() if k in changed_fields}
+                    },
+                    entity_type='group'
+                )
+                
+                # Invalidate caches if group was deactivated
+                if 'is_active' in update_data and not update_data['is_active']:
+                    self._invalidate_group_user_caches(group)
+                
+                return group
+                
+        except PermissionGroup.DoesNotExist:
+            raise ValidationError("Permission group not found")
+        except Exception as e:
+            logger.error(f"Error updating permission group: {str(e)}")
             raise
     
     def assign_permissions_to_group(
@@ -270,7 +375,8 @@ class PermissionManagementService:
                     {
                         'group_code': group.group_code,
                         'assigned_permissions': [a.permission.permission_code for a in created_assignments]
-                    }
+                    },
+                    entity_type='group'
                 )
                 
                 # Invalidate caches for users in this group
@@ -331,12 +437,13 @@ class PermissionManagementService:
                 # Log assignment
                 self._log_permission_action(
                     'assign_user_to_group',
-                    group.id,
+                    assignment.id,
                     {
                         'user_id': user_profile.user.id,
                         'group_code': group.group_code,
                         'assignment_reason': assignment.assignment_reason
-                    }
+                    },
+                    entity_type='user'
                 )
                 
                 # Invalidate user's permission cache
@@ -408,13 +515,14 @@ class PermissionManagementService:
                 # Log override creation
                 self._log_permission_action(
                     'create_user_override',
-                    permission.id,
+                    override.id,
                     {
                         'user_id': user_profile.user.id,
                         'permission_code': permission.permission_code,
                         'override_type': override.override_type,
                         'override_reason': override.override_reason
-                    }
+                    },
+                    entity_type='user'
                 )
                 
                 # Invalidate user's permission cache
@@ -484,7 +592,8 @@ class PermissionManagementService:
                     {
                         'designation_name': designation.designation_name,
                         'assigned_permissions': [a.permission.permission_code for a in created_assignments]
-                    }
+                    },
+                    entity_type='designation'
                 )
                 
                 # Invalidate caches for users with this designation
@@ -499,6 +608,7 @@ class PermissionManagementService:
         except Exception as e:
             logger.error(f"Error assigning permissions to designation: {str(e)}")
             raise
+        
     
     # === Helper Methods ===
     
@@ -579,20 +689,49 @@ class PermissionManagementService:
         for user_profile in user_profiles:
             self.rbac_service.invalidate_user_permissions(user_profile)
     
-    def _log_permission_action(self, action: str, entity_id: int, details: Dict[str, Any]):
+    def _log_permission_action(self, action: str, entity_id: int, details: Dict[str, Any], entity_type: str = 'group'):
         """Log permission management action to audit trail."""
         try:
+            # Map action to audit trail action types
+            action_mapping = {
+                'create_permission': 'grant',
+                'update_permission': 'modify',
+                'create_group': 'grant',
+                'update_group': 'modify',
+                'assign_permissions_to_group': 'grant',
+                'assign_permissions_to_designation': 'grant',
+                'assign_user_to_group': 'grant',
+                'remove_user_from_group': 'revoke'
+            }
+            
+            action_type = action_mapping.get(action, 'modify')
+            
+            # Extract old and new values from details if available
+            old_value = details.get('old_values', {})
+            new_value = details.get('new_values', details)
+            change_reason = details.get('reason', f'{action} operation')
+            
+            # Remove old_values and new_values from additional context to avoid duplication
+            additional_context = {k: v for k, v in details.items() 
+                                if k not in ['old_values', 'new_values', 'reason']}
+            
             PermissionAuditTrail.objects.create(
                 tenant=self.tenant,
-                entity_type='permission_management',
-                entity_id=str(entity_id),
-                action=action,
-                details=details,
+                action_type=action_type,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                old_value=old_value if old_value else None,
+                new_value=new_value,
+                change_reason=change_reason,
+                business_context=f'Permission management operation: {action}',
                 performed_by=self.admin_user,
-                performed_at=timezone.now()
+                additional_context=additional_context
             )
+            
+            logger.info(f"Audit trail logged: {action_type} {entity_type} {entity_id} by {self.admin_user.username}")
+            
         except Exception as e:
-            logger.error(f"Error logging permission action: {str(e)}")
+            logger.error(f"Error logging permission action {action}: {str(e)}")
 
 
 # === Utility Functions ===

@@ -63,9 +63,9 @@ class PermissionRegistrySerializer(serializers.ModelSerializer):
         model = PermissionRegistry
         fields = [
             'id', 'permission_name', 'permission_code', 'permission_category',
-            'description', 'permission_type', 'is_system_permission',
+            'description', 'permission_type', 'business_template', 'is_system_permission',
             'requires_scope', 'is_delegatable', 'risk_level', 'resource_type',
-            'action_type', 'effect', 'is_active', 'is_auditable',
+            'effect', 'is_active', 'is_auditable',
             'created_by_name', 'created_at', 'updated_at', 'usage_count'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_name', 'usage_count']
@@ -484,24 +484,312 @@ class PermissionAuditTrailSerializer(serializers.ModelSerializer):
     performed_by_name = serializers.CharField(source='performed_by.full_name', read_only=True)
     performed_by_email = serializers.CharField(source='performed_by.email', read_only=True)
     permission_name = serializers.SerializerMethodField()
+    change_summary = serializers.SerializerMethodField()
+    entity_name = serializers.SerializerMethodField()
+    action_description = serializers.SerializerMethodField()
     
     class Meta:
         model = PermissionAuditTrail
         fields = [
-            'id', 'entity_type', 'entity_id', 'action', 'details',
+            'id', 'entity_type', 'entity_id', 'action_type', 'additional_context',
             'performed_by', 'performed_by_name', 'performed_by_email',
-            'performed_at', 'permission_name'
+            'performed_at', 'permission_name', 'change_summary', 'entity_name', 'action_description'
         ]
         read_only_fields = ['id', 'performed_by_name', 'performed_by_email']
     
     def get_permission_name(self, obj):
         """Get permission name if this is a permission-related audit entry."""
         try:
-            if obj.entity_type == 'permission_management' and 'permission_code' in obj.details:
-                return obj.details['permission_code']
+            if obj.entity_type == 'permission_management' and 'permission_code' in obj.additional_context:
+                return obj.additional_context['permission_code']
             return None
         except:
             return None
+    
+    def get_business_template_display(self, business_template):
+        """Get human-readable business template name."""
+        template_map = {
+            'view_only': 'View-Only Access',
+            'contributor': 'Contributor/Editor',
+            'creator_only': 'Creator Only',
+            'full_access': 'Full Access/Administrator',
+            'custom': 'Custom Permission'
+        }
+        return template_map.get(business_template, business_template)
+
+    def get_entity_name(self, obj):
+        """Get a human-readable entity name instead of just the ID."""
+        try:
+            # First check if entity name is in additional_context
+            context = obj.additional_context or {}
+            if obj.entity_type == 'group' and context.get('group_name'):
+                return context['group_name']
+            elif obj.entity_type == 'user' and context.get('user_name'):
+                return context['user_name']
+            elif obj.entity_type == 'permission' and context.get('permission_name'):
+                return context['permission_name']
+            elif obj.entity_type == 'system' and context.get('permission_name'):
+                return context['permission_name']
+            elif obj.entity_type == 'designation' and context.get('designation_name'):
+                return context['designation_name']
+            
+            # Fallback to database lookup
+            from ..models import PermissionGroup, PermissionRegistry, TenantUserProfile, TenantDesignation
+            
+            if obj.entity_type == 'group':
+                try:
+                    group = PermissionGroup.objects.get(id=obj.entity_id, tenant=obj.tenant)
+                    return group.group_name
+                except PermissionGroup.DoesNotExist:
+                    return f"Deleted Group (ID: {obj.entity_id})"
+            
+            elif obj.entity_type == 'user':
+                try:
+                    user_profile = TenantUserProfile.objects.select_related('user').get(
+                        id=obj.entity_id, tenant=obj.tenant
+                    )
+                    return user_profile.user.full_name or user_profile.user.email
+                except TenantUserProfile.DoesNotExist:
+                    return f"Unknown User (ID: {obj.entity_id})"
+             
+            elif obj.entity_type == 'permission':
+                try:
+                    permission = PermissionRegistry.objects.get(id=obj.entity_id, tenant=obj.tenant)
+                    return permission.permission_name
+                except PermissionRegistry.DoesNotExist:
+                    return f"Unknown Permission (ID: {obj.entity_id})"
+             
+            elif obj.entity_type == 'system':
+                try:
+                    permission = PermissionRegistry.objects.get(id=obj.entity_id, tenant=obj.tenant)
+                    return permission.permission_name
+                except PermissionRegistry.DoesNotExist:
+                    return f"Unknown Permission (ID: {obj.entity_id})"
+            
+            elif obj.entity_type == 'designation':
+                try:
+                    designation = TenantDesignation.objects.get(id=obj.entity_id, tenant=obj.tenant)
+                    return designation.designation_name
+                except:
+                    return f"Unknown Designation (ID: {obj.entity_id})"
+            
+            return f"{obj.entity_type.title()} (ID: {obj.entity_id})"
+        except Exception:
+            return f"{obj.entity_type.title()} (ID: {obj.entity_id})"
+
+    def get_action_description(self, obj):
+        """Generate a more descriptive action based on entity type and action type."""
+        entity_name = self.get_entity_name(obj)
+        
+        action_descriptions = {
+            'group': {
+                'modify': f"Group Updated",
+                'grant': f"Group Created",
+                'revoke': f"Group Deleted",
+                'restrict': f"Group Restricted",
+                'escalate': f"Group Permissions Escalated",
+                'expire': f"Group Expired"
+            },
+            'user': {
+                'modify': f"User Permissions Updated",
+                'grant': f"Permissions Granted to User",
+                'revoke': f"Permissions Revoked from User",
+                'restrict': f"User Permissions Restricted",
+                'escalate': f"User Permissions Escalated",
+                'expire': f"User Permissions Expired"
+            },
+            'permission': {
+                'modify': f"Permission Updated",
+                'grant': f"Permission Created",
+                'revoke': f"Permission Deleted",
+                'restrict': f"Permission Restricted",
+                'escalate': f"Permission Escalated",
+                'expire': f"Permission Expired"
+            },
+            'system': {
+                'modify': f"Permission Updated",
+                'grant': f"Permission Created",
+                'revoke': f"Permission Deleted",
+                'restrict': f"Permission Restricted",
+                'escalate': f"Permission Escalated",
+                'expire': f"Permission Expired"
+            },
+            'designation': {
+                'modify': f"Designation Updated",
+                'grant': f"Permissions Assigned to Designation",
+                'revoke': f"Permissions Removed from Designation",
+                'restrict': f"Designation Restricted",
+                'escalate': f"Designation Permissions Escalated",
+                'expire': f"Designation Permissions Expired"
+            }
+        }
+        
+        entity_actions = action_descriptions.get(obj.entity_type, {})
+        return entity_actions.get(obj.action_type, f"{obj.action_type.title()} {obj.entity_type.title()}")
+
+    def get_change_summary(self, obj):
+        """Generate a human-readable summary of what changed."""
+        summary = []
+        old = obj.old_value or {}
+        new = obj.new_value or {}
+        context = obj.additional_context or {}
+        
+        # Check if this is a new creation (old values are empty/null)
+        is_new_creation = (
+            not old or 
+            (isinstance(old, dict) and not any(old.values())) or
+            context.get('is_new_creation') == True or
+            context.get('operation') == 'create'
+        )
+        
+        # Handle new creation cases with friendly messages
+        if is_new_creation:
+            if obj.entity_type == 'group':
+                return ["🆕 Added new Permission Group"]
+            elif obj.entity_type == 'user':
+                if obj.action_type == 'grant':
+                    return ["🆕 Added new Permission"]
+                else:
+                    return ["🆕 Added new User Permission"]
+            elif obj.entity_type == 'designation':
+                return ["🆕 Added new Designation Permission"]
+            elif obj.entity_type == 'permission':
+                return ["🆕 Added new Permission"]
+            elif obj.entity_type == 'system':
+                if 'permission' in context.get('entity_name', '').lower():
+                    return ["🆕 Added new Permission"]
+                else:
+                    return ["🆕 Added new System Entity"]
+            else:
+                # Generic fallback for other entity types
+                entity_name = obj.entity_type.replace('_', ' ').title()
+                return [f"🆕 Added new {entity_name}"]
+        
+        # Use changed_fields if available (more accurate)
+        if context.get('changed_fields'):
+            changed_fields = context['changed_fields']
+            for field, changes in changed_fields.items():
+                old_val = changes.get('old')
+                new_val = changes.get('new')
+                
+                if field == 'is_active':
+                    if new_val:
+                        summary.append("✅ Activated")
+                    else:
+                        summary.append("❌ Deactivated")
+                elif field == 'group_name':
+                    summary.append(f"📝 Name: '{old_val}' → '{new_val}'")
+                elif field == 'group_type':
+                    summary.append(f"🏷️ Type: {old_val.title()} → {new_val.title()}")
+                elif field == 'description':
+                    summary.append("📄 Description updated")
+                elif field == 'business_template':
+                    old_display = self.get_business_template_display(old_val)
+                    new_display = self.get_business_template_display(new_val)
+                    summary.append(f"🎯 Template: {old_display} → {new_display}")
+                elif field == 'permission_type':
+                    summary.append(f"⚙️ Type: {old_val.title()} → {new_val.title()}")
+                elif field == 'group_code':
+                    summary.append(f"🔗 Code: '{old_val}' → '{new_val}'")
+                elif field == 'is_assignable':
+                    if new_val:
+                        summary.append("🔓 Made assignable to users")
+                    else:
+                        summary.append("🔒 Made non-assignable to users")
+                elif field == 'permissions':
+                    # Handle permissions changes
+                    old_perms = set(old_val) if isinstance(old_val, list) else set()
+                    new_perms = set(new_val) if isinstance(new_val, list) else set()
+                    
+                    added_perms = new_perms - old_perms
+                    removed_perms = old_perms - new_perms
+                    
+                    if added_perms:
+                        summary.append(f"➕ Added {len(added_perms)} permission(s)")
+                    if removed_perms:
+                        summary.append(f"➖ Removed {len(removed_perms)} permission(s)")
+                    
+                    # If no additions or removals but lists are different, it means reordering
+                    if not added_perms and not removed_perms and old_perms != new_perms:
+                        summary.append("🔄 Permissions reordered")
+                elif field == 'auto_assign_conditions':
+                    if new_val and not old_val:
+                        summary.append("🎯 Auto-assignment conditions added")
+                    elif old_val and not new_val:
+                        summary.append("🎯 Auto-assignment conditions removed")
+                    elif old_val != new_val:
+                        summary.append("🎯 Auto-assignment conditions updated")
+                else:
+                    field_name = field.replace('_', ' ').title()
+                    summary.append(f"📋 {field_name}: '{old_val}' → '{new_val}'")
+        else:
+            # Fallback to old logic for backward compatibility
+            if 'old_values' in old and 'new_values' in new:
+                old_values = old['old_values']
+                new_values = new['new_values']
+            else:
+                old_values = old
+                new_values = new
+            
+            # Only show fields that actually changed
+            for key in set(old_values.keys()).union(new_values.keys()):
+                old_val = old_values.get(key)
+                new_val = new_values.get(key)
+                if old_val != new_val:
+                    if key == 'is_active':
+                        if new_val:
+                            summary.append("✅ Activated")
+                        else:
+                            summary.append("❌ Deactivated")
+                    elif key == 'group_name':
+                        summary.append(f"📝 Name: '{old_val}' → '{new_val}'")
+                    elif key == 'group_type':
+                        summary.append(f"🏷️ Type: {old_val.title()} → {new_val.title()}")
+                    elif key == 'description':
+                        summary.append("📄 Description updated")
+                    elif key == 'group_code':
+                        summary.append(f"🔗 Code: '{old_val}' → '{new_val}'")
+                    elif key == 'is_assignable':
+                        if new_val:
+                            summary.append("🔓 Made assignable to users")
+                        else:
+                            summary.append("🔒 Made non-assignable to users")
+                    elif key == 'permissions':
+                        # Handle permissions changes
+                        old_perms = set(old_val) if isinstance(old_val, list) else set()
+                        new_perms = set(new_val) if isinstance(new_val, list) else set()
+                        
+                        added_perms = new_perms - old_perms
+                        removed_perms = old_perms - new_perms
+                        
+                        if added_perms:
+                            summary.append(f"➕ Added {len(added_perms)} permission(s)")
+                        if removed_perms:
+                            summary.append(f"➖ Removed {len(removed_perms)} permission(s)")
+                    else:
+                        field_name = key.replace('_', ' ').title()
+                        summary.append(f"📋 {field_name}: '{old_val}' → '{new_val}'")
+        
+        # Show added/removed permissions if present in additional context
+        if context.get('permissions_added'):
+            added_perms = context['permissions_added']
+            if isinstance(added_perms, list):
+                summary.append(f"➕ Added permissions: {', '.join(added_perms[:3])}{'...' if len(added_perms) > 3 else ''}")
+            else:
+                summary.append(f"➕ Added permissions: {added_perms}")
+                
+        if context.get('permissions_removed'):
+            removed_perms = context['permissions_removed']
+            if isinstance(removed_perms, list):
+                summary.append(f"➖ Removed permissions: {', '.join(removed_perms[:3])}{'...' if len(removed_perms) > 3 else ''}")
+            else:
+                summary.append(f"➖ Removed permissions: {removed_perms}")
+        
+        # Show change reason if present
+        if obj.change_reason and obj.change_reason.strip():
+            summary.append(f"💬 Reason: {obj.change_reason}")
+        
+        return summary if summary else ["No specific changes recorded"]
 
 
 class PermissionSummarySerializer(serializers.Serializer):

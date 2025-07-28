@@ -88,6 +88,10 @@ class User(AbstractBaseUser, PermissionsMixin):
     def full_name(self):
         """Return full name or email if name is not available"""
         return f"{self.first_name} {self.last_name}".strip() or self.email
+    
+    def get_full_name(self):
+        """Return full name compatible with Django's AbstractUser"""
+        return self.full_name
 
     @property
     def is_teleops_user(self):

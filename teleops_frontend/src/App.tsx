@@ -69,6 +69,11 @@ import PermissionRegistryPage from "./pages/PermissionRegistryPage";
 import PermissionGroupsPage from "./pages/PermissionGroupsPage";
 import MyPermissionsPage from "./pages/MyPermissionsPage";
 import DesignationManagementPage from "./pages/DesignationManagementPage";
+import PermissionCategoriesPage from "./pages/PermissionCategoriesPage";
+import PermissionDashboardPage from "./pages/PermissionDashboardPage";
+import PermissionAssignmentPanel from "./pages/PermissionAssignmentPanel";
+import ComprehensivePermissionDashboard from "./pages/ComprehensivePermissionDashboard";
+import RBACDocumentationPage from "./pages/RBACDocumentationPage";
 
 import { createModernTheme } from "./styles/theme";
 import { useDarkMode } from "./contexts/ThemeContext";
@@ -454,6 +459,22 @@ const AppInner: React.FC = () => {
           }
         />
         <Route
+          path="/rbac/categories"
+          element={
+            <ProtectedRoute>
+              <PermissionCategoriesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/comprehensive-dashboard"
+          element={
+            <ProtectedRoute>
+              <ComprehensivePermissionDashboard />
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/my-permissions"
           element={
             <ProtectedRoute>
@@ -477,8 +498,27 @@ const AppInner: React.FC = () => {
             </ProtectedRoute>
           }
         />
+        <Route
+          path="/rbac/permission-dashboard"
+          element={
+            <ProtectedRoute>
+              <PermissionDashboardPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/rbac/assignment-panel"
+          element={
+            <ProtectedRoute>
+              <PermissionAssignmentPanel />
+            </ProtectedRoute>
+          }
+        />
 
         <Route path="/support" element={<RaiseTicketPage />} />
+
+        {/* RBAC Documentation */}
+        <Route path="/rbac-doc" element={<RBACDocumentationPage />} />
 
         {/* Default redirect */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

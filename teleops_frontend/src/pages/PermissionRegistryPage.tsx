@@ -36,10 +36,12 @@ import {
   FormControlLabel,
   Switch,
   Autocomplete,
+  Tooltip,
+  Stack,
 } from "@mui/material";
-import { Add, Edit, Delete, MoreVert, Search, FilterList, Refresh, Security, Warning, CheckCircle, Info, ArrowBack } from "@mui/icons-material";
+import { Add, Edit, Delete, MoreVert, Search, FilterList, Refresh, Security, Warning, CheckCircle, Info, ArrowBack, Category } from "@mui/icons-material";
 import { useRBAC } from "../hooks/useRBAC";
-import { Permission } from "../services/rbacAPI";
+import { Permission, getPermissionCategories } from "../services/rbacAPI";
 import { ModernSnackbar, AppBreadcrumbs } from "../components";
 import type { BreadcrumbItem } from "../components";
 
@@ -49,9 +51,10 @@ interface PermissionFormData {
   permission_category: string;
   description: string;
   permission_type: "action" | "access" | "data" | "administrative" | "system";
+  business_template: "view_only" | "contributor" | "creator_only" | "full_access" | "custom";
   risk_level: "low" | "medium" | "high" | "critical";
   resource_type: string;
-  action_type: string;
+  // action_type field removed - redundant with Permission Level
   effect: "allow" | "deny";
   requires_scope: boolean;
   is_delegatable: boolean;
@@ -64,9 +67,10 @@ const defaultFormData: PermissionFormData = {
   permission_category: "",
   description: "",
   permission_type: "action",
+  business_template: "custom",
   risk_level: "low",
   resource_type: "",
-  action_type: "",
+  // action_type: "", // Removed
   effect: "allow",
   requires_scope: false,
   is_delegatable: true,
@@ -110,11 +114,92 @@ const PermissionRegistryPage: React.FC = () => {
   // Add step state and better form organization
   const [currentStep, setCurrentStep] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [useBusinessTemplates, setUseBusinessTemplates] = useState(true);
+  const [selectedTemplate, setSelectedTemplate] = useState("");
+
+  const [allCategories, setAllCategories] = useState<{ category_name: string; category_code: string; is_system_category: boolean }[]>([]);
+
+  // Business-friendly permission templates
+  const permissionTemplates = [
+    {
+      id: "view_only",
+      name: "View-Only Access",
+      description: "Can view and read information but cannot make changes",
+      icon: "👁️",
+      permissions: ["read"],
+      risk_level: "low" as const,
+      permission_type: "access" as const,
+    },
+    {
+      id: "contributor",
+      name: "Contributor/Editor",
+      description: "Can view, create, and edit information but cannot delete",
+      icon: "✏️",
+      permissions: ["read", "create", "update"],
+      risk_level: "medium" as const,
+      permission_type: "action" as const,
+    },
+    {
+      id: "full_access",
+      name: "Full Access/Administrator",
+      description: "Complete control including ability to delete records",
+      icon: "🔧",
+      permissions: ["read", "create", "update", "delete"],
+      risk_level: "high" as const,
+      permission_type: "administrative" as const,
+    },
+    {
+      id: "creator_only",
+      name: "Creator Only",
+      description: "Can only add new records, cannot edit existing ones",
+      icon: "➕",
+      permissions: ["read", "create"],
+      risk_level: "medium" as const,
+      permission_type: "action" as const,
+    },
+  ];
+
+  // Function to get business-friendly display name
+  const getBusinessTemplateDisplay = (businessTemplate: string) => {
+    const template = permissionTemplates.find((t) => t.id === businessTemplate);
+    if (template) {
+      return template.name;
+    }
+
+    // Fallback mapping for custom or unknown templates
+    const fallbackMap: Record<string, string> = {
+      view_only: "View-Only Access",
+      contributor: "Contributor/Editor",
+      creator_only: "Creator Only",
+      full_access: "Full Access/Administrator",
+      custom: "Custom Permission",
+    };
+
+    return fallbackMap[businessTemplate] || "Custom Permission";
+  };
 
   useEffect(() => {
     if (permissions.length === 0) {
       loadPermissions();
     }
+
+    // Fetch all categories for dropdown
+    const fetchCategories = async () => {
+      try {
+        const data = await getPermissionCategories();
+        // Support both array and paginated {results: [...]} responses
+        if (Array.isArray(data)) {
+          setAllCategories(data);
+        } else if (data && Array.isArray(data.results)) {
+          setAllCategories(data.results);
+        } else {
+          setAllCategories([]);
+        }
+      } catch (e) {
+        setAllCategories([]); // fallback to empty array on error
+      }
+    };
+    fetchCategories();
 
     // Handle URL parameters for direct actions
     const params = new URLSearchParams(window.location.search);
@@ -189,6 +274,25 @@ const PermissionRegistryPage: React.FC = () => {
     });
   };
 
+  const handleTemplateChange = (templateId: string) => {
+    setSelectedTemplate(templateId);
+    const template = permissionTemplates.find((t) => t.id === templateId);
+    if (template) {
+      const resourceName = formData.permission_category.toLowerCase().replace(/\s+/g, "_") || "resource";
+      const actionSuffix = template.permissions.join("_");
+
+      setFormData((prev) => ({
+        ...prev,
+        permission_name: `${template.name} - ${formData.permission_category || "Resource"}`,
+        permission_code: `${resourceName}.${actionSuffix}`,
+        permission_type: template.permission_type,
+        business_template: template.id as "view_only" | "contributor" | "creator_only" | "full_access",
+        risk_level: template.risk_level,
+        description: `${template.description} for ${formData.permission_category || "this resource"}`,
+      }));
+    }
+  };
+
   const handleOpenDialog = (permission?: Permission) => {
     if (permission) {
       setEditingPermission(permission);
@@ -198,9 +302,10 @@ const PermissionRegistryPage: React.FC = () => {
         permission_category: permission.permission_category,
         description: permission.description || "",
         permission_type: permission.permission_type,
+        business_template: permission.business_template || "custom",
         risk_level: permission.risk_level,
         resource_type: permission.resource_type || "",
-        action_type: permission.action_type || "",
+        // action_type: permission.action_type || "", // Removed
         effect: permission.effect,
         requires_scope: permission.requires_scope,
         is_delegatable: permission.is_delegatable,
@@ -361,14 +466,14 @@ const PermissionRegistryPage: React.FC = () => {
       fields: ["permission_name", "permission_category", "description"],
     },
     {
-      label: "Classification",
-      description: "Risk level and type settings",
-      fields: ["permission_type", "risk_level", "effect"],
+      label: "Security Configuration",
+      description: "Risk level and access behavior",
+      fields: ["risk_level", "effect"],
     },
     {
       label: "Advanced Options",
       description: "Resource scoping and delegation",
-      fields: ["resource_type", "action_type", "requires_scope", "is_delegatable", "is_auditable"],
+      fields: ["resource_type", "requires_scope", "is_delegatable", "is_auditable"], // action_type removed
     },
   ];
 
@@ -378,6 +483,8 @@ const PermissionRegistryPage: React.FC = () => {
       if (field === "permission_name" && !formData.permission_name.trim()) return false;
       if (field === "permission_category" && !formData.permission_category.trim()) return false;
       if (field === "description" && formData.risk_level === "critical" && !formData.description.trim()) return false;
+      if (field === "risk_level" && !formData.risk_level) return false;
+      if (field === "effect" && !formData.effect) return false;
       return true;
     });
   };
@@ -451,9 +558,14 @@ const PermissionRegistryPage: React.FC = () => {
           <Button variant="outlined" startIcon={<Refresh />} onClick={() => loadPermissions()}>
             Refresh
           </Button>
-          <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
-            Create Permission
-          </Button>
+          <Stack direction="row" spacing={2}>
+            <Button variant="outlined" startIcon={<Category />} onClick={() => (window.location.href = "/rbac/categories")}>
+              Manage Categories
+            </Button>
+            <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+              Create Permission
+            </Button>
+          </Stack>
         </Box>
       </Box>
 
@@ -547,7 +659,7 @@ const PermissionRegistryPage: React.FC = () => {
                 <TableCell>Permission</TableCell>
                 <TableCell>Code</TableCell>
                 <TableCell>Category</TableCell>
-                <TableCell>Type</TableCell>
+                <TableCell>Template</TableCell>
                 <TableCell>Risk Level</TableCell>
                 <TableCell>Effect</TableCell>
                 <TableCell>Status</TableCell>
@@ -587,7 +699,15 @@ const PermissionRegistryPage: React.FC = () => {
                   </TableCell>
                   <TableCell>{permission.permission_category}</TableCell>
                   <TableCell>
-                    <Chip label={permission.permission_type} size="small" variant="outlined" />
+                    <Chip
+                      label={getBusinessTemplateDisplay(permission.business_template || "custom")}
+                      size="small"
+                      variant="outlined"
+                      sx={{
+                        bgcolor: permission.business_template !== "custom" ? "primary.50" : "grey.50",
+                        borderColor: permission.business_template !== "custom" ? "primary.200" : "grey.300",
+                      }}
+                    />
                   </TableCell>
                   <TableCell>
                     <Chip label={permission.risk_level} size="small" color={getRiskLevelColor(permission.risk_level) as any} icon={getRiskLevelIcon(permission.risk_level)} />
@@ -721,20 +841,144 @@ const PermissionRegistryPage: React.FC = () => {
           {/* Step Content */}
           <Box sx={{ minHeight: 400 }}>
             {(!editingPermission && currentStep === 0) || (editingPermission && (currentStep === 0 || showAdvanced)) ? (
-              /* Step 1: Basic Information */
               <Grid container spacing={3}>
                 <Grid size={{ xs: 12 }}>
-                  <Box sx={{ mb: 2 }}>
-                    <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                      <Info color="primary" />
-                      Basic Information
-                    </Typography>
+                  <Box sx={{ mb: 3 }}>
+                    <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 2 }}>
+                      <Typography variant="h6" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <Info color="primary" />
+                        Permission Setup
+                      </Typography>
+                      {!editingPermission && (
+                        <FormControlLabel control={<Switch checked={!useBusinessTemplates} onChange={(e) => setUseBusinessTemplates(!e.target.checked)} />} label="Advanced Mode" />
+                      )}
+                    </Box>
+
                     <Typography variant="body2" color="text.secondary">
-                      Define the core identity and purpose of this permission
+                      {useBusinessTemplates
+                        ? "Define the core identity and purpose of this permission using business-friendly templates"
+                        : "Define the core identity and purpose of this permission with advanced options"}
                     </Typography>
                   </Box>
                 </Grid>
 
+                {/* Row 1: Resource/Feature Name and Permission Level */}
+                <Grid size={{ xs: 12, md: 6 }}>
+                  {!useBusinessTemplates ? (
+                    <Autocomplete
+                      freeSolo
+                      options={Array.isArray(allCategories) ? allCategories.map((cat) => cat.category_name) : []}
+                      value={formData.permission_category}
+                      onChange={(e, value) => handleCategoryChange(value || "")}
+                      renderOption={(props, option) => {
+                        const cat = Array.isArray(allCategories) ? allCategories.find((c) => c.category_name === option) : undefined;
+                        return (
+                          <li {...props} key={option}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                              <span>{option}</span>
+                              {cat && <Chip label={cat.is_system_category ? "System" : "Custom"} size="small" color={cat.is_system_category ? "primary" : "default"} variant="outlined" />}
+                            </Box>
+                          </li>
+                        );
+                      }}
+                      renderInput={(params) => (
+                        <TextField
+                          {...params}
+                          label="Resource/Feature Name"
+                          error={!!formErrors.permission_category}
+                          helperText={formErrors.permission_category || "What feature/resource does this control? (e.g., 'CAM Records', 'Projects')"}
+                          required
+                          placeholder="Select or create a category"
+                          InputProps={{
+                            ...params.InputProps,
+                            endAdornment: (
+                              <>
+                                {params.InputProps.endAdornment}
+                                {formData.permission_category && <CheckCircle color="success" fontSize="small" sx={{ mr: 1 }} />}
+                              </>
+                            ),
+                          }}
+                        />
+                      )}
+                    />
+                  ) : (
+                    <TextField
+                      fullWidth
+                      label="Resource/Feature Name"
+                      value={formData.permission_category}
+                      onChange={(e) => handleCategoryChange(e.target.value)}
+                      error={!!formErrors.permission_category}
+                      helperText={formErrors.permission_category || "What feature/resource does this control? (e.g., 'CAM Records', 'Projects')"}
+                      required
+                      placeholder="Enter the feature or resource name"
+                      InputProps={{
+                        endAdornment: formData.permission_category && <CheckCircle color="success" fontSize="small" />,
+                      }}
+                    />
+                  )}
+                </Grid>
+
+                {/* Permission Level */}
+                <Grid size={{ xs: 12, md: 6 }}>
+                  {useBusinessTemplates && !editingPermission ? (
+                    <FormControl fullWidth>
+                      <InputLabel>Permission Level</InputLabel>
+                      <Select value={selectedTemplate} label="Permission Level" onChange={(e) => handleTemplateChange(e.target.value)} error={!!formErrors.selectedTemplate}>
+                        {permissionTemplates.map((template) => (
+                          <MenuItem key={template.id} value={template.id}>
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 2, width: "100%" }}>
+                              <Typography variant="h6">{template.icon}</Typography>
+                              <Box sx={{ flex: 1 }}>
+                                <Typography variant="body2" fontWeight={600}>
+                                  {template.name}
+                                </Typography>
+                                <Typography variant="caption" color="text.secondary">
+                                  {template.description}
+                                </Typography>
+                              </Box>
+                              <Box sx={{ display: "flex", gap: 0.5 }}>
+                                {template.permissions.map((perm) => (
+                                  <Chip key={perm} label={perm} size="small" variant="outlined" sx={{ fontSize: "0.75rem", height: "20px" }} />
+                                ))}
+                              </Box>
+                            </Box>
+                          </MenuItem>
+                        ))}
+                      </Select>
+                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                        Select the level of access users should have with this permission
+                      </Typography>
+                    </FormControl>
+                  ) : (
+                    <Box sx={{ height: "100%", display: "flex", alignItems: "center" }}>
+                      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic" }}>
+                        Enable Business-Friendly Mode to use permission levels
+                      </Typography>
+                    </Box>
+                  )}
+                </Grid>
+
+                {/* Show selected template confirmation */}
+                {useBusinessTemplates && selectedTemplate && !editingPermission && (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity="info" sx={{ mt: 1 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <Typography variant="body2">
+                          Selected: <strong>{permissionTemplates.find((t) => t.id === selectedTemplate)?.name}</strong>
+                        </Typography>
+                        <Box sx={{ display: "flex", gap: 0.5, ml: 1 }}>
+                          {permissionTemplates
+                            .find((t) => t.id === selectedTemplate)
+                            ?.permissions.map((perm) => (
+                              <Chip key={perm} label={perm} size="small" color="primary" variant="outlined" sx={{ fontSize: "0.75rem", height: "20px" }} />
+                            ))}
+                        </Box>
+                      </Box>
+                    </Alert>
+                  </Grid>
+                )}
+
+                {/* Row 2: Permission Name and Permission Code */}
                 <Grid size={{ xs: 12, md: 6 }}>
                   <TextField
                     fullWidth
@@ -742,9 +986,12 @@ const PermissionRegistryPage: React.FC = () => {
                     value={formData.permission_name}
                     onChange={(e) => handlePermissionNameChange(e.target.value)}
                     error={!!formErrors.permission_name}
-                    helperText={formErrors.permission_name || "Clear, descriptive name (e.g., 'Create Projects')"}
+                    helperText={
+                      useBusinessTemplates && selectedTemplate ? "Auto-generated based on your selections" : formErrors.permission_name || "Clear, descriptive name (e.g., 'Create Projects')"
+                    }
                     required
-                    placeholder="Enter a human-readable permission name"
+                    placeholder={useBusinessTemplates ? "Auto-generated from selections" : "Enter a human-readable permission name"}
+                    disabled={useBusinessTemplates && !!selectedTemplate}
                     InputProps={{
                       endAdornment: formData.permission_name && <CheckCircle color="success" fontSize="small" />,
                     }}
@@ -752,34 +999,6 @@ const PermissionRegistryPage: React.FC = () => {
                 </Grid>
 
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <Autocomplete
-                    freeSolo
-                    options={categories}
-                    value={formData.permission_category}
-                    onChange={(e, value) => handleCategoryChange(value || "")}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        label="Category"
-                        error={!!formErrors.permission_category}
-                        helperText={formErrors.permission_category || "Group related permissions (e.g., 'Project Management')"}
-                        required
-                        placeholder="Select or create a category"
-                        InputProps={{
-                          ...params.InputProps,
-                          endAdornment: (
-                            <>
-                              {params.InputProps.endAdornment}
-                              {formData.permission_category && <CheckCircle color="success" fontSize="small" sx={{ mr: 1 }} />}
-                            </>
-                          ),
-                        }}
-                      />
-                    )}
-                  />
-                </Grid>
-
-                <Grid size={{ xs: 12 }}>
                   <TextField
                     fullWidth
                     label="Permission Code"
@@ -788,7 +1007,8 @@ const PermissionRegistryPage: React.FC = () => {
                     error={!!formErrors.permission_code}
                     helperText={formErrors.permission_code || "Auto-generated unique identifier"}
                     required
-                    placeholder="Automatically generated from name and category"
+                    placeholder="Automatically generated from selections"
+                    disabled={useBusinessTemplates && !!selectedTemplate}
                     InputProps={{
                       startAdornment: (
                         <Typography variant="caption" sx={{ mr: 1, color: "text.secondary" }}>
@@ -801,17 +1021,28 @@ const PermissionRegistryPage: React.FC = () => {
                   />
                 </Grid>
 
+                {/* Row 3: Description (full width) */}
                 <Grid size={{ xs: 12 }}>
                   <TextField
                     fullWidth
                     label="Description"
                     multiline
-                    rows={4}
+                    rows={3}
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                     error={!!formErrors.description}
-                    helperText={formErrors.description || "Explain what actions this permission enables (required for critical permissions)"}
-                    placeholder="Describe what users can do with this permission..."
+                    helperText={
+                      formErrors.description ||
+                      (useBusinessTemplates && selectedTemplate
+                        ? `Auto-generated: ${permissionTemplates.find((t) => t.id === selectedTemplate)?.description || ""} for ${formData.permission_category || "this resource"}`
+                        : "Explain what actions this permission enables - be specific about what users can and cannot do")
+                    }
+                    placeholder={
+                      useBusinessTemplates && selectedTemplate
+                        ? "Description will be auto-generated based on your selections..."
+                        : "Describe what users can do with this permission (e.g., 'Allows users to create new projects and assign team members but cannot delete existing projects')"
+                    }
+                    disabled={useBusinessTemplates && !!selectedTemplate}
                     required={formData.risk_level === "critical"}
                   />
                 </Grid>
@@ -819,69 +1050,21 @@ const PermissionRegistryPage: React.FC = () => {
             ) : null}
 
             {(!editingPermission && currentStep === 1) || (editingPermission && (currentStep === 1 || showAdvanced)) ? (
-              /* Step 2: Classification */
+              /* Step 2: Security Configuration */
               <Grid container spacing={3}>
                 <Grid size={{ xs: 12 }}>
                   <Box sx={{ mb: 2 }}>
                     <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                       <Security color="primary" />
-                      Security Classification
+                      Security Configuration
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      Configure the security level and behavioral properties
+                      Configure the security level and access behavior for this permission
                     </Typography>
                   </Box>
                 </Grid>
 
-                <Grid size={{ xs: 12, md: 4 }}>
-                  <FormControl fullWidth>
-                    <InputLabel>Permission Type</InputLabel>
-                    <Select value={formData.permission_type} label="Permission Type" onChange={(e) => setFormData({ ...formData, permission_type: e.target.value as any })}>
-                      <MenuItem value="action">
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                          <Typography variant="body2">Action</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Allows specific operations
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                      <MenuItem value="access">
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                          <Typography variant="body2">Access</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Controls visibility/entry
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                      <MenuItem value="data">
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                          <Typography variant="body2">Data</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Data manipulation rights
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                      <MenuItem value="administrative">
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                          <Typography variant="body2">Administrative</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            System configuration
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                      <MenuItem value="system">
-                        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
-                          <Typography variant="body2">System</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            Core system functions
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                    </Select>
-                  </FormControl>
-                </Grid>
-
-                <Grid size={{ xs: 12, md: 4 }}>
+                <Grid size={{ xs: 12, md: 6 }}>
                   <FormControl fullWidth>
                     <InputLabel>Risk Level</InputLabel>
                     <Select value={formData.risk_level} label="Risk Level" onChange={(e) => setFormData({ ...formData, risk_level: e.target.value as any })}>
@@ -942,7 +1125,7 @@ const PermissionRegistryPage: React.FC = () => {
                   )}
                 </Grid>
 
-                <Grid size={{ xs: 12, md: 4 }}>
+                <Grid size={{ xs: 12, md: 6 }}>
                   <FormControl fullWidth>
                     <InputLabel>Effect</InputLabel>
                     <Select value={formData.effect} label="Effect" onChange={(e) => setFormData({ ...formData, effect: e.target.value as any })}>
@@ -971,6 +1154,22 @@ const PermissionRegistryPage: React.FC = () => {
                     </Select>
                   </FormControl>
                 </Grid>
+
+                {/* Show selected permission type info (read-only) */}
+                {useBusinessTemplates && selectedTemplate && (
+                  <Grid size={{ xs: 12 }}>
+                    <Alert severity="info" sx={{ mt: 1 }}>
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        <Typography variant="body2">
+                          <strong>Permission Type:</strong> {formData.permission_type.charAt(0).toUpperCase() + formData.permission_type.slice(1)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary" sx={{ ml: 2 }}>
+                          (Auto-determined from selected permission level)
+                        </Typography>
+                      </Box>
+                    </Alert>
+                  </Grid>
+                )}
               </Grid>
             ) : null}
 
@@ -1000,16 +1199,7 @@ const PermissionRegistryPage: React.FC = () => {
                   />
                 </Grid>
 
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <TextField
-                    fullWidth
-                    label="Action Type"
-                    value={formData.action_type}
-                    onChange={(e) => setFormData({ ...formData, action_type: e.target.value })}
-                    placeholder="e.g., create, read, update, delete"
-                    helperText="Specific action this permission enables (optional)"
-                  />
-                </Grid>
+                {/* Action Type field removed - redundant with Permission Level */}
 
                 <Grid size={{ xs: 12 }}>
                   <Card variant="outlined" sx={{ p: 2 }}>

@@ -130,6 +130,50 @@ class IsTenantMember(BasePermission):
         return False
 
 
+class CanViewRBACDashboard(BasePermission):
+    """Permission for viewing RBAC dashboard - checks for rbac_management.view_permissions or admin access"""
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_superuser:
+            return True
+        
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return False
+        
+        # Check if user is the primary contact (admin) for the tenant
+        if tenant.primary_contact_email == request.user.email:
+            return True
+        
+        # Check if user has specific RBAC view permission
+        if hasattr(request.user, 'tenant_user_profile'):
+            profile = request.user.tenant_user_profile
+            if profile and profile.tenant_id == tenant.id:
+                # Import here to avoid circular imports
+                from apps.tenants.services import get_rbac_service
+                
+                rbac_service = get_rbac_service()
+                has_view_permission = rbac_service.check_permission(
+                    user=request.user,
+                    tenant=tenant,
+                    permission_code='rbac_management.view_permissions'
+                )
+                
+                if has_view_permission:
+                    return True
+                
+                # Also check if user has admin designation or permissions
+                designations = profile.all_designations
+                for designation in designations:
+                    if designation.can_manage_users or designation.approval_authority_level > 0:
+                        return True
+        
+        return False
+
+
 class CrossTenantPermission(BasePermission):
     """
     Permission for cross-tenant operations (e.g., corporate accessing circles)

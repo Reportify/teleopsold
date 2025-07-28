@@ -86,6 +86,10 @@ class TenantRBACService:
     def _calculate_effective_permissions(self, user_profile: TenantUserProfile) -> Dict[str, Any]:
         """Calculate the effective permissions by combining all sources."""
         
+        # Check if user has Administrator designation - grant all permissions
+        if self._is_administrator(user_profile):
+            return self._get_administrator_permissions()
+        
         # Get all permission sources
         designation_permissions = self._get_designation_permissions(user_profile)
         group_permissions = self._get_group_permissions(user_profile)
@@ -535,6 +539,65 @@ class TenantRBACService:
             'metadata': {
                 'error': True,
                 'calculation_time': timezone.now().isoformat()
+            }
+        }
+    
+    def _is_administrator(self, user_profile: TenantUserProfile) -> bool:
+        """Check if the user has the Administrator designation."""
+        admin_designations = user_profile.designation_assignments.filter(
+            is_active=True,
+            designation__designation_code__icontains='admin'
+        ).exists() or user_profile.designation_assignments.filter(
+            is_active=True,
+            designation__designation_name__icontains='Administrator'
+        ).exists()
+        
+        return admin_designations
+
+    def _get_administrator_permissions(self) -> Dict[str, Any]:
+        """Return all permissions for an administrator."""
+        all_permissions = {}
+        
+        # Get all permissions from the tenant's permission registry
+        all_tenant_permissions = PermissionRegistry.objects.filter(
+            tenant=self.tenant,
+            is_active=True
+        )
+        
+        for permission in all_tenant_permissions:
+            perm_code = permission.permission_code
+            all_permissions[perm_code] = {
+                'permission': permission,
+                'permission_level': 'granted',
+                'source_type': 'designation',
+                'source_name': 'Administrator',
+                'scope_configuration': {},
+                'is_temporary': False,
+                'effective_from': None,
+                'effective_to': None
+            }
+        
+        return {
+            'permissions': all_permissions,
+            'scope_limitations': {},
+            'permission_summary': {
+                'total_permissions': len(all_permissions),
+                'granted_permissions': len(all_permissions),
+                'denied_permissions': 0,
+                'conditional_permissions': 0,
+                'high_risk_permissions': len([p for p in all_tenant_permissions if p.risk_level == 'high']),
+                'critical_permissions': len([p for p in all_tenant_permissions if p.risk_level == 'critical'])
+            },
+            'metadata': {
+                'calculation_time': timezone.now().isoformat(),
+                'sources': {
+                    'designation_count': 1,
+                    'group_count': 0,
+                    'override_count': 0
+                },
+                'conflicts_resolved': 0,
+                'cache_version': self._get_cache_version(),
+                'is_administrator': True
             }
         }
     

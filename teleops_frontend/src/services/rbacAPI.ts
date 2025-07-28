@@ -14,12 +14,12 @@ export interface Permission {
   permission_category: string;
   description?: string;
   permission_type: "action" | "access" | "data" | "administrative" | "system";
+  business_template: "view_only" | "contributor" | "creator_only" | "full_access" | "custom";
   is_system_permission: boolean;
   requires_scope: boolean;
   is_delegatable: boolean;
   risk_level: "low" | "medium" | "high" | "critical";
   resource_type?: string;
-  action_type?: string;
   effect: "allow" | "deny";
   is_active: boolean;
   is_auditable: boolean;
@@ -166,6 +166,11 @@ export interface PermissionAuditTrail {
   session_id?: string;
   request_id?: string;
   additional_context: Record<string, any>;
+  change_summary?: string[];
+  entity_name?: string;
+  action_description?: string;
+  performed_by_name?: string;
+  performed_by_email?: string;
 }
 
 export interface PermissionCheckRequest {
@@ -186,6 +191,67 @@ export interface PermissionCheckResponse {
     error?: string;
   };
   checked_at: string;
+}
+
+// Permission Dashboard interfaces
+export interface PermissionDashboardData {
+  user_summary: {
+    user_id: number;
+    name: string;
+    email: string;
+    employee_id?: string;
+    job_title?: string;
+    department?: string;
+    is_active: boolean;
+    last_login?: string;
+  };
+  effective_permissions: {
+    permissions: Record<string, any>;
+    scope_limitations: Record<string, any>;
+    permission_summary: Record<string, any>;
+    metadata: Record<string, any>;
+  };
+  permission_sources: {
+    designation_permissions: PermissionSource[];
+    group_permissions: PermissionSource[];
+    override_permissions: PermissionSource[];
+  };
+  assignment_history: AssignmentHistoryItem[];
+  conflicts: any[];
+  risk_analysis: Record<string, any>;
+  statistics: {
+    total_permissions: number;
+    designation_permissions: number;
+    group_permissions: number;
+    override_permissions: number;
+    conflicts_count: number;
+    high_risk_permissions: number;
+  };
+}
+
+export interface PermissionSource {
+  permission_id: number;
+  permission_code: string;
+  permission_name: string;
+  permission_level: string;
+  source_type: "designation" | "group" | "override";
+  source_name: string;
+  source_id: number;
+  risk_level: "low" | "medium" | "high" | "critical";
+  effective_from?: string;
+  effective_to?: string;
+  is_temporary?: boolean;
+  assignment_reason?: string;
+  override_reason?: string;
+}
+
+export interface AssignmentHistoryItem {
+  action_type: string;
+  entity_type: string;
+  entity_name: string;
+  performed_by: string;
+  performed_at: string;
+  change_reason?: string;
 }
 
 // RBAC API Service Class
@@ -263,6 +329,45 @@ class RBACAPIService {
   async assignUsersToGroup(groupId: number, userIds: number[]): Promise<{ success: boolean; message: string }> {
     const response = await api.post(`${this.baseURL}/groups/${groupId}/assign_users/`, {
       user_ids: userIds,
+    });
+    return response.data;
+  }
+
+  // User to Designation Assignment
+  async assignUsersToDesignation(
+    designationId: number,
+    userIds: number[],
+    assignmentData?: {
+      assignment_reason?: string;
+      is_primary?: boolean;
+      is_temporary?: boolean;
+      effective_from?: string;
+      effective_to?: string;
+    }
+  ): Promise<{ success: boolean; message: string; assignments: any[] }> {
+    const response = await api.post(`${this.baseURL}/designations/${designationId}/assign_users/`, {
+      user_ids: userIds,
+      ...assignmentData,
+    });
+    return response.data;
+  }
+
+  // Permission to Designation Assignment
+  async assignPermissionsToDesignation(
+    designationId: number,
+    permissionIds: number[],
+    assignmentData?: {
+      assignment_reason?: string;
+      permission_level?: string;
+      requires_approval?: boolean;
+      is_temporary?: boolean;
+      effective_from?: string;
+      effective_to?: string;
+    }
+  ): Promise<{ success: boolean; message: string; assignments: any[] }> {
+    const response = await api.post(`${this.baseURL}/designations/${designationId}/assign_permissions/`, {
+      permission_ids: permissionIds,
+      ...assignmentData,
     });
     return response.data;
   }
@@ -458,16 +563,73 @@ class RBACAPIService {
     const response = await api.post(`${this.baseURL}/permissions/simulate/`, data);
     return response.data;
   }
+
+  // Comprehensive Dashboard APIs
+  async getComprehensiveDashboard(viewType: "overview" | "user_analysis" | "permission_analysis" | "analytics", params?: any): Promise<any> {
+    const queryParams = new URLSearchParams({ view_type: viewType });
+    if (params?.user_id) queryParams.append("user_id", params.user_id.toString());
+    if (params?.permission_id) queryParams.append("permission_id", params.permission_id.toString());
+
+    const response = await api.get(`${this.baseURL}/groups/comprehensive_dashboard/?${queryParams}`);
+    return response.data;
+  }
+
+  async searchUsersByPermission(permissionCode: string, sourceType?: "designation" | "group" | "override"): Promise<any> {
+    const queryParams = new URLSearchParams({ permission_code: permissionCode });
+    if (sourceType) queryParams.append("source_type", sourceType);
+
+    const response = await api.get(`${this.baseURL}/groups/search_users_by_permission/?${queryParams}`);
+    return response.data;
+  }
+
+  async getUserPermissionsDetailed(userId: number, includeInactive?: boolean, categoryFilter?: string): Promise<any> {
+    const queryParams = new URLSearchParams({ user_id: userId.toString() });
+    if (includeInactive) queryParams.append("include_inactive", "true");
+    if (categoryFilter) queryParams.append("category_filter", categoryFilter);
+
+    const response = await api.get(`${this.baseURL}/groups/user_permissions_detailed/?${queryParams}`);
+    return response.data;
+  }
+
+  async getPermissionOverview(): Promise<any> {
+    return this.getComprehensiveDashboard("overview");
+  }
+
+  async getUserAnalysis(userId?: number): Promise<any> {
+    return this.getComprehensiveDashboard("user_analysis", userId ? { user_id: userId } : undefined);
+  }
+
+  async getPermissionAnalysis(permissionId?: number): Promise<any> {
+    return this.getComprehensiveDashboard("permission_analysis", permissionId ? { permission_id: permissionId } : undefined);
+  }
+
+  async getPermissionAnalytics(): Promise<any> {
+    return this.getComprehensiveDashboard("analytics");
+  }
+
+  // === User Profile and Designation Methods ===
+
+  async getCurrentUserProfile(): Promise<any> {
+    const response = await api.get(`${this.baseURL}/user-permissions/current_profile/`);
+    return response.data;
+  }
+
+  async getUserDesignations(userId: number): Promise<any[]> {
+    const response = await api.get(`${this.baseURL}/user-permissions/designations/?user_id=${userId}`);
+    return response.data;
+  }
+
+  // === Permission Assignment Methods ===
 }
 
 // Permission Categories
 export const getPermissionCategories = async () => {
-  const response = await api.get("/categories/");
+  const response = await api.get("/tenants/rbac/categories/");
   return response.data;
 };
 
 export const createPermissionCategory = async (data: { category_name: string; category_code: string; description?: string; sort_order?: number }) => {
-  const response = await api.post("/categories/", data);
+  const response = await api.post("/tenants/rbac/categories/", data);
   return response.data;
 };
 
@@ -481,18 +643,69 @@ export const updatePermissionCategory = async (
     is_active: boolean;
   }>
 ) => {
-  const response = await api.put(`/categories/${id}/`, data);
+  const response = await api.put(`/tenants/rbac/categories/${id}/`, data);
   return response.data;
 };
 
 export const deletePermissionCategory = async (id: number) => {
-  const response = await api.delete(`/categories/${id}/`);
+  const response = await api.delete(`/tenants/rbac/categories/${id}/`);
   return response.data;
 };
 
 // Permissions
 export const getPermissions = async () => {
-  const response = await api.get("/permissions/");
+  const response = await api.get("/tenants/rbac/permissions/");
+  return response.data;
+};
+
+/**
+ * Get permission dashboard data for a user
+ */
+export const getPermissionDashboard = async (userId?: number): Promise<PermissionDashboardData> => {
+  const queryParams = userId ? `?user_id=${userId}` : "";
+  const response = await api.get(`/tenants/rbac/user-permissions/permission_dashboard/${queryParams}`);
+  return response.data;
+};
+
+/**
+ * Assign permission to user
+ */
+export const assignPermissionToUser = async (data: {
+  user_id: number;
+  permission_id: number;
+  permission_level: string;
+  assignment_reason?: string;
+  effective_from?: string;
+  effective_to?: string;
+}): Promise<any> => {
+  const response = await api.post("/tenants/rbac/user-permissions/assign/", data);
+  return response.data;
+};
+
+/**
+ * Revoke permission from user
+ */
+export const revokePermissionFromUser = async (data: { user_id: number; permission_id: number; revocation_reason?: string }): Promise<any> => {
+  const response = await api.post("/tenants/rbac/user-permissions/revoke/", data);
+  return response.data;
+};
+
+/**
+ * Create user permission override
+ */
+export const createUserPermissionOverride = async (data: {
+  user_profile_id: number;
+  permission_id: number;
+  override_type: "grant" | "restrict";
+  permission_level: string;
+  override_reason: string;
+  business_justification: string;
+  effective_from?: string;
+  effective_to?: string;
+  is_temporary?: boolean;
+  requires_mfa?: boolean;
+}): Promise<any> => {
+  const response = await api.post("/tenants/rbac/user-permissions/create_override/", data);
   return response.data;
 };
 

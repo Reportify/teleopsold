@@ -52,6 +52,9 @@ import {
   Key,
   AdminPanelSettings,
   Shield,
+  ExpandLess,
+  ExpandMore,
+  FiberManualRecord,
 } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
@@ -212,6 +215,13 @@ const circleNavigationItems = [
     permission: "rbac.manage",
     description: "Role-based access control management",
   },
+  {
+    text: "Permission Analytics",
+    icon: <BarChart />,
+    path: "/rbac/comprehensive-dashboard",
+    permission: "rbac.manage",
+    description: "Advanced permission analysis and insights",
+  },
 ];
 
 // Vendor tenant navigation (service delivery)
@@ -288,6 +298,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [expandedMenus, setExpandedMenus] = useState<{ [key: string]: boolean }>({});
   const { darkMode, toggleDarkMode } = useDarkMode();
 
   const currentTenant = getCurrentTenant();
@@ -316,6 +327,13 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
 
   const handleProfileMenuClose = () => {
     setAnchorEl(null);
+  };
+
+  const toggleSubmenu = (menuText: string) => {
+    setExpandedMenus((prev) => ({
+      ...prev,
+      [menuText]: !prev[menuText],
+    }));
   };
 
   const handleLogout = async () => {

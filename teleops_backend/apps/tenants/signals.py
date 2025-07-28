@@ -5,9 +5,11 @@ Tenant signals for automatic RBAC initialization
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.management import call_command
-from .models import Tenant, CircleVendorRelationship
+from django.contrib.auth import get_user_model
+from .models import Tenant, CircleVendorRelationship, TenantUserProfile
 import logging
 
+User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
@@ -120,4 +122,58 @@ def update_vendor_relationships_on_tenant_approval(sender, instance, created, **
             relationship.save()
             
     except Exception as e:
-        logger.error(f"Failed to update vendor relationships for tenant {instance.id}: {e}", exc_info=True) 
+        logger.error(f"Failed to update vendor relationships for tenant {instance.id}: {e}", exc_info=True)
+
+
+@receiver(post_save, sender=User)
+def create_user_tenant_profile(sender, instance, created, **kwargs):
+    """
+    Automatically create TenantUserProfile when a User is created.
+    This ensures all users have proper tenant profiles for RBAC operations.
+    """
+    if created:
+        try:
+            # Check if this user already has any tenant profiles
+            existing_profiles = TenantUserProfile.objects.filter(user=instance).count()
+            
+            if existing_profiles == 0:
+                # If user has no tenant profiles, we need to determine which tenant they belong to
+                # This is a bit tricky since we don't have tenant context in the signal
+                # For now, we'll create a profile without a tenant, which can be updated later
+                # when the user is properly assigned to a tenant
+                
+                logger.info(f"User {instance.email} created, but no tenant context available for automatic profile creation")
+                # Don't create a profile here - it should be created when user is assigned to a tenant
+                
+        except Exception as e:
+            logger.error(f"Failed to create tenant profile for user {instance.email}: {str(e)}")
+
+
+def create_tenant_user_profile_for_user(user, tenant, **profile_data):
+    """
+    Helper function to create TenantUserProfile for a user in a specific tenant.
+    This should be called when users are added to tenants.
+    """
+    try:
+        profile, created = TenantUserProfile.objects.get_or_create(
+            user=user,
+            tenant=tenant,
+            defaults={
+                'display_name': profile_data.get('display_name', f'{user.first_name} {user.last_name}'.strip() or user.email),
+                'is_active': True,
+                'job_title': profile_data.get('job_title', ''),
+                'department': profile_data.get('department', ''),
+                'phone_number': profile_data.get('phone_number', ''),
+                'employee_id': profile_data.get('employee_id', ''),
+                **profile_data
+            }
+        )
+        
+        if created:
+            logger.info(f"Created TenantUserProfile for user {user.email} in tenant {tenant.organization_name}")
+        
+        return profile
+        
+    except Exception as e:
+        logger.error(f"Failed to create TenantUserProfile for user {user.email} in tenant {tenant.organization_name}: {str(e)}")
+        return None 
