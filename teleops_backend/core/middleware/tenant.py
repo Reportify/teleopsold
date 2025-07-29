@@ -106,8 +106,13 @@ class TenantMiddleware:
         if path.startswith('/api/v1/'):
             parts = path.split('/')
             if len(parts) > 4 and parts[3] == 'tenants':
+                tenant_id = parts[4]
+                
+                # Skip RBAC paths - they get tenant from authenticated user
+                if tenant_id == 'rbac':
+                    return None
+                    
                 try:
-                    tenant_id = parts[4]
                     return Tenant.objects.get(id=tenant_id, is_active=True)
                 except (ValueError, Tenant.DoesNotExist):
                     pass

@@ -10,6 +10,7 @@ from django.core.validators import MinValueValidator
 from django.conf import settings
 from datetime import date
 from django.db.models import Q
+from .constants import RESOURCE_TYPE_CHOICES
 
 
 class TelecomCircle(models.Model):
@@ -2499,6 +2500,8 @@ class PermissionRegistry(models.Model):
         ('full_access', 'Full Access/Administrator'),
         ('custom', 'Custom Permission'),
     ]
+    
+    # Using centralized resource type choices
 
     id = models.BigAutoField(primary_key=True)
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='permission_registry')
@@ -2519,7 +2522,12 @@ class PermissionRegistry(models.Model):
     risk_level = models.CharField(max_length=20, choices=RISK_LEVEL_CHOICES, default='low')
 
     # Permission Metadata
-    resource_type = models.CharField(max_length=50, blank=True, help_text="Resource category this permission applies to (e.g., project, user, site)")
+    resource_type = models.CharField(
+        max_length=50, 
+        choices=RESOURCE_TYPE_CHOICES,
+        blank=True, 
+        help_text="Application feature/module this permission controls"
+    )
     # action_type field removed - redundant with business_template and permission_type
     effect = models.CharField(max_length=20, choices=EFFECT_CHOICES, default='allow')
 

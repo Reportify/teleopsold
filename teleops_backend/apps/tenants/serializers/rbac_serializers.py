@@ -15,6 +15,8 @@ from ..models import (
     TenantUserProfile, TenantDesignation, TenantDepartment,
     PermissionCategory
 )
+from ..services.feature_registry import get_feature_registry
+from ..constants import RESOURCE_TYPES
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -58,6 +60,7 @@ class PermissionRegistrySerializer(serializers.ModelSerializer):
     
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
     usage_count = serializers.SerializerMethodField()
+    features = serializers.SerializerMethodField()
     
     class Meta:
         model = PermissionRegistry
@@ -66,9 +69,9 @@ class PermissionRegistrySerializer(serializers.ModelSerializer):
             'description', 'permission_type', 'business_template', 'is_system_permission',
             'requires_scope', 'is_delegatable', 'risk_level', 'resource_type',
             'effect', 'is_active', 'is_auditable',
-            'created_by_name', 'created_at', 'updated_at', 'usage_count'
+            'created_by_name', 'created_at', 'updated_at', 'usage_count', 'features'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_name', 'usage_count']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by_name', 'usage_count', 'features']
     
     def get_usage_count(self, obj):
         """Get total usage count for this permission."""
@@ -79,6 +82,63 @@ class PermissionRegistrySerializer(serializers.ModelSerializer):
             return designation_count + group_count + override_count
         except:
             return 0
+    
+    def get_features(self, obj):
+        """Get features mapped to this permission."""
+        try:
+            # If resource_type is manually set and differs from permission_code pattern, 
+            # prioritize manual selection over automatic mapping
+            if obj.resource_type:
+                # Check if this looks like a manual override (resource_type differs from permission_code pattern)
+                permission_prefix = obj.permission_code.split('.')[0] if '.' in obj.permission_code else ''
+                expected_resource_from_code = permission_prefix.replace('_management', '') if permission_prefix.endswith('_management') else permission_prefix
+                
+                # If user manually selected a different resource type, use that
+                if obj.resource_type != expected_resource_from_code:
+                    module_name = RESOURCE_TYPES.get(obj.resource_type, obj.resource_type.title())
+                    return [
+                        {
+                            'feature_id': f'module_{module_name.lower().replace(" ", "_")}',
+                            'feature_name': module_name,
+                            'resource_type': module_name.lower().replace(" ", "_"),
+                            'description': f'{module_name} functionality'
+                        }
+                    ]
+            
+            # Fall back to explicit feature mappings from permission_code
+            feature_registry = get_feature_registry()
+            features = feature_registry.get_features_for_permission(obj.permission_code)
+            
+            # If still no mappings, use resource_type as fallback
+            if not features and obj.resource_type:
+                module_name = RESOURCE_TYPES.get(obj.resource_type, obj.resource_type.title())
+                return [
+                    {
+                        'feature_id': f'module_{module_name.lower().replace(" ", "_")}',
+                        'feature_name': module_name,
+                        'resource_type': module_name.lower().replace(" ", "_"),
+                        'description': f'{module_name} functionality'
+                    }
+                ]
+            
+            # Group features by resource type and return module names (for explicit mappings)
+            modules = set()
+            for feature in features:
+                module_name = RESOURCE_TYPES.get(feature.resource_type, feature.resource_type.title())
+                modules.add(module_name)
+            
+            return [
+                {
+                    'feature_id': f'module_{module.lower().replace(" ", "_")}',
+                    'feature_name': module,
+                    'resource_type': module.lower().replace(" ", "_"),
+                    'description': f'{module} functionality'
+                }
+                for module in sorted(modules)
+            ]
+        except Exception as e:
+            logger.warning(f"Error getting features for permission {obj.permission_code}: {str(e)}")
+            return []
     
     def validate_permission_code(self, value):
         """Validate permission code format."""

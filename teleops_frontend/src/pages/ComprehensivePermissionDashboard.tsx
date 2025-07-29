@@ -39,7 +39,7 @@ import {
   AccordionDetails,
   Divider,
 } from "@mui/material";
-import { Dashboard, Person, Security, Analytics, Search, Refresh, Download, Visibility, Group, Assignment, ExpandMore, WorkOutline, AdminPanelSettings, Shield } from "@mui/icons-material";
+import { Dashboard, Person, Security, Analytics, Search, Refresh, Download, Visibility, Group, Assignment, ExpandMore, WorkOutline, AdminPanelSettings, Shield, Remove } from "@mui/icons-material";
 import { DataGrid, GridColDef, GridToolbar } from "@mui/x-data-grid";
 
 import { rbacAPI } from "../services/rbacAPI";
@@ -79,6 +79,16 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   // Dialog states
   const [userDetailDialog, setUserDetailDialog] = useState(false);
   const [selectedUserDetail, setSelectedUserDetail] = useState<any>(null);
+
+  // Removal operation states
+  const [removingPermissions, setRemovingPermissions] = useState(false);
+  const [selectedUsersForRemoval, setSelectedUsersForRemoval] = useState<number[]>([]);
+  const [selectedPermissionsForRemoval, setSelectedPermissionsForRemoval] = useState<number[]>([]);
+  const [confirmRemovalDialog, setConfirmRemovalDialog] = useState(false);
+  const [removalContext, setRemovalContext] = useState<{
+    type: "user_from_permission" | "permission_from_user";
+    data: any;
+  } | null>(null);
 
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -210,6 +220,291 @@ const ComprehensivePermissionDashboard: React.FC = () => {
         message: "Failed to load user permissions",
         severity: "error",
       });
+    }
+  };
+
+  // Permission Removal Handlers
+  const handleRemoveUserFromPermission = (user: any, permissionCode: string) => {
+    setRemovalContext({
+      type: "user_from_permission",
+      data: {
+        user,
+        permissionCode,
+        permissionName: permissionAnalysisData?.permission_details?.permission_name,
+      },
+    });
+    setConfirmRemovalDialog(true);
+  };
+
+  const handleRemovePermissionFromUser = (permission: any) => {
+    setRemovalContext({
+      type: "permission_from_user",
+      data: {
+        user: selectedUser,
+        permission,
+        userName: userAnalysisData?.user_summary?.name,
+      },
+    });
+    setConfirmRemovalDialog(true);
+  };
+
+  const handleBulkRemoveUsersFromPermission = () => {
+    if (selectedUsersForRemoval.length === 0 || !searchTerm) {
+      setSnackbar({
+        open: true,
+        message: "Please select users to remove",
+        severity: "warning",
+      });
+      return;
+    }
+
+    setRemovalContext({
+      type: "user_from_permission",
+      data: {
+        userIds: selectedUsersForRemoval,
+        permissionCode: searchTerm,
+        permissionName: permissionAnalysisData?.permission_details?.permission_name,
+        isBulk: true,
+      },
+    });
+    setConfirmRemovalDialog(true);
+  };
+
+  const handleBulkRemovePermissionsFromUser = () => {
+    if (selectedPermissionsForRemoval.length === 0 || !selectedUser) {
+      setSnackbar({
+        open: true,
+        message: "Please select permissions to remove",
+        severity: "warning",
+      });
+      return;
+    }
+
+    setRemovalContext({
+      type: "permission_from_user",
+      data: {
+        userId: selectedUser.user_id,
+        permissionIds: selectedPermissionsForRemoval,
+        userName: userAnalysisData?.user_summary?.name,
+        isBulk: true,
+      },
+    });
+    setConfirmRemovalDialog(true);
+  };
+
+  const executeRemoval = async () => {
+    if (!removalContext) return;
+
+    try {
+      setRemovingPermissions(true);
+      const { type, data } = removalContext;
+
+      if (type === "user_from_permission") {
+        // Remove user(s) from permission
+        if (data.isBulk) {
+          // Get permission ID from permission code
+          const permission = Object.values(overviewData?.permission_summaries || {}).find((p: any) => p.permission_code === data.permissionCode);
+
+          if (!permission) {
+            throw new Error("Permission not found");
+          }
+
+          const result = await rbacAPI.bulkRevokePermissions({
+            permission_ids: [(permission as any).id],
+            target_type: "users",
+            target_ids: data.userIds,
+            reason: `Bulk removal from permission: ${data.permissionCode}`,
+          });
+
+          // Check results and provide appropriate feedback
+          const successfulResults = result.results?.filter((r: any) => r.success) || [];
+          const failedResults = result.results?.filter((r: any) => !r.success) || [];
+
+          let message = `Successfully processed ${successfulResults.length} users`;
+          if (failedResults.length > 0) {
+            const adminFailures = failedResults.filter((r: any) => r.error?.includes("administrator"));
+            if (adminFailures.length > 0) {
+              message += ` (${adminFailures.length} administrators skipped)`;
+            }
+          }
+
+          setSnackbar({
+            open: true,
+            message: message,
+            severity: successfulResults.length > 0 ? "success" : "warning",
+          });
+        } else {
+          // Single user removal
+          const permission = Object.values(overviewData?.permission_summaries || {}).find((p: any) => p.permission_code === data.permissionCode);
+
+          if (!permission) {
+            throw new Error("Permission not found");
+          }
+
+          const result = await rbacAPI.bulkRevokePermissions({
+            permission_ids: [(permission as any).id],
+            target_type: "users",
+            target_ids: [data.user.user_id],
+            reason: `Removed user ${data.user.name} from permission: ${data.permissionCode}`,
+          });
+
+          // Check if any operations were successful
+          const successfulResults = result.results?.filter((r: any) => r.success) || [];
+
+          let message = `Successfully processed removal for ${data.user.name}`;
+          if (successfulResults.length > 0) {
+            // Check if user had designation/group permissions (will create deny override)
+            const isDesignationOrGroupUser = data.user.source?.startsWith("designation_") || data.user.source?.startsWith("group_");
+            if (isDesignationOrGroupUser) {
+              message = `Created deny override for ${data.user.name} - permission will now be blocked despite designation/group assignment`;
+            } else {
+              message = `Successfully removed ${data.user.name} from permission ${data.permissionName}`;
+            }
+          }
+
+          setSnackbar({
+            open: true,
+            message: message,
+            severity: "success",
+          });
+        }
+
+        // Refresh permission analysis data
+        if (searchTerm) {
+          await loadPermissionAnalysisData();
+        }
+        setSelectedUsersForRemoval([]);
+      } else if (type === "permission_from_user") {
+        // Remove permission(s) from user
+        if (data.isBulk) {
+          await rbacAPI.bulkRevokePermissions({
+            permission_ids: data.permissionIds,
+            target_type: "users",
+            target_ids: [data.userId],
+            reason: `Bulk removal of ${data.permissionIds.length} permissions from user: ${data.userName}`,
+          });
+
+          setSnackbar({
+            open: true,
+            message: `Successfully removed ${data.permissionIds.length} permissions from ${data.userName}`,
+            severity: "success",
+          });
+        } else {
+          await rbacAPI.bulkRevokePermissions({
+            permission_ids: [data.permission.permission_id],
+            target_type: "users",
+            target_ids: [selectedUser.user_id],
+            reason: `Removed permission ${data.permission.permission_code} from user: ${data.userName}`,
+          });
+
+          setSnackbar({
+            open: true,
+            message: `Successfully removed permission ${data.permission.permission_name} from ${data.userName}`,
+            severity: "success",
+          });
+        }
+
+        // Refresh user analysis data
+        if (selectedUser) {
+          await loadUserAnalysisData(selectedUser.user_id);
+        }
+        setSelectedPermissionsForRemoval([]);
+      }
+    } catch (error: any) {
+      console.error("Error during removal:", error);
+
+      // Check if it's a specific error about administrator users
+      let errorMessage = error.message || "Failed to remove permissions";
+
+      if (error.response?.data?.results) {
+        const failedResults = error.response.data.results.filter((r: any) => !r.success);
+        if (failedResults.length > 0) {
+          const adminErrors = failedResults.filter((r: any) => r.error?.includes("administrator") || r.error?.includes("Cannot remove permissions from administrator"));
+
+          if (adminErrors.length > 0) {
+            errorMessage = "Cannot remove permissions from administrator users. Administrators have unrestricted access to all permissions.";
+          } else {
+            errorMessage = failedResults[0].error || "Failed to remove permissions";
+          }
+        }
+      }
+
+      setSnackbar({
+        open: true,
+        message: errorMessage,
+        severity: "error",
+      });
+    } finally {
+      setRemovingPermissions(false);
+      setConfirmRemovalDialog(false);
+      setRemovalContext(null);
+    }
+  };
+
+  const handleRemovePermissionFromGroup = async (permissionId: number, groupId: number, groupName: string) => {
+    if (window.confirm(`Remove permission from group "${groupName}"? All users in this group will naturally lose this permission.`)) {
+      try {
+        const result = await rbacAPI.bulkRevokePermissions({
+          permission_ids: [permissionId],
+          target_type: "groups",
+          target_ids: [groupId],
+          reason: "Removed via comprehensive dashboard",
+        });
+
+        if (result.success && result.results[0]) {
+          const groupResult = result.results[0];
+          setSnackbar({
+            open: true,
+            message: `Permission removed from group "${groupResult.group_name}". ${groupResult.users_affected} users affected.`,
+            severity: "success",
+          });
+          // Refresh current view
+          if (selectedTab === 0) {
+            loadOverviewData();
+          } else if (selectedTab === 3) {
+            loadAnalyticsData();
+          }
+        }
+      } catch (error: any) {
+        setSnackbar({
+          open: true,
+          message: error.message || "Failed to remove permission from group",
+          severity: "error",
+        });
+      }
+    }
+  };
+
+  const handleRemovePermissionFromDesignation = async (permissionId: number, designationId: number, designationName: string) => {
+    if (window.confirm(`Remove permission from designation "${designationName}"? All users with this designation will lose this permission.`)) {
+      try {
+        const result = await rbacAPI.bulkRevokePermissions({
+          permission_ids: [permissionId],
+          target_type: "designations",
+          target_ids: [designationId],
+          reason: "Removed via comprehensive dashboard",
+        });
+
+        if (result.success) {
+          setSnackbar({
+            open: true,
+            message: `Permission removed from designation "${designationName}"`,
+            severity: "success",
+          });
+          // Refresh current view
+          if (selectedTab === 0) {
+            loadOverviewData();
+          } else if (selectedTab === 3) {
+            loadAnalyticsData();
+          }
+        }
+      } catch (error: any) {
+        setSnackbar({
+          open: true,
+          message: error.message || "Failed to remove permission from designation",
+          severity: "error",
+        });
+      }
     }
   };
 
@@ -732,13 +1027,31 @@ const ComprehensivePermissionDashboard: React.FC = () => {
             <Grid size={{ xs: 12 }}>
               <Card>
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Users with this Permission
-                  </Typography>
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                    <Typography variant="h6">Users with this Permission</Typography>
+                    {selectedUsersForRemoval.length > 0 && (
+                      <Button variant="contained" color="error" startIcon={<Remove />} onClick={handleBulkRemoveUsersFromPermission} disabled={removingPermissions}>
+                        Remove {selectedUsersForRemoval.length} User{selectedUsersForRemoval.length > 1 ? "s" : ""} from Permission
+                      </Button>
+                    )}
+                  </Box>
                   <TableContainer>
                     <Table>
                       <TableHead>
                         <TableRow>
+                          <TableCell padding="checkbox">
+                            <input
+                              type="checkbox"
+                              checked={permissionAnalysisData?.results?.users?.length > 0 && selectedUsersForRemoval.length === permissionAnalysisData.results.users.length}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedUsersForRemoval(permissionAnalysisData.results.users.map((user: any) => user.user_id));
+                                } else {
+                                  setSelectedUsersForRemoval([]);
+                                }
+                              }}
+                            />
+                          </TableCell>
                           <TableCell>User</TableCell>
                           <TableCell>Job Title</TableCell>
                           <TableCell>Source</TableCell>
@@ -758,6 +1071,19 @@ const ComprehensivePermissionDashboard: React.FC = () => {
                         })() ? (
                           permissionAnalysisData.results.users.map((user: any, index: number) => (
                             <TableRow key={index}>
+                              <TableCell padding="checkbox">
+                                <input
+                                  type="checkbox"
+                                  checked={selectedUsersForRemoval.includes(user.user_id)}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedUsersForRemoval((prev) => [...prev, user.user_id]);
+                                    } else {
+                                      setSelectedUsersForRemoval((prev) => prev.filter((id) => id !== user.user_id));
+                                    }
+                                  }}
+                                />
+                              </TableCell>
                               <TableCell>
                                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                                   <Avatar sx={{ width: 32, height: 32 }}>{user.name?.charAt(0) || "U"}</Avatar>
@@ -794,15 +1120,20 @@ const ComprehensivePermissionDashboard: React.FC = () => {
                                 </Typography>
                               </TableCell>
                               <TableCell>
-                                <IconButton size="small" onClick={() => getUserDetailedPermissions(user.user_id)}>
-                                  <Visibility />
-                                </IconButton>
+                                <Box sx={{ display: "flex", gap: 1 }}>
+                                  <IconButton size="small" onClick={() => getUserDetailedPermissions(user.user_id)}>
+                                    <Visibility />
+                                  </IconButton>
+                                  <IconButton size="small" color="error" onClick={() => handleRemoveUserFromPermission(user, searchTerm)} disabled={removingPermissions}>
+                                    <Remove />
+                                  </IconButton>
+                                </Box>
                               </TableCell>
                             </TableRow>
                           ))
                         ) : (
                           <TableRow>
-                            <TableCell colSpan={5} align="center">
+                            <TableCell colSpan={6} align="center">
                               <Typography variant="body2" color="text.secondary">
                                 No users found with this permission
                               </Typography>

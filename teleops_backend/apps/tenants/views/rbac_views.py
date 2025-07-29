@@ -10,18 +10,18 @@ from django.db.models import Q, Prefetch
 from django.utils import timezone
 from datetime import timedelta
 from rest_framework import status, viewsets, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.request import Request
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
-from core.permissions.tenant_permissions import IsTenantAdmin, IsTenantMember
+from core.permissions.tenant_permissions import IsTenantAdmin, IsTenantMember, HasRBACPermission
 from ..models import (
     Tenant, PermissionRegistry, DesignationBasePermission, 
     UserPermissionOverride, PermissionGroup, PermissionGroupPermission,
     UserPermissionGroupAssignment, PermissionAuditTrail, TenantUserProfile,
-    TenantDesignation, PermissionCategory, TenantDepartment
+    TenantDesignation, PermissionCategory, TenantDepartment, UserDesignationAssignment
 )
 from ..serializers.rbac_serializers import (
     PermissionRegistrySerializer, DesignationBasePermissionSerializer,
@@ -32,9 +32,24 @@ from ..serializers.rbac_serializers import (
     DepartmentSerializer, TenantDesignationSerializer, TenantDepartmentSerializer
 )
 from ..services import get_rbac_service, get_permission_management_service
+from ..constants import RESOURCE_TYPES_FRONTEND
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+@extend_schema(
+    summary="Get resource types",
+    description="Get all available resource types for permissions",
+    responses={200: OpenApiTypes.OBJECT}
+)
+@api_view(['GET'])
+@permission_classes([IsTenantMember])
+def get_resource_types(request):
+    """Get resource types for frontend."""
+    return Response({
+        'success': True,
+        'resource_types': RESOURCE_TYPES_FRONTEND
+    })
 
 
 class PermissionCategoryViewSet(viewsets.ModelViewSet):
@@ -56,7 +71,8 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     API endpoints for managing tenant permission registry.
     """
     serializer_class = PermissionRegistrySerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [HasRBACPermission]
+    permission_required = 'rbac_management.view_permissions'
     
     def get_queryset(self):
         """Get permissions for current tenant."""
@@ -294,9 +310,10 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['post'])
     def bulk_revoke(self, request: Request) -> Response:
-        """Bulk revoke permissions."""
+        """Bulk revoke permissions with smart override logic."""
         try:
             tenant = request.user.tenant_user_profile.tenant
+            rbac_service = get_rbac_service(tenant.id)
             
             permission_ids = request.data.get('permission_ids', [])
             target_type = request.data.get('target_type')
@@ -308,12 +325,83 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                 for target_id in target_ids:
                     try:
                         if target_type == 'users':
-                            # Remove user overrides or add restriction
-                            UserPermissionOverride.objects.filter(
-                                user_profile_id=target_id,
-                                permission_id=permission_id,
-                                user_profile__tenant=tenant
-                            ).update(is_active=False)
+                            # Get user profile
+                            user_profile = TenantUserProfile.objects.get(
+                                user_id=target_id, 
+                                tenant=tenant, 
+                                is_active=True
+                            )
+                            
+                            # Check if user is administrator
+                            user_designations = UserDesignationAssignment.objects.filter(
+                                user_profile=user_profile,
+                                is_active=True
+                            ).select_related('designation')
+                            
+                            is_admin = any(
+                                designation.designation.designation_name.lower() == 'administrator'
+                                for designation in user_designations
+                            )
+                            
+                            if is_admin:
+                                results.append({
+                                    'permission_id': permission_id,
+                                    'target_id': target_id,
+                                    'target_type': target_type,
+                                    'success': False,
+                                    'error': 'Cannot remove permissions from administrator users'
+                                })
+                                continue
+                            
+                            # Get permission registry entry
+                            permission = PermissionRegistry.objects.get(id=permission_id, tenant=tenant)
+                            
+                            # Get user's effective permissions to understand the source
+                            effective_perms = rbac_service.get_user_effective_permissions(user_profile, force_refresh=True)
+                            user_permissions = effective_perms.get('permissions', {})
+                            
+                            permission_data = user_permissions.get(permission.permission_code)
+                            
+                            if not permission_data:
+                                results.append({
+                                    'permission_id': permission_id,
+                                    'target_id': target_id,
+                                    'target_type': target_type,
+                                    'success': False,
+                                    'error': 'User does not have this permission'
+                                })
+                                continue
+                            
+                            source = permission_data.get('source', '')
+                            
+                            if source.startswith('user_override_'):
+                                # User has permission via override - remove/deactivate the override
+                                UserPermissionOverride.objects.filter(
+                                    user_profile=user_profile,
+                                    permission=permission,
+                                    is_active=True
+                                ).update(is_active=False)
+                                
+                            elif source.startswith('designation_') or source.startswith('group_'):
+                                # User has permission via designation or group - create deny override
+                                override, created = UserPermissionOverride.objects.get_or_create(
+                                    user_profile=user_profile,
+                                    permission=permission,
+                                    defaults={
+                                        'permission_level': 'denied',
+                                        'is_active': True,
+                                        'assignment_reason': reason or f'Override to deny permission from {source}',
+                                        'assigned_by': request.user.tenant_user_profile
+                                    }
+                                )
+                                
+                                if not created:
+                                    # Update existing override to deny
+                                    override.permission_level = 'denied'
+                                    override.is_active = True
+                                    override.assignment_reason = reason or f'Override to deny permission from {source}'
+                                    override.assigned_by = request.user.tenant_user_profile
+                                    override.save()
                             
                         elif target_type == 'designations':
                             # Deactivate designation permissions
@@ -323,6 +411,35 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                                 designation__tenant=tenant
                             ).update(is_active=False)
                         
+                        elif target_type == 'groups':
+                            # Remove permission from group
+                            permission = PermissionRegistry.objects.get(id=permission_id, tenant=tenant)
+                            group = PermissionGroup.objects.get(id=target_id, tenant=tenant)
+                            
+                            # Remove permission from group - users will naturally lose permission via group
+                            PermissionGroupPermission.objects.filter(
+                                group=group,
+                                permission=permission,
+                                is_active=True
+                            ).update(is_active=False)
+                            
+                            # Count affected users for reporting
+                            group_users_count = UserPermissionGroupAssignment.objects.filter(
+                                group=group,
+                                is_active=True
+                            ).count()
+                            
+                            # Add group-specific result info
+                            results.append({
+                                'permission_id': permission_id,
+                                'target_id': target_id,
+                                'target_type': target_type,
+                                'success': True,
+                                'users_affected': group_users_count,
+                                'group_name': group.group_name
+                            })
+                            continue  # Skip the generic success append below
+                        
                         results.append({
                             'permission_id': permission_id,
                             'target_id': target_id,
@@ -331,6 +448,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                         })
                         
                     except Exception as e:
+                        logger.error(f"Error revoking permission {permission_id} from {target_type} {target_id}: {str(e)}")
                         results.append({
                             'permission_id': permission_id,
                             'target_id': target_id,
@@ -601,22 +719,156 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
+    @action(detail=False, methods=['get'])
+    def test_working_permissions(self, request: Request) -> Response:
+        """
+        TEST: Working permission calculation for all users.
+        This tests if the individual analysis approach works for batch operations.
+        """
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Get all active users
+            users = TenantUserProfile.objects.filter(
+                tenant=tenant,
+                is_active=True
+            ).select_related('user')[:5]  # Limit to 5 users for testing
+            
+            results = []
+            
+            for user in users:
+                # Use the EXACT same logic as individual user analysis (which works)
+                rbac_service = get_rbac_service(tenant)
+                effective_permissions = rbac_service.get_user_effective_permissions(user)
+                
+                # Don't serialize - just get raw count
+                perm_count = len(effective_permissions.get('permissions', {}))
+                is_admin = rbac_service._is_administrator(user)
+                
+                results.append({
+                    'user_id': user.user.id,
+                    'email': user.user.email,
+                    'name': user.user.get_full_name() or user.user.username,
+                    'is_administrator': is_admin,
+                    'permission_count': perm_count,
+                    'sample_permissions': list(effective_permissions.get('permissions', {}).keys())[:3]
+                })
+            
+            return Response({
+                'test_type': 'working_permissions',
+                'users_tested': len(results),
+                'results': results,
+                'note': 'This uses individual analysis logic for each user'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in test working permissions: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @extend_schema(
+        summary="Delete permission completely",
+        description="Completely delete a permission with cascading cleanup from all assignments",
+        request=OpenApiTypes.OBJECT,
+        responses={200: OpenApiTypes.OBJECT}
+    )
+    @action(detail=True, methods=['delete'])
+    def delete_completely(self, request: Request, pk=None) -> Response:
+        """Complete permission deletion with cascading cleanup."""
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            permission = self.get_object()
+            reason = request.data.get('reason', 'Complete deletion requested')
+            
+            cleanup_results = {
+                'designations_cleaned': 0,
+                'groups_cleaned': 0,
+                'users_cleaned': 0,
+                'overrides_cleaned': 0
+            }
+            
+            # 1. Remove from all designations (HARD DELETE)
+            designation_perms = DesignationBasePermission.objects.filter(
+                permission=permission
+            )
+            cleanup_results['designations_cleaned'] = designation_perms.count()
+            designation_perms.delete()
+            
+            # 2. Remove from all groups (HARD DELETE)
+            group_perms = PermissionGroupPermission.objects.filter(
+                permission=permission
+            )
+            cleanup_results['groups_cleaned'] = group_perms.count()
+            group_perms.delete()
+            
+            # 3. Remove all user overrides (HARD DELETE)
+            user_overrides = UserPermissionOverride.objects.filter(
+                permission=permission
+            )
+            cleanup_results['overrides_cleaned'] = user_overrides.count()
+            user_overrides.delete()
+            
+            # 4. Create audit trail before deletion
+            PermissionAuditTrail.objects.create(
+                tenant=tenant,
+                action_type='delete',
+                entity_type='permission',
+                entity_id=permission.id,
+                change_reason=reason,
+                business_context=f'Permission "{permission.permission_name}" ({permission.permission_code}) completely deleted from system',
+                performed_by=request.user,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                additional_context={
+                    'permission_id': permission.id,
+                    'permission_code': permission.permission_code,
+                    'permission_name': permission.permission_name,
+                    'permission_category': permission.permission_category,
+                    'risk_level': permission.risk_level,
+                    'cleanup_results': cleanup_results,
+                    'deletion_type': 'complete'
+                }
+            )
+            
+            # 5. Hard delete the permission itself
+            permission_code = permission.permission_code  # Store before deletion
+            permission_name = permission.permission_name   # Store before deletion
+            permission.delete()
+            
+            user_identifier = getattr(request.user, 'email', '') or getattr(request.user, 'username', f'user_{request.user.id}')
+            logger.info(f"Permission {permission_code} completely deleted by {user_identifier}")
+            
+            return Response({
+                'success': True,
+                'message': f'Permission "{permission_name}" completely removed from system',
+                'cleanup_results': cleanup_results,
+                'permission_code': permission_code
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in complete permission deletion: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+
 
 class PermissionGroupViewSet(viewsets.ModelViewSet):
     """
     API endpoints for managing permission groups.
     """
     serializer_class = PermissionGroupSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [HasRBACPermission]
+    permission_required = 'rbac_management.view_permissions'
     
     def get_queryset(self):
         """Get permission groups for current tenant."""
         return PermissionGroup.objects.filter(
             tenant=self.request.user.tenant_user_profile.tenant
-        ).prefetch_related(
-            'group_permissions__permission',
-            'user_assignments__user_profile__user'
-        ).order_by('group_name')
+        ).prefetch_related('group_permissions__permission', 'user_assignments__user_profile__user')
     
     @extend_schema(
         summary="Update permission group",
@@ -724,9 +976,10 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                         }
                     )
                     
+                    user_identifier = getattr(user_profile.user, 'email', '') or getattr(user_profile.user, 'username', f'user_{user_profile.user.id}')
                     assigned_users.append({
                         'user_id': user_id,
-                        'username': user_profile.user.username,
+                        'username': user_identifier,
                         'created': created
                     })
                     
@@ -1050,7 +1303,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
                 'job_title': target_user_profile.job_title,
                 'department': target_user_profile.department,
                 'is_active': target_user_profile.is_active,
-                'last_login': target_user_profile.last_login,
+                'last_login': target_user_profile.user.last_login.isoformat() if target_user_profile.user.last_login else None,
             }
             
             return Response({
@@ -1190,7 +1443,7 @@ class UserPermissionViewSet(viewsets.ViewSet):
                 'department': user_profile.department,
                 'employment_type': user_profile.employment_type,
                 'is_active': user_profile.is_active,
-                'last_login': user_profile.last_login,
+                'last_login': user_profile.user.last_login.isoformat() if user_profile.user.last_login else None,
                 'created_at': user_profile.created_at,
                 'updated_at': user_profile.updated_at
             }
@@ -1286,7 +1539,8 @@ class PermissionAuditViewSet(viewsets.ReadOnlyModelViewSet):
     API endpoints for permission audit trail.
     """
     serializer_class = PermissionAuditTrailSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [HasRBACPermission]
+    permission_required = 'rbac_management.view_audit_trail'
     
     def get_queryset(self):
         """Get audit trail for current tenant."""
@@ -2032,7 +2286,8 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     API endpoints for managing permission groups.
     """
     serializer_class = PermissionGroupSerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [HasRBACPermission]
+    permission_required = 'rbac_management.view_permissions'
     
     def get_queryset(self):
         """Get permission groups for current tenant."""
@@ -2179,163 +2434,521 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'])
     def comprehensive_dashboard(self, request: Request) -> Response:
-        """Get comprehensive permission dashboard with multiple view types."""
+        """
+        New comprehensive dashboard API that properly handles all view types.
+        Matches frontend TypeScript interfaces exactly.
+        """
         try:
-            # Custom permission check: allow users with rbac_management.view_permissions
-            from ..services import get_rbac_service
-            
-            tenant = request.user.tenant_user_profile.tenant
-            rbac_service = get_rbac_service()
-            
-            # Check if user has permission to view RBAC data
-            has_view_permission = rbac_service.check_permission(
-                user=request.user,
-                tenant=tenant,
-                permission_code='rbac_management.view_permissions'
-            )
-            
-            # Also allow tenant admins
-            is_admin = (
-                request.user.is_superuser or
-                tenant.primary_contact_email == request.user.email or
-                (hasattr(request.user, 'tenant_user_profile') and 
-                 request.user.tenant_user_profile.tenant_id == tenant.id)
-            )
-            
-            if not (has_view_permission or is_admin):
-                return Response(
-                    {'error': 'You do not have permission to view RBAC dashboard'}, 
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
             view_type = request.query_params.get('view_type', 'overview')
+            tenant = request.user.tenant_user_profile.tenant
             
+            # Route to specific view handler
             if view_type == 'overview':
-                return self._get_permission_overview(tenant)
+                return self._get_overview_data(tenant)
             elif view_type == 'user_analysis':
                 user_id = request.query_params.get('user_id')
-                return self._get_user_analysis(tenant, user_id)
+                return self._get_user_analysis_data(tenant, user_id)
             elif view_type == 'permission_analysis':
                 permission_id = request.query_params.get('permission_id')
-                return self._get_permission_analysis(tenant, permission_id)
+                return self._get_permission_analysis_data(tenant, permission_id)
             elif view_type == 'analytics':
-                return self._get_permission_analytics(tenant)
+                return self._get_analytics_data(tenant)
             else:
                 return Response(
-                    {'error': 'Invalid view_type. Use: overview, user_analysis, permission_analysis, analytics'}, 
+                    {'error': f'Invalid view_type: {view_type}'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
                 
         except Exception as e:
-            logger.error(f"Error getting comprehensive dashboard: {str(e)}")
+            logger.error(f"Error in comprehensive_dashboard: {str(e)}")
             return Response(
                 {'error': str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _get_permission_overview(self, tenant: Tenant) -> Response:
-        """Get overview of all permissions and who has them."""
-        
-        # Get all active permissions
-        permissions = PermissionRegistry.objects.filter(
+    def _get_overview_data(self, tenant) -> Response:
+        """
+        Get overview dashboard data.
+        Returns: OverviewDashboardData structure
+        """
+        try:
+            # Get all active users in tenant
+            users = TenantUserProfile.objects.filter(
             tenant=tenant, 
             is_active=True
-        ).order_by('permission_category', 'permission_name')
+            ).select_related('user')
         
-        # Get all active users
-        users = TenantUserProfile.objects.filter(
+            # Get all permissions in tenant  
+            permissions = PermissionRegistry.objects.filter(
             tenant=tenant,
             is_active=True
-        ).select_related('user').order_by('user__first_name', 'user__last_name')
+            )
         
-        # Build permission matrix
-        permission_matrix = {}
-        user_summaries = {}
-        permission_summaries = {}
-        
-        rbac_service = get_rbac_service(tenant)
-        
-        for user in users:
-            user_key = f"user_{user.user.id}"
-            user_effective_perms = rbac_service.get_user_effective_permissions(user)
-            
-            user_summaries[user_key] = {
-                'user_id': user.user.id,
-                'name': user.user.get_full_name() or f"{user.user.first_name} {user.user.last_name}".strip() or user.user.username,
-                'email': user.user.email,
-                'employee_id': user.employee_id or '',
-                'job_title': user.job_title or '',
-                'department': getattr(user, 'department', '') or '',
-                'is_active': user.is_active,
-                'total_permissions': len(user_effective_perms.get('permissions', {})),
-                'last_login': user.last_login.isoformat() if user.last_login else None
-            }
-            
-            permission_matrix[user_key] = {}
-            
-            for permission in permissions:
-                perm_code = permission.permission_code
-                has_permission = perm_code in user_effective_perms.get('permissions', {})
+            # Calculate user permissions using reliable method
+            rbac_service = get_rbac_service(tenant)
+            user_summaries = {}
+            permission_matrix = {}
+            total_assignments = 0
+
+            for user in users:
+                # Get effective permissions (using the working individual logic)
+                effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+                user_permissions = effective_perms.get('permissions', {})
                 
-                # Get source information safely
-                source_info = 'none'
-                if has_permission:
-                    perm_details = user_effective_perms.get('permissions', {}).get(perm_code, {})
-                    if isinstance(perm_details, dict):
-                        source_info = perm_details.get('source', 'none')
+                # Create user summary
+                user_key = f"user_{user.user.id}"
+                user_summaries[user_key] = {
+                    "user_id": user.user.id,
+                    "name": user.user.get_full_name() or user.user.username,
+                    "email": user.user.email,
+                    "employee_id": getattr(user, 'employee_id', '') or '',
+                    "job_title": getattr(user, 'job_title', '') or '',
+                    "department": getattr(user, 'department', '') or '',
+                    "is_active": user.is_active,
+                    "last_login": user.user.last_login.isoformat() if user.user.last_login else None,
+                    "total_permissions": len(user_permissions)
+                }
+
+                # Build permission matrix for this user
+                user_matrix = {}
+                for perm in permissions:
+                    perm_code = perm.permission_code
+                    if perm_code in user_permissions:
+                        perm_data = user_permissions[perm_code]
+                        user_matrix[perm_code] = {
+                            "has_permission": True,
+                            "source": perm_data.get('source', 'unknown'),
+                            "risk_level": perm.risk_level
+                        }
+                        total_assignments += 1
                     else:
-                        source_info = 'unknown'
+                        user_matrix[perm_code] = {
+                            "has_permission": False,
+                            "source": "none",
+                            "risk_level": perm.risk_level
+                        }
                 
-                permission_matrix[user_key][perm_code] = {
-                    'has_permission': has_permission,
-                    'source': source_info,
-                    'risk_level': permission.risk_level
+                permission_matrix[user_key] = user_matrix
+
+            # Create permission summaries
+            permission_summaries = {}
+            for perm in permissions:
+                # Count users with this permission
+                users_with_perm = sum(
+                    1 for user_matrix in permission_matrix.values()
+                    if user_matrix.get(perm.permission_code, {}).get('has_permission', False)
+                )
+                
+                # Count by source (simplified for now)
+                permission_summaries[perm.permission_code] = {
+                    "permission_id": perm.id,
+                    "permission_name": perm.permission_name,
+                    "permission_code": perm.permission_code,
+                    "category": perm.permission_category,
+                    "risk_level": perm.risk_level,
+                    "users_with_permission": users_with_perm,
+                    "assignment_sources": {
+                        "designation": 0,  # TODO: Calculate actual breakdown
+                        "group": 0,
+                        "override": 0
+                    }
+                }
+
+            # Calculate summary statistics
+            total_users = len(users)
+            total_permissions = len(permissions)
+            avg_permissions = total_assignments / total_users if total_users > 0 else 0
+
+            response_data = {
+                "view_type": "overview",
+                "summary": {
+                    "total_users": total_users,
+                    "total_permissions": total_permissions,
+                    "total_assignments": total_assignments,
+                    "average_permissions_per_user": round(avg_permissions, 2)
+                },
+                "permission_matrix": permission_matrix,
+                "user_summaries": user_summaries,
+                "permission_summaries": permission_summaries,
+                "generated_at": timezone.now().isoformat()
+            }
+
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error in _get_overview_data: {str(e)}")
+            raise
+
+    def _get_user_analysis_data(self, tenant, user_id) -> Response:
+        """
+        Get user analysis data.
+        Returns: UserAnalysisData structure
+        """
+        try:
+            rbac_service = get_rbac_service(tenant)
+        
+            if user_id:
+                # Single user analysis
+                try:
+                    user = TenantUserProfile.objects.get(
+                        user_id=user_id,
+                        tenant=tenant
+                    )
+                    
+                    effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+                    
+                    # Count high risk permissions
+                    high_risk_count = sum(
+                        1 for perm_code, perm_data in effective_perms.get('permissions', {}).items()
+                        if self._get_permission_risk_level(tenant, perm_code) in ['high', 'critical']
+                    )
+                    
+                    user_summary = {
+                        "user_id": user.user.id,
+                        "name": user.user.get_full_name() or user.user.username,
+                        "email": user.user.email,
+                        "employee_id": getattr(user, 'employee_id', '') or '',
+                        "job_title": getattr(user, 'job_title', '') or '',
+                        "department": getattr(user, 'department', '') or '',
+                        "is_active": user.is_active,
+                        "last_login": user.user.last_login.isoformat() if user.user.last_login else None,
+                        "total_permissions": len(effective_perms.get('permissions', {}))
+                    }
+
+                    response_data = {
+                        "view_type": "user_analysis",
+                        "user_summary": user_summary,
+                        "effective_permissions": effective_perms,
+                        "permission_sources": self._get_user_permission_sources(user, rbac_service),
+                        "assignment_history": [],  # TODO: Implement
+                        "conflicts": [],  # TODO: Implement
+                        "recommendations": [],  # TODO: Implement
+                        "generated_at": timezone.now().isoformat()
+                    }
+
+                    return Response(response_data)
+
+                except TenantUserProfile.DoesNotExist:
+                    return Response(
+                        {'error': f'User {user_id} not found'}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # All users analysis
+                users = TenantUserProfile.objects.filter(
+                    tenant=tenant,
+                    is_active=True
+                ).select_related('user')
+
+                user_analyses = []
+                for user in users:
+                    effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+                    user_perms = effective_perms.get('permissions', {})
+                    
+                    high_risk_count = sum(
+                        1 for perm_code in user_perms.keys()
+                        if self._get_permission_risk_level(tenant, perm_code) in ['high', 'critical']
+                    )
+                    
+                    user_analyses.append({
+                        "user_id": user.user.id,
+                        "name": user.user.get_full_name() or user.user.username,
+                        "email": user.user.email,
+                        "employee_id": getattr(user, 'employee_id', '') or '',
+                        "job_title": getattr(user, 'job_title', '') or '',
+                        "total_permissions": len(user_perms),
+                        "high_risk_permissions": high_risk_count,
+                        "permission_sources_count": {
+                            "designation": 0,  # TODO: Calculate
+                            "group": 0,
+                            "override": 0
+                        }
+                    })
+
+                response_data = {
+                    "view_type": "user_analysis",
+                    "user_analyses": user_analyses,
+                    "generated_at": timezone.now().isoformat()
+                }
+
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error in _get_user_analysis_data: {str(e)}")
+            raise
+
+    def _get_permission_analysis_data(self, tenant, permission_id) -> Response:
+        """
+        Get permission analysis data.
+        Returns: PermissionAnalysisData structure
+        """
+        try:
+            if permission_id:
+                # Single permission analysis
+                try:
+                    permission = PermissionRegistry.objects.get(
+                        id=permission_id,
+                        tenant=tenant
+                    )
+                    
+                    # Find users with this permission
+                    users_with_permission = []
+                    rbac_service = get_rbac_service(tenant)
+                    
+                    for user in TenantUserProfile.objects.filter(tenant=tenant, is_active=True):
+                        effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+                        if permission.permission_code in effective_perms.get('permissions', {}):
+                            perm_data = effective_perms['permissions'][permission.permission_code]
+                            users_with_permission.append({
+                                "user_id": user.user.id,
+                                "name": user.user.get_full_name() or user.user.username,
+                                "email": user.user.email,
+                                "employee_id": getattr(user, 'employee_id', '') or '',
+                                "source": perm_data.get('source', 'unknown'),
+                                "level": perm_data.get('permission_level', 'granted'),
+                                "scope_configuration": perm_data.get('scope_configuration', {})
+                            })
+
+                    response_data = {
+                        "view_type": "permission_analysis",
+                        "permission_details": {
+                            "id": permission.id,
+                            "name": permission.permission_name,
+                            "code": permission.permission_code,
+                            "category": permission.permission_category,
+                            "description": permission.description or '',
+                            "risk_level": permission.risk_level,
+                            "is_system_permission": permission.is_system_permission
+                        },
+                        "users_with_permission": users_with_permission,
+                        "assignment_breakdown": {
+                            "total_users": len(users_with_permission),
+                            "by_source": {
+                                "designation": 0,  # TODO: Calculate
+                                "group": 0,
+                                "override": 0
+                            }
+                        },
+                        "generated_at": timezone.now().isoformat()
+                    }
+
+                except PermissionRegistry.DoesNotExist:
+                    return Response(
+                        {'error': f'Permission {permission_id} not found'}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # All permissions analysis
+                permissions = PermissionRegistry.objects.filter(
+                    tenant=tenant,
+                    is_active=True
+                )
+                
+                permission_analyses = []
+                for permission in permissions:
+                    # Count assignments (simplified)
+                    permission_analyses.append({
+                        "permission_id": permission.id,
+                        "name": permission.permission_name,
+                        "code": permission.permission_code,
+                        "category": permission.permission_category,
+                        "risk_level": permission.risk_level,
+                        "assignment_counts": {
+                            "designation_assignments": 0,  # TODO: Calculate
+                            "group_assignments": 0,
+                            "user_overrides": 0,
+                            "total": 0
+                        }
+                    })
+
+                response_data = {
+                    "view_type": "permission_analysis",
+                    "permission_analyses": permission_analyses,
+                    "generated_at": timezone.now().isoformat()
+                }
+
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error in _get_permission_analysis_data: {str(e)}")
+            raise
+
+    def _get_analytics_data(self, tenant) -> Response:
+        """
+        Get analytics dashboard data.
+        Returns: AnalyticsDashboardData structure
+        """
+        try:
+            rbac_service = get_rbac_service(tenant)
+            
+            # Get all users and their permissions
+            users = TenantUserProfile.objects.filter(tenant=tenant, is_active=True)
+            permissions = PermissionRegistry.objects.filter(tenant=tenant, is_active=True)
+            
+            # Calculate permission usage
+            permission_usage_map = {}
+            user_permission_counts = []
+            users_with_no_permissions = []
+            
+            for user in users:
+                effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+                user_perms = effective_perms.get('permissions', {})
+                
+                permission_count = len(user_perms)
+                user_name = user.user.get_full_name() or user.user.username
+                
+                user_permission_counts.append({
+                    "user_name": user_name,
+                    "permission_count": permission_count
+                })
+                
+                if permission_count == 0:
+                    users_with_no_permissions.append({
+                        "user_name": user_name,
+                        "permission_count": 0
+                    })
+                
+                # Count permission usage
+                for perm_code in user_perms.keys():
+                    if perm_code not in permission_usage_map:
+                        permission_usage_map[perm_code] = 0
+                    permission_usage_map[perm_code] += 1
+
+            # Build top permissions list
+            top_permissions = []
+            for permission in permissions:
+                usage_count = permission_usage_map.get(permission.permission_code, 0)
+                top_permissions.append({
+                    "permission_name": permission.permission_name,
+                    "permission_code": permission.permission_code,
+                    "category": permission.permission_category,
+                    "risk_level": permission.risk_level,
+                    "total_usage": usage_count,
+                    "usage_breakdown": {
+                        "designation": 0,  # TODO: Calculate
+                        "group": 0,
+                        "override": 0
+                    }
+                })
+            
+            # Sort by usage
+            top_permissions.sort(key=lambda x: x['total_usage'], reverse=True)
+            least_used = [p for p in top_permissions if p['total_usage'] == 0]
+            
+            # Risk analysis
+            risk_counts = {'low': 0, 'medium': 0, 'high': 0, 'critical': 0}
+            for permission in permissions:
+                risk_counts[permission.risk_level] = risk_counts.get(permission.risk_level, 0) + 1
+            
+            high_risk_count = risk_counts.get('high', 0) + risk_counts.get('critical', 0)
+            unused_count = len(least_used)
+
+            # Sort users by permission count
+            user_permission_counts.sort(key=lambda x: x['permission_count'], reverse=True)
+            top_users = user_permission_counts[:10]
+
+            response_data = {
+                "view_type": "analytics",
+                "permission_usage": {
+                    "top_permissions": top_permissions[:10],
+                    "least_used_permissions": least_used[:5]
+                },
+                "risk_analysis": {
+                    "high_risk_permissions": high_risk_count,
+                    "permissions_by_risk": risk_counts,
+                    "unused_permissions": unused_count
+                },
+                "user_analytics": {
+                    "users_by_permission_count": user_permission_counts,
+                    "top_users": top_users,
+                    "users_with_no_permissions": users_with_no_permissions
+                },
+                "trends": {
+                    "recent_assignments": 0,  # TODO: Calculate from audit trail
+                    "recent_revocations": 0
+                },
+                "generated_at": timezone.now().isoformat()
+            }
+
+            return Response(response_data)
+
+        except Exception as e:
+            logger.error(f"Error in _get_analytics_data: {str(e)}")
+            raise
+
+    # Helper methods
+    def _get_permission_risk_level(self, tenant, permission_code: str) -> str:
+        """Get risk level for a permission code."""
+        try:
+            permission = PermissionRegistry.objects.get(
+                permission_code=permission_code,
+                tenant=tenant
+            )
+            return permission.risk_level
+        except PermissionRegistry.DoesNotExist:
+            return 'low'
+
+    def _get_user_permission_sources(self, user, rbac_service):
+        """Get detailed permission sources for a user."""
+        try:
+            effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
+            permissions = effective_perms.get('permissions', {})
+            
+            designation_permissions = []
+            group_permissions = []
+            override_permissions = []
+            
+            for perm_code, perm_data in permissions.items():
+                source = perm_data.get('source', '')
+                permission_info = {
+                    'permission_code': perm_code,
+                    'permission_name': perm_data.get('permission', {}).get('name', perm_code),
+                    'category': perm_data.get('permission', {}).get('category', 'Unknown'),
+                    'level': perm_data.get('level', 'granted'),
+                    'source': source,
+                    'source_name': self._extract_source_name(source),
+                    'risk_level': perm_data.get('permission', {}).get('risk_level', 'low'),
+                    'is_mandatory': perm_data.get('is_mandatory', False),
+                    'assignment_reason': perm_data.get('assignment_reason', 'Manual assignment')
                 }
                 
-                # Track permission usage
-                if perm_code not in permission_summaries:
-                    permission_summaries[perm_code] = {
-                        'permission_id': permission.id,
-                        'permission_name': permission.permission_name,
-                        'permission_code': permission.permission_code,
-                        'category': permission.permission_category,
-                        'risk_level': permission.risk_level,
-                        'users_with_permission': 0,
-                        'assignment_sources': {'designation': 0, 'group': 0, 'override': 0}
-                    }
-                
-                if has_permission:
-                    permission_summaries[perm_code]['users_with_permission'] += 1
-                    source_type = source_info
-                    if isinstance(source_type, str):
-                        if 'designation' in source_type.lower():
-                            permission_summaries[perm_code]['assignment_sources']['designation'] += 1
-                        elif 'group' in source_type.lower():
-                            permission_summaries[perm_code]['assignment_sources']['group'] += 1
-                        elif 'override' in source_type.lower():
-                            permission_summaries[perm_code]['assignment_sources']['override'] += 1
-        
-        # Calculate statistics
-        total_users = len(users)
-        total_permissions = len(permissions)
-        total_assignments = sum(
-            sum(1 for perm_data in user_perms.values() if perm_data['has_permission'])
-            for user_perms in permission_matrix.values()
-        )
-        
-        return Response({
-            'view_type': 'overview',
-            'summary': {
-                'total_users': total_users,
-                'total_permissions': total_permissions,
-                'total_assignments': total_assignments,
-                'average_permissions_per_user': total_assignments / total_users if total_users > 0 else 0
-            },
-            'permission_matrix': permission_matrix,
-            'user_summaries': user_summaries,
-            'permission_summaries': permission_summaries,
-            'generated_at': timezone.now().isoformat()
-        })
+                if source.startswith('designation_'):
+                    designation_permissions.append(permission_info)
+                elif source.startswith('group_'):
+                    group_permissions.append(permission_info)
+                elif source.startswith('user_override_'):
+                    override_permissions.append(permission_info)
+            
+            return {
+                "designation_permissions": designation_permissions,
+                "group_permissions": group_permissions,
+                "override_permissions": override_permissions
+            }
+        except Exception as e:
+            logger.error(f"Error calculating permission sources for user {user.user.id}: {str(e)}")
+            return {
+                "designation_permissions": [],
+                "group_permissions": [],
+                "override_permissions": []
+            }
+    
+    def _extract_source_name(self, source):
+        """Extract readable name from source string like 'designation_6' or 'group_34'."""
+        try:
+            if source.startswith('designation_'):
+                designation_id = source.split('_')[1]
+                designation = TenantDesignation.objects.get(id=designation_id)
+                return designation.designation_name
+            elif source.startswith('group_'):
+                group_id = source.split('_')[1]
+                group = PermissionGroup.objects.get(id=group_id)
+                return group.group_name
+            elif source.startswith('user_override_'):
+                return "User Override"
+            else:
+                return source
+        except Exception:
+            return source
     
     def _get_user_analysis(self, tenant: Tenant, user_id: str = None) -> Response:
         """Get detailed analysis for a specific user or all users."""
@@ -2366,7 +2979,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                         'job_title': target_user.job_title or '',
                         'department': getattr(target_user, 'department', '') or '',
                         'is_active': target_user.is_active,
-                        'last_login': target_user.last_login.isoformat() if target_user.last_login else None
+                        'last_login': target_user.user.last_login.isoformat() if target_user.user.last_login else None
                     },
                     'effective_permissions': serialized_effective_permissions,
                     'permission_sources': permission_sources,
@@ -2392,16 +3005,10 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
             rbac_service = get_rbac_service(tenant)
             
             for user in users:
+                # Use normal permission calculation
                 effective_permissions = rbac_service.get_user_effective_permissions(user)
                 serialized_permissions = self._serialize_effective_permissions(effective_permissions)
                 permission_sources = self._get_permission_sources(user, tenant)
-                
-                # Count high risk permissions properly
-                high_risk_count = 0
-                for perm_data in serialized_permissions.get('permissions', {}).values():
-                    permission = perm_data.get('permission', {})
-                    if permission.get('risk_level') in ['high', 'critical']:
-                        high_risk_count += 1
                 
                 user_analyses.append({
                     'user_id': user.user.id,
@@ -2410,7 +3017,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                     'employee_id': user.employee_id or '',
                     'job_title': user.job_title or '',
                     'total_permissions': len(serialized_permissions.get('permissions', {})),
-                    'high_risk_permissions': high_risk_count,
+                    'high_risk_permissions': len([p for p in serialized_permissions.get('permissions', {}).values() if p.get('risk_level') in ['high', 'critical']]),
                     'permission_sources_count': {
                         'designation': len(permission_sources['designation_permissions']),
                         'group': len(permission_sources['group_permissions']),
@@ -2445,9 +3052,13 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                 ).select_related('user')
                 
                 for user in users:
+                    # Use normal permission calculation
                     effective_permissions = rbac_service.get_user_effective_permissions(user)
-                    if permission.permission_code in effective_permissions.get('permissions', {}):
-                        perm_details = effective_permissions['permissions'][permission.permission_code]
+                    serialized_permissions = self._serialize_effective_permissions(effective_permissions)
+                    permission_sources = self._get_permission_sources(user, tenant)
+                    
+                    if permission.permission_code in serialized_permissions.get('permissions', {}):
+                        perm_details = serialized_permissions['permissions'][permission.permission_code]
                         users_with_permission.append({
                             'user_id': user.user.id,
                             'name': user.user.get_full_name(),
@@ -2589,10 +3200,12 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
         
         rbac_service = get_rbac_service(tenant)
         for user in users:
+            # Use normal permission calculation
             effective_permissions = rbac_service.get_user_effective_permissions(user)
+            serialized_permissions = self._serialize_effective_permissions(effective_permissions)
             user_permission_counts.append({
                 'user_name': user.user.get_full_name(),
-                'permission_count': len(effective_permissions.get('permissions', {}))
+                'permission_count': len(serialized_permissions.get('permissions', {}))
             })
         
         user_permission_counts.sort(key=lambda x: x['permission_count'], reverse=True)
@@ -2669,11 +3282,13 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=['get'])
     def search_users_by_permission(self, request: Request) -> Response:
-        """Find all users who have a specific permission."""
+        """
+        Search users who have a specific permission.
+        Returns: SearchUsersResponse structure
+        """
         try:
-            tenant = request.user.tenant_user_profile.tenant
             permission_code = request.query_params.get('permission_code')
-            source_type = request.query_params.get('source_type')
+            source_type_filter = request.query_params.get('source_type')
             
             if not permission_code:
                 return Response(
@@ -2681,12 +3296,13 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Verify permission exists
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Get permission details
             try:
                 permission = PermissionRegistry.objects.get(
                     permission_code=permission_code,
-                    tenant=tenant,
-                    is_active=True
+                    tenant=tenant
                 )
             except PermissionRegistry.DoesNotExist:
                 return Response(
@@ -2694,66 +3310,64 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            users_with_permission = []
+            # Find users with this permission
             rbac_service = get_rbac_service(tenant)
-            
-            # Get all active users
-            users = TenantUserProfile.objects.filter(
-                tenant=tenant,
-                is_active=True
-            ).select_related('user')
-            
-            for user in users:
-                effective_permissions = rbac_service.get_user_effective_permissions(user)
+            users_with_permission = []
+            source_breakdown = {"designation": 0, "group": 0, "override": 0}
+
+            for user in TenantUserProfile.objects.filter(tenant=tenant, is_active=True):
+                effective_perms = rbac_service.get_user_effective_permissions(user, force_refresh=True)
                 
-                if permission_code in effective_permissions.get('permissions', {}):
-                    perm_details = effective_permissions['permissions'][permission_code]
-                    source = perm_details.get('source', 'unknown')
+                if permission_code in effective_perms.get('permissions', {}):
+                    perm_data = effective_perms['permissions'][permission_code]
+                    source = perm_data.get('source', 'unknown')
                     
-                    # Filter by source type if specified
-                    if source_type and source_type not in source:
+                    # Apply source filter if specified
+                    if source_type_filter and source != source_type_filter:
                         continue
                     
                     users_with_permission.append({
-                        'user_id': user.user.id,
-                        'name': user.user.get_full_name(),
-                        'email': user.user.email,
-                        'employee_id': user.employee_id,
-                        'job_title': user.job_title,
-                        'department': user.department,
-                        'permission_source': source,
-                        'permission_level': perm_details.get('level', 'unknown'),
-                        'scope_configuration': perm_details.get('scope_configuration', {}),
-                        'last_login': user.last_login
+                        "user_id": user.user.id,
+                        "name": user.user.get_full_name() or user.user.username,
+                        "email": user.user.email,
+                        "employee_id": getattr(user, 'employee_id', '') or '',
+                        "job_title": getattr(user, 'job_title', '') or '',
+                        "department": getattr(user, 'department', '') or '',
+                        "permission_source": source,
+                        "permission_level": perm_data.get('permission_level', 'granted'),
+                        "scope_configuration": perm_data.get('scope_configuration', {}),
+                        "last_login": user.user.last_login.isoformat() if user.user.last_login else None
                     })
-            
-            return Response({
-                'permission_details': {
-                    'code': permission.permission_code,
-                    'name': permission.permission_name,
-                    'category': permission.permission_category,
-                    'risk_level': permission.risk_level
+                    
+                    # Count by source
+                    if source in source_breakdown:
+                        source_breakdown[source] += 1
+
+            response_data = {
+                "permission_details": {
+                    "code": permission.permission_code,
+                    "name": permission.permission_name,
+                    "category": permission.permission_category,
+                    "risk_level": permission.risk_level
                 },
-                'search_criteria': {
-                    'permission_code': permission_code,
-                    'source_type_filter': source_type
+                "search_criteria": {
+                    "permission_code": permission_code,
+                    "source_type_filter": source_type_filter
                 },
-                'results': {
-                    'total_users_found': len(users_with_permission),
-                    'users': users_with_permission
+                "results": {
+                    "total_users_found": len(users_with_permission),
+                    "users": users_with_permission
                 },
-                'breakdown_by_source': {
-                    'designation': len([u for u in users_with_permission if 'designation' in u['permission_source']]),
-                    'group': len([u for u in users_with_permission if 'group' in u['permission_source']]),
-                    'override': len([u for u in users_with_permission if 'override' in u['permission_source']])
-                }
-            })
+                "breakdown_by_source": source_breakdown
+            }
+
+            return Response(response_data)
             
         except Exception as e:
-            logger.error(f"Error searching users by permission: {str(e)}")
+            logger.error(f"Error in search_users_by_permission: {str(e)}")
             return Response(
                 {'error': str(e)}, 
-                status=status.HTTP_400_BAD_REQUEST
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @extend_schema(
@@ -2874,7 +3488,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                     'job_title': target_user.job_title,
                     'department': target_user.department,
                     'is_active': target_user.is_active,
-                    'last_login': target_user.last_login
+                    'last_login': target_user.user.last_login.isoformat() if target_user.user.last_login else None
                 },
                 'search_criteria': {
                     'include_inactive': include_inactive,
@@ -3079,4 +3693,121 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                 }
         
         return risk_analysis
+
+    @action(detail=False, methods=['get'])
+    def working_overview(self, request: Request) -> Response:
+        """
+        WORKING overview using individual analysis logic for each user.
+        This bypasses the problematic batch processing.
+        """
+        try:
+            tenant = request.user.tenant_user_profile.tenant
+            
+            # Get all active permissions
+            permissions = PermissionRegistry.objects.filter(
+                tenant=tenant, 
+                is_active=True
+            ).order_by('permission_category', 'permission_name')
+            
+            # Get all active users
+            users = TenantUserProfile.objects.filter(
+                tenant=tenant,
+                is_active=True
+            ).select_related('user').order_by('user__first_name', 'user__last_name')
+            
+            # Use individual analysis logic for each user (the working approach)
+            permission_matrix = {}
+            user_summaries = {}
+            permission_summaries = {}
+            
+            for user in users:
+                user_key = f"user_{user.user.id}"
+                
+                # Use the EXACT same logic as individual user analysis (which works)
+                rbac_service = get_rbac_service(tenant)
+                effective_permissions = rbac_service.get_user_effective_permissions(user)
+                
+                # Serialize exactly like individual analysis
+                serialized_effective_permissions = self._serialize_effective_permissions(effective_permissions)
+                
+                user_summaries[user_key] = {
+                    'user_id': user.user.id,
+                    'name': user.user.get_full_name() or f"{user.user.first_name} {user.user.last_name}".strip() or user.user.username,
+                    'email': user.user.email,
+                    'employee_id': user.employee_id or '',
+                    'job_title': user.job_title or '',
+                    'department': getattr(user, 'department', '') or '',
+                    'is_active': user.is_active,
+                    'total_permissions': len(serialized_effective_permissions.get('permissions', {})),
+                    'last_login': user.user.last_login.isoformat() if user.user.last_login else None
+                }
+                
+                permission_matrix[user_key] = {}
+                
+                for permission in permissions:
+                    perm_code = permission.permission_code
+                    has_permission = perm_code in serialized_effective_permissions.get('permissions', {})
+                    
+                    source_info = 'none'
+                    if has_permission:
+                        perm_details = serialized_effective_permissions.get('permissions', {}).get(perm_code, {})
+                        if isinstance(perm_details, dict):
+                            source_info = perm_details.get('source', 'none')
+                    
+                    permission_matrix[user_key][perm_code] = {
+                        'has_permission': has_permission,
+                        'source': source_info,
+                        'risk_level': permission.risk_level
+                    }
+                    
+                    # Track permission usage
+                    if perm_code not in permission_summaries:
+                        permission_summaries[perm_code] = {
+                            'permission_id': permission.id,
+                            'permission_name': permission.permission_name,
+                            'permission_code': permission.permission_code,
+                            'category': permission.permission_category,
+                            'risk_level': permission.risk_level,
+                            'users_with_permission': 0,
+                            'assignment_sources': {'designation': 0, 'group': 0, 'override': 0}
+                        }
+                    
+                    if has_permission:
+                        permission_summaries[perm_code]['users_with_permission'] += 1
+                        if 'designation' in source_info.lower():
+                            permission_summaries[perm_code]['assignment_sources']['designation'] += 1
+                        elif 'group' in source_info.lower():
+                            permission_summaries[perm_code]['assignment_sources']['group'] += 1
+                        elif 'override' in source_info.lower():
+                            permission_summaries[perm_code]['assignment_sources']['override'] += 1
+            
+            # Calculate statistics
+            total_users = len(users)
+            total_permissions = len(permissions)
+            total_assignments = sum(
+                sum(1 for perm_data in user_perms.values() if perm_data['has_permission'])
+                for user_perms in permission_matrix.values()
+            )
+            
+            return Response({
+                'view_type': 'working_overview',
+                'summary': {
+                    'total_users': total_users,
+                    'total_permissions': total_permissions,
+                    'total_assignments': total_assignments,
+                    'average_permissions_per_user': total_assignments / total_users if total_users > 0 else 0
+                },
+                'permission_matrix': permission_matrix,
+                'user_summaries': user_summaries,
+                'permission_summaries': permission_summaries,
+                'generated_at': timezone.now().isoformat(),
+                'note': 'This uses individual analysis logic for each user'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in working overview: {str(e)}")
+            return Response(
+                {'error': str(e)}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
 

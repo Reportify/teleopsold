@@ -6,6 +6,13 @@
 import api from "./api";
 
 // RBAC Types
+export interface ResourceType {
+  value: string;
+  label: string;
+  icon: string;
+  description: string;
+}
+
 export interface Permission {
   id: number;
   tenant: string;
@@ -26,6 +33,12 @@ export interface Permission {
   created_by?: number;
   created_at: string;
   updated_at: string;
+  features?: Array<{
+    feature_id: string;
+    feature_name: string;
+    resource_type: string;
+    description: string;
+  }>;
 }
 
 export interface GroupPermission {
@@ -289,6 +302,26 @@ class RBACAPIService {
     await api.delete(`${this.baseURL}/permissions/${id}/`);
   }
 
+  async deletePermissionCompletely(
+    id: number,
+    reason?: string
+  ): Promise<{
+    success: boolean;
+    message: string;
+    cleanup_results: {
+      designations_cleaned: number;
+      groups_cleaned: number;
+      users_cleaned: number;
+      overrides_cleaned: number;
+    };
+    permission_code: string;
+  }> {
+    const response = await api.delete(`${this.baseURL}/permissions/${id}/delete_completely/`, {
+      data: { reason: reason || "Complete deletion requested" },
+    });
+    return response.data;
+  }
+
   // Permission Groups Management
   async getPermissionGroups(params?: {
     group_type?: string;
@@ -440,7 +473,7 @@ class RBACAPIService {
     target_ids: number[];
     reason?: string;
   }): Promise<{ success: boolean; message: string; results: any[] }> {
-    const response = await api.post(`${this.baseURL}/permissions/bulk-revoke/`, data);
+    const response = await api.post(`${this.baseURL}/groups/bulk_revoke/`, data);
     return response.data;
   }
 
@@ -503,6 +536,17 @@ class RBACAPIService {
 
   async deleteDesignation(id: number): Promise<void> {
     await api.delete(`${this.baseURL}/designations/${id}/`);
+  }
+
+  // Resource Types
+  async getResourceTypes(): Promise<ResourceType[]> {
+    try {
+      const response = await api.get(`${this.baseURL}/resource-types/`);
+      return response.data.resource_types || [];
+    } catch (error) {
+      console.error("Error fetching resource types:", error);
+      throw error;
+    }
   }
 
   // Designation Permission Management

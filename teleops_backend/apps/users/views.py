@@ -160,19 +160,51 @@ class LoginView(TokenObtainPairView):
                 'corporate.reporting'
             ])
         elif user.is_circle_user:
-            permissions.extend([
-                'dashboard.view',
-                'projects.view',
-                'sites.view',
-                'tasks.view',
-                'equipment.view',
-                'teams.view',
-                'warehouse.view',
-                'transport.view',
-                'analytics.view',
-                'settings.view',
-                'vendors.manage'
-            ])
+            # Get permissions from RBAC system for circle users
+            try:
+                # Import required models first
+                from apps.tenants.models import TenantUserProfile
+                
+                # Try to get TenantUserProfile directly instead of using hasattr
+                try:
+                    profile = TenantUserProfile.objects.get(user=user, is_active=True)
+                    tenant = profile.tenant
+                    
+                    if not tenant:
+                        raise Exception("User has TenantUserProfile but no tenant assigned")
+                        
+                    # Import RBAC service  
+                    from apps.tenants.services.rbac_service import get_rbac_service
+                    rbac_service = get_rbac_service(tenant)
+                    
+                    # Get user's effective permissions from RBAC
+                    effective_perms = rbac_service.get_user_effective_permissions(profile, force_refresh=True)
+                    user_permissions = effective_perms.get('permissions', {})
+                    
+                    # Extract permission codes from RBAC response
+                    rbac_permissions = list(user_permissions.keys())
+                    permissions.extend(rbac_permissions)
+                    
+                    # Always add dashboard access
+                    if 'dashboard.view' not in permissions:
+                        permissions.append('dashboard.view')
+                        
+                except TenantUserProfile.DoesNotExist:
+                    raise Exception(f"No TenantUserProfile found for user {user.id} ({user.email})")
+                else:
+                    # Fallback permissions if no tenant profile
+                    permissions.extend(['dashboard.view'])
+            except Exception as e:
+                # Log the specific error for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"RBAC permission fetch failed for user {user.id} ({user.email}): {str(e)}")
+                logger.error(f"User tenant_user_profile exists: {hasattr(user, 'tenant_user_profile')}")
+                if hasattr(user, 'tenant_user_profile'):
+                    logger.error(f"Tenant profile: {user.tenant_user_profile}")
+                
+                # Fallback permissions if RBAC fails  
+                permissions.extend(['dashboard.view'])
         elif user.is_vendor_user:
             permissions.extend([
                 'dashboard.view',
@@ -352,19 +384,51 @@ class VerifyTokenView(generics.GenericAPIView):
                 'corporate.reporting'
             ])
         elif user.is_circle_user:
-            permissions.extend([
-                'dashboard.view',
-                'projects.view',
-                'sites.view',
-                'tasks.view',
-                'equipment.view',
-                'teams.view',
-                'warehouse.view',
-                'transport.view',
-                'analytics.view',
-                'settings.view',
-                'vendors.manage'
-            ])
+            # Get permissions from RBAC system for circle users
+            try:
+                # Import required models first
+                from apps.tenants.models import TenantUserProfile
+                
+                # Try to get TenantUserProfile directly instead of using hasattr
+                try:
+                    profile = TenantUserProfile.objects.get(user=user, is_active=True)
+                    tenant = profile.tenant
+                    
+                    if not tenant:
+                        raise Exception("User has TenantUserProfile but no tenant assigned")
+                        
+                    # Import RBAC service  
+                    from apps.tenants.services.rbac_service import get_rbac_service
+                    rbac_service = get_rbac_service(tenant)
+                    
+                    # Get user's effective permissions from RBAC
+                    effective_perms = rbac_service.get_user_effective_permissions(profile, force_refresh=True)
+                    user_permissions = effective_perms.get('permissions', {})
+                    
+                    # Extract permission codes from RBAC response
+                    rbac_permissions = list(user_permissions.keys())
+                    permissions.extend(rbac_permissions)
+                    
+                    # Always add dashboard access
+                    if 'dashboard.view' not in permissions:
+                        permissions.append('dashboard.view')
+                        
+                except TenantUserProfile.DoesNotExist:
+                    raise Exception(f"No TenantUserProfile found for user {user.id} ({user.email})")
+                else:
+                    # Fallback permissions if no tenant profile
+                    permissions.extend(['dashboard.view'])
+            except Exception as e:
+                # Log the specific error for debugging
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"RBAC permission fetch failed for user {user.id} ({user.email}): {str(e)}")
+                logger.error(f"User tenant_user_profile exists: {hasattr(user, 'tenant_user_profile')}")
+                if hasattr(user, 'tenant_user_profile'):
+                    logger.error(f"Tenant profile: {user.tenant_user_profile}")
+                
+                # Fallback permissions if RBAC fails  
+                permissions.extend(['dashboard.view'])
         elif user.is_vendor_user:
             permissions.extend([
                 'dashboard.view',

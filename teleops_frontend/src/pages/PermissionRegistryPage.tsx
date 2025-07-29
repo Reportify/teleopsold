@@ -41,9 +41,10 @@ import {
 } from "@mui/material";
 import { Add, Edit, Delete, MoreVert, Search, FilterList, Refresh, Security, Warning, CheckCircle, Info, ArrowBack, Category } from "@mui/icons-material";
 import { useRBAC } from "../hooks/useRBAC";
-import { Permission, getPermissionCategories } from "../services/rbacAPI";
+import { Permission, getPermissionCategories, rbacAPI } from "../services/rbacAPI";
 import { ModernSnackbar, AppBreadcrumbs } from "../components";
 import type { BreadcrumbItem } from "../components";
+import ResourceTypeSelector from "../components/ResourceTypeSelector";
 
 interface PermissionFormData {
   permission_name: string;
@@ -111,6 +112,10 @@ const PermissionRegistryPage: React.FC = () => {
     severity: "success" as "success" | "error" | "warning" | "info",
   });
 
+  // Deletion Dialog
+  const [deletionOptionsDialog, setDeletionOptionsDialog] = useState(false);
+  const [selectedPermissionForDeletion, setSelectedPermissionForDeletion] = useState<Permission | null>(null);
+
   // Add step state and better form organization
   const [currentStep, setCurrentStep] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -176,6 +181,20 @@ const PermissionRegistryPage: React.FC = () => {
     };
 
     return fallbackMap[businessTemplate] || "Custom Permission";
+  };
+
+  // Get features display for a permission
+  const getFeaturesDisplay = (permission: Permission) => {
+    const features = permission.features || [];
+    if (features.length === 0) {
+      return "No features mapped";
+    }
+    return features.map((f) => f.feature_name).join(", ");
+  };
+
+  // Refresh all data
+  const handleRefresh = () => {
+    loadPermissions();
   };
 
   useEffect(() => {
@@ -360,6 +379,10 @@ const PermissionRegistryPage: React.FC = () => {
       errors.permission_category = "Category is required";
     }
 
+    if (!formData.resource_type.trim()) {
+      errors.resource_type = "Please select which application feature this permission controls";
+    }
+
     // Business validation
     if (formData.risk_level === "critical" && formData.effect === "allow" && !formData.description.trim()) {
       errors.description = "Critical permissions require a description explaining the security implications";
@@ -401,12 +424,19 @@ const PermissionRegistryPage: React.FC = () => {
   };
 
   const handleDelete = async (permission: Permission) => {
-    if (window.confirm(`Are you sure you want to delete "${permission.permission_name}"?`)) {
+    // Show deletion options dialog
+    setSelectedPermissionForDeletion(permission);
+    setDeletionOptionsDialog(true);
+    setAnchorEl(null);
+  };
+
+  const handleSoftDelete = async (permission: Permission) => {
+    if (window.confirm(`Soft delete "${permission.permission_name}"? (Can be restored later)`)) {
       try {
         await deletePermission(permission.id);
         setSnackbar({
           open: true,
-          message: "Permission deleted successfully",
+          message: "Permission soft deleted successfully",
           severity: "success",
         });
       } catch (error: any) {
@@ -417,7 +447,25 @@ const PermissionRegistryPage: React.FC = () => {
         });
       }
     }
-    setAnchorEl(null);
+  };
+
+  const handleCompleteDelete = async (permission: Permission, reason: string) => {
+    if (window.confirm(`PERMANENTLY delete "${permission.permission_name}"? This will remove it from ALL users, groups, and designations!`)) {
+      try {
+        const result = await rbacAPI.deletePermissionCompletely(permission.id, reason);
+        setSnackbar({
+          open: true,
+          message: `Permission completely removed: ${result.cleanup_results.designations_cleaned} designations, ${result.cleanup_results.groups_cleaned} groups, ${result.cleanup_results.overrides_cleaned} overrides cleaned`,
+          severity: "success",
+        });
+      } catch (error: any) {
+        setSnackbar({
+          open: true,
+          message: error.message || "Failed to completely delete permission",
+          severity: "error",
+        });
+      }
+    }
   };
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, permission: Permission) => {
@@ -555,7 +603,7 @@ const PermissionRegistryPage: React.FC = () => {
           <Button variant="outlined" startIcon={<ArrowBack />} onClick={() => (window.location.href = "/rbac")}>
             Back to RBAC
           </Button>
-          <Button variant="outlined" startIcon={<Refresh />} onClick={() => loadPermissions()}>
+          <Button variant="outlined" startIcon={<Refresh />} onClick={handleRefresh}>
             Refresh
           </Button>
           <Stack direction="row" spacing={2}>
@@ -659,7 +707,7 @@ const PermissionRegistryPage: React.FC = () => {
                 <TableCell>Permission</TableCell>
                 <TableCell>Code</TableCell>
                 <TableCell>Category</TableCell>
-                <TableCell>Template</TableCell>
+                <TableCell>Features</TableCell>
                 <TableCell>Risk Level</TableCell>
                 <TableCell>Effect</TableCell>
                 <TableCell>Status</TableCell>
@@ -699,15 +747,19 @@ const PermissionRegistryPage: React.FC = () => {
                   </TableCell>
                   <TableCell>{permission.permission_category}</TableCell>
                   <TableCell>
-                    <Chip
-                      label={getBusinessTemplateDisplay(permission.business_template || "custom")}
-                      size="small"
-                      variant="outlined"
+                    <Typography
+                      variant="body2"
                       sx={{
-                        bgcolor: permission.business_template !== "custom" ? "primary.50" : "grey.50",
-                        borderColor: permission.business_template !== "custom" ? "primary.200" : "grey.300",
+                        maxWidth: 200,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        color: (permission.features?.length ?? 0) > 0 ? "text.primary" : "text.secondary",
                       }}
-                    />
+                      title={getFeaturesDisplay(permission)}
+                    >
+                      {getFeaturesDisplay(permission)}
+                    </Typography>
                   </TableCell>
                   <TableCell>
                     <Chip label={permission.risk_level} size="small" color={getRiskLevelColor(permission.risk_level) as any} icon={getRiskLevelIcon(permission.risk_level)} />
@@ -1046,6 +1098,32 @@ const PermissionRegistryPage: React.FC = () => {
                     required={formData.risk_level === "critical"}
                   />
                 </Grid>
+
+                {/* Row 4: Application Feature Mapping */}
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ mb: 2, p: 2, bgcolor: "background.default", borderRadius: 1 }}>
+                    <Typography variant="h6" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      🎯 Application Feature Mapping
+                      <Chip label="Smart Detection" size="small" color="primary" variant="outlined" />
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" gutterBottom>
+                      Tell us which part of the application this permission should control. We'll automatically suggest the best match based on your permission details.
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid size={{ xs: 12 }}>
+                  <ResourceTypeSelector
+                    value={formData.resource_type}
+                    onChange={(value) => setFormData({ ...formData, resource_type: value })}
+                    permissionName={formData.permission_name}
+                    permissionCode={formData.permission_code}
+                    permissionCategory={formData.permission_category}
+                    error={formErrors.resource_type}
+                    helperText="This determines which features and API endpoints your permission will control"
+                    required={true}
+                  />
+                </Grid>
               </Grid>
             ) : null}
 
@@ -1283,6 +1361,51 @@ const PermissionRegistryPage: React.FC = () => {
               </Button>
             )}
           </Box>
+        </DialogActions>
+      </Dialog>
+
+      {/* Deletion Options Dialog */}
+      <Dialog open={deletionOptionsDialog} onClose={() => setDeletionOptionsDialog(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Delete Permission: {selectedPermissionForDeletion?.permission_name}</DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 3 }}>
+            <Alert severity="info" sx={{ mb: 2 }}>
+              Choose deletion type:
+            </Alert>
+
+            <Stack spacing={2}>
+              <Button
+                variant="outlined"
+                onClick={() => {
+                  if (selectedPermissionForDeletion) {
+                    handleSoftDelete(selectedPermissionForDeletion);
+                  }
+                  setDeletionOptionsDialog(false);
+                }}
+              >
+                Soft Delete (Deactivate)
+              </Button>
+
+              <Button
+                variant="outlined"
+                color="error"
+                onClick={() => {
+                  if (selectedPermissionForDeletion) {
+                    const reason = prompt("Deletion reason:");
+                    if (reason) {
+                      handleCompleteDelete(selectedPermissionForDeletion, reason);
+                    }
+                  }
+                  setDeletionOptionsDialog(false);
+                }}
+              >
+                Complete Delete (Remove from System)
+              </Button>
+            </Stack>
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeletionOptionsDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
 

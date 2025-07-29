@@ -21,7 +21,7 @@ urlpatterns = [
     path('tenant/', include('apps.tenants.urls.organization_urls')),
     
     # Tenant RBAC Management endpoints
-    path('tenants/', include('apps.tenants.urls.rbac_urls')),
+    path('tenants/rbac/', include('apps.tenants.urls.rbac_urls')),
     
     # Vendor Operations Management endpoints
     path('vendor-operations/', include('apps.users.tenant.urls', namespace='vendor-operations')),

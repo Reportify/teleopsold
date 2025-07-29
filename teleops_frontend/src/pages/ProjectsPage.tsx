@@ -7,6 +7,7 @@ import { useAppSelector } from "../store/hooks";
 import { DataTable, Column, RowAction } from "../components";
 import { Project } from "../store/slices/projectsSlice";
 import { useDarkMode } from "../contexts/ThemeContext";
+import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 
 const ProjectsPage: React.FC = () => {
   const { getCurrentTenant, isCorporateUser, isCircleUser } = useAuth();
@@ -161,7 +162,9 @@ const ProjectsPage: React.FC = () => {
     },
   ];
 
-  // Row actions
+  // Get feature permissions
+  const { hasFeatureAccess } = useFeaturePermissions();
+
   const rowActions: RowAction[] = [
     {
       label: "View Details",
@@ -171,34 +174,44 @@ const ProjectsPage: React.FC = () => {
         // TODO: Navigate to project details
       },
     },
-    {
-      label: "Edit",
-      icon: <Edit />,
-      onClick: (project: Project) => {
-        setEditingProject(project);
-        setFormData({
-          name: project.name,
-          description: project.description || "",
-          client: project.client,
-          project_type: project.project_type,
-          start_date: project.start_date,
-          end_date: project.end_date || "",
-        });
-        setCreateDialogOpen(true);
-      },
-    },
-    {
-      label: "Delete",
-      icon: <Delete />,
-      color: "error",
-      onClick: (project: Project) => {
-        if (window.confirm(`Are you sure you want to delete "${project.name}"?`)) {
-          console.log("Delete project:", project);
-          // TODO: Implement delete functionality
-        }
-      },
-      disabled: (project: Project) => project.status === "Active",
-    },
+    // Edit action only if user has edit permission
+    ...(hasFeatureAccess("project_edit")
+      ? [
+          {
+            label: "Edit",
+            icon: <Edit />,
+            onClick: (project: Project) => {
+              setEditingProject(project);
+              setFormData({
+                name: project.name,
+                description: project.description || "",
+                client: project.client,
+                project_type: project.project_type,
+                start_date: project.start_date,
+                end_date: project.end_date || "",
+              });
+              setCreateDialogOpen(true);
+            },
+          },
+        ]
+      : []),
+    // Delete action only if user has delete permission (using edit permission for now)
+    ...(hasFeatureAccess("project_edit")
+      ? [
+          {
+            label: "Delete",
+            icon: <Delete />,
+            color: "error" as const,
+            onClick: (project: Project) => {
+              if (window.confirm(`Are you sure you want to delete "${project.name}"?`)) {
+                console.log("Delete project:", project);
+                // TODO: Implement delete functionality
+              }
+            },
+            disabled: (project: Project) => project.status === "Active",
+          },
+        ]
+      : []),
   ];
 
   // Handlers
@@ -235,178 +248,100 @@ const ProjectsPage: React.FC = () => {
         color: darkMode ? "#e8eaed" : "#1a1a1a",
       }}
     >
-      {/* Header */}
-      <Box sx={{ mb: 4 }}>
-        <Typography
-          variant="h4"
-          sx={{
-            fontWeight: 500,
-            color: darkMode ? "#e8eaed" : "#1a1a1a",
-            fontSize: { xs: "1.5rem", sm: "1.875rem", md: "2rem" },
-            letterSpacing: "-0.01em",
-            mb: 1,
-          }}
-        >
-          Projects
-        </Typography>
-        <Typography
-          variant="body1"
-          sx={{
-            color: darkMode ? "#9aa0a6" : "#6b7280",
-            fontSize: "0.875rem",
-            opacity: 0.8,
-          }}
-        >
-          Manage your {currentTenant?.tenant_type?.toLowerCase()} projects and track progress
-        </Typography>
-
-        <Box sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}>
-          <Button
-            variant="contained"
-            startIcon={<Add />}
-            onClick={handleCreateProject}
-            disabled={!isCorporateUser() && !isCircleUser()}
+      {/* Wrap entire page content with view permission */}
+      <FeatureGate
+        featureId="project_view"
+        fallback={
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography variant="h6" color="text.secondary">
+              You don't have permission to view projects
+            </Typography>
+          </Box>
+        }
+      >
+        {/* Header */}
+        <Box sx={{ mb: 4 }}>
+          <Typography
+            variant="h4"
             sx={{
               fontWeight: 500,
-              textTransform: "none",
-              borderRadius: "8px",
-              backgroundColor: darkMode ? "#8ab4f8" : "#1a73e8",
-              color: darkMode ? "#202124" : "#ffffff",
-              "&:hover": {
-                backgroundColor: darkMode ? "#a8c7fa" : "#1557b0",
-              },
+              color: darkMode ? "#e8eaed" : "#1a1a1a",
+              fontSize: { xs: "1.5rem", sm: "1.875rem", md: "2rem" },
+              letterSpacing: "-0.01em",
+              mb: 1,
             }}
           >
-            Create Project
-          </Button>
-        </Box>
-      </Box>
+            Projects
+          </Typography>
+          <Typography
+            variant="body1"
+            sx={{
+              color: darkMode ? "#9aa0a6" : "#6b7280",
+              fontSize: "0.875rem",
+              opacity: 0.8,
+            }}
+          >
+            Manage your {currentTenant?.tenant_type?.toLowerCase()} projects and track progress
+          </Typography>
 
-      {/* Projects Table */}
-      <DataTable
-        columns={columns}
-        rows={mockProjects}
-        loading={loading}
-        error={error}
-        selectable={isCorporateUser() || isCircleUser()}
-        selectedRows={selectedProjects}
-        onSelectionChange={setSelectedProjects}
-        actions={rowActions}
-        title="All Projects"
-        searchPlaceholder="Search projects..."
-        emptyMessage="No projects found. Create your first project to get started."
-      />
-
-      {/* Create/Edit Dialog */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle
-          sx={{
-            fontWeight: 500,
-            fontSize: "1.125rem",
-            color: darkMode ? "#e8eaed" : "#1a1a1a",
-          }}
-        >
-          {editingProject ? "Edit Project" : "Create New Project"}
-        </DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 3, pt: 2 }}>
-            <TextField
-              label="Project Name"
-              value={formData.name}
-              onChange={(e) => handleFormChange("name", e.target.value)}
-              fullWidth
-              required
-              sx={{
-                "& .MuiInputLabel-root": {
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  color: darkMode ? "#9aa0a6" : "#6b7280",
-                },
-                "& .MuiOutlinedInput-root": {
-                  backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
-                  borderColor: darkMode ? "#3c4043" : "#d1d5db",
-                  color: darkMode ? "#e8eaed" : "#374151",
-                },
-              }}
-            />
-
-            <TextField
-              label="Description"
-              value={formData.description}
-              onChange={(e) => handleFormChange("description", e.target.value)}
-              fullWidth
-              multiline
-              rows={3}
-              sx={{
-                "& .MuiInputLabel-root": {
-                  fontSize: "0.875rem",
-                  fontWeight: 500,
-                  color: darkMode ? "#9aa0a6" : "#6b7280",
-                },
-                "& .MuiOutlinedInput-root": {
-                  backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
-                  borderColor: darkMode ? "#3c4043" : "#d1d5db",
-                  color: darkMode ? "#e8eaed" : "#374151",
-                },
-              }}
-            />
-
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
-              <TextField
-                label="Client"
-                value={formData.client}
-                onChange={(e) => handleFormChange("client", e.target.value)}
-                fullWidth
-                required
+          <Box sx={{ mt: 3, display: "flex", justifyContent: "flex-end" }}>
+            {/* Create Project Button with Create Permission */}
+            <FeatureGate featureId="project_create">
+              <Button
+                variant="contained"
+                startIcon={<Add />}
+                onClick={handleCreateProject}
                 sx={{
-                  "& .MuiInputLabel-root": {
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    color: darkMode ? "#9aa0a6" : "#6b7280",
-                  },
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
-                    borderColor: darkMode ? "#3c4043" : "#d1d5db",
-                    color: darkMode ? "#e8eaed" : "#374151",
-                  },
-                }}
-              />
-
-              <TextField
-                select
-                label="Project Type"
-                value={formData.project_type}
-                onChange={(e) => handleFormChange("project_type", e.target.value)}
-                fullWidth
-                required
-                sx={{
-                  "& .MuiInputLabel-root": {
-                    fontSize: "0.875rem",
-                    fontWeight: 500,
-                    color: darkMode ? "#9aa0a6" : "#6b7280",
-                  },
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
-                    borderColor: darkMode ? "#3c4043" : "#d1d5db",
-                    color: darkMode ? "#e8eaed" : "#374151",
+                  fontWeight: 500,
+                  textTransform: "none",
+                  borderRadius: "8px",
+                  backgroundColor: darkMode ? "#8ab4f8" : "#1a73e8",
+                  color: darkMode ? "#202124" : "#ffffff",
+                  "&:hover": {
+                    backgroundColor: darkMode ? "#a8c7fa" : "#1557b0",
                   },
                 }}
               >
-                <MenuItem value="Dismantle">Dismantle</MenuItem>
-                <MenuItem value="Installation">Installation</MenuItem>
-                <MenuItem value="Maintenance">Maintenance</MenuItem>
-              </TextField>
-            </Box>
+                Create Project
+              </Button>
+            </FeatureGate>
+          </Box>
+        </Box>
 
-            <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+        {/* Projects Table */}
+        <DataTable
+          columns={columns}
+          rows={mockProjects}
+          loading={loading}
+          error={error}
+          selectable={isCorporateUser() || isCircleUser()}
+          selectedRows={selectedProjects}
+          onSelectionChange={setSelectedProjects}
+          actions={rowActions}
+          title="All Projects"
+          searchPlaceholder="Search projects..."
+          emptyMessage="No projects found. Create your first project to get started."
+        />
+
+        {/* Create/Edit Dialog */}
+        <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle
+            sx={{
+              fontWeight: 500,
+              fontSize: "1.125rem",
+              color: darkMode ? "#e8eaed" : "#1a1a1a",
+            }}
+          >
+            {editingProject ? "Edit Project" : "Create New Project"}
+          </DialogTitle>
+          <DialogContent>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 3, pt: 2 }}>
               <TextField
-                label="Start Date"
-                type="date"
-                value={formData.start_date}
-                onChange={(e) => handleFormChange("start_date", e.target.value)}
+                label="Project Name"
+                value={formData.name}
+                onChange={(e) => handleFormChange("name", e.target.value)}
                 fullWidth
                 required
-                InputLabelProps={{ shrink: true }}
                 sx={{
                   "& .MuiInputLabel-root": {
                     fontSize: "0.875rem",
@@ -422,12 +357,12 @@ const ProjectsPage: React.FC = () => {
               />
 
               <TextField
-                label="End Date"
-                type="date"
-                value={formData.end_date}
-                onChange={(e) => handleFormChange("end_date", e.target.value)}
+                label="Description"
+                value={formData.description}
+                onChange={(e) => handleFormChange("description", e.target.value)}
                 fullWidth
-                InputLabelProps={{ shrink: true }}
+                multiline
+                rows={3}
                 sx={{
                   "& .MuiInputLabel-root": {
                     fontSize: "0.875rem",
@@ -441,39 +376,131 @@ const ProjectsPage: React.FC = () => {
                   },
                 }}
               />
+
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                <TextField
+                  label="Client"
+                  value={formData.client}
+                  onChange={(e) => handleFormChange("client", e.target.value)}
+                  fullWidth
+                  required
+                  sx={{
+                    "& .MuiInputLabel-root": {
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: darkMode ? "#9aa0a6" : "#6b7280",
+                    },
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
+                      borderColor: darkMode ? "#3c4043" : "#d1d5db",
+                      color: darkMode ? "#e8eaed" : "#374151",
+                    },
+                  }}
+                />
+
+                <TextField
+                  select
+                  label="Project Type"
+                  value={formData.project_type}
+                  onChange={(e) => handleFormChange("project_type", e.target.value)}
+                  fullWidth
+                  required
+                  sx={{
+                    "& .MuiInputLabel-root": {
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: darkMode ? "#9aa0a6" : "#6b7280",
+                    },
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
+                      borderColor: darkMode ? "#3c4043" : "#d1d5db",
+                      color: darkMode ? "#e8eaed" : "#374151",
+                    },
+                  }}
+                >
+                  <MenuItem value="Dismantle">Dismantle</MenuItem>
+                  <MenuItem value="Installation">Installation</MenuItem>
+                  <MenuItem value="Maintenance">Maintenance</MenuItem>
+                </TextField>
+              </Box>
+
+              <Box sx={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2 }}>
+                <TextField
+                  label="Start Date"
+                  type="date"
+                  value={formData.start_date}
+                  onChange={(e) => handleFormChange("start_date", e.target.value)}
+                  fullWidth
+                  required
+                  InputLabelProps={{ shrink: true }}
+                  sx={{
+                    "& .MuiInputLabel-root": {
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: darkMode ? "#9aa0a6" : "#6b7280",
+                    },
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
+                      borderColor: darkMode ? "#3c4043" : "#d1d5db",
+                      color: darkMode ? "#e8eaed" : "#374151",
+                    },
+                  }}
+                />
+
+                <TextField
+                  label="End Date"
+                  type="date"
+                  value={formData.end_date}
+                  onChange={(e) => handleFormChange("end_date", e.target.value)}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                  sx={{
+                    "& .MuiInputLabel-root": {
+                      fontSize: "0.875rem",
+                      fontWeight: 500,
+                      color: darkMode ? "#9aa0a6" : "#6b7280",
+                    },
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: darkMode ? "#2d2e30" : "#f9fafb",
+                      borderColor: darkMode ? "#3c4043" : "#d1d5db",
+                      color: darkMode ? "#e8eaed" : "#374151",
+                    },
+                  }}
+                />
+              </Box>
             </Box>
-          </Box>
-        </DialogContent>
-        <DialogActions sx={{ p: 3 }}>
-          <Button
-            onClick={() => setCreateDialogOpen(false)}
-            sx={{
-              textTransform: "none",
-              fontWeight: 500,
-              color: darkMode ? "#9aa0a6" : "#6b7280",
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSaveProject}
-            variant="contained"
-            disabled={!formData.name || !formData.client || !formData.start_date}
-            sx={{
-              fontWeight: 500,
-              textTransform: "none",
-              borderRadius: "8px",
-              backgroundColor: darkMode ? "#8ab4f8" : "#1a73e8",
-              color: darkMode ? "#202124" : "#ffffff",
-              "&:hover": {
-                backgroundColor: darkMode ? "#a8c7fa" : "#1557b0",
-              },
-            }}
-          >
-            {editingProject ? "Update" : "Create"} Project
-          </Button>
-        </DialogActions>
-      </Dialog>
+          </DialogContent>
+          <DialogActions sx={{ p: 3 }}>
+            <Button
+              onClick={() => setCreateDialogOpen(false)}
+              sx={{
+                textTransform: "none",
+                fontWeight: 500,
+                color: darkMode ? "#9aa0a6" : "#6b7280",
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveProject}
+              variant="contained"
+              disabled={!formData.name || !formData.client || !formData.start_date}
+              sx={{
+                fontWeight: 500,
+                textTransform: "none",
+                borderRadius: "8px",
+                backgroundColor: darkMode ? "#8ab4f8" : "#1a73e8",
+                color: darkMode ? "#202124" : "#ffffff",
+                "&:hover": {
+                  backgroundColor: darkMode ? "#a8c7fa" : "#1557b0",
+                },
+              }}
+            >
+              {editingProject ? "Update" : "Create"} Project
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </FeatureGate>
     </Box>
   );
 };

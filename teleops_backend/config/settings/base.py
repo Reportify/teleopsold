@@ -83,6 +83,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'core.middleware.tenant.TenantMiddleware',
+    'core.middleware.permission_enforcement.PermissionEnforcementMiddleware',  # Auto-enforce feature permissions
     'core.middleware.audit.AuditMiddleware',
 ]
 

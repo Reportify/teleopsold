@@ -155,10 +155,22 @@ class TenantRBACService:
                 permission = base_perm.permission
                 perm_code = permission.permission_code
                 
-                # Handle permission inheritance
-                if base_perm.is_inherited and perm_code not in designation_permissions:
+                # Add permission if not already present or if this has higher priority
+                if perm_code not in designation_permissions:
                     designation_permissions[perm_code] = {
-                        'permission': permission,
+                        'permission': {
+                            'id': permission.id,
+                            'code': permission.permission_code,
+                            'name': permission.permission_name,
+                            'description': getattr(permission, 'description', ''),
+                            'category': getattr(permission, 'permission_category', None),
+                            'risk_level': getattr(permission, 'risk_level', 'low'),
+                            'permission_type': getattr(permission, 'permission_type', 'action'),
+                            'is_system_permission': getattr(permission, 'is_system_permission', False),
+                            'requires_mfa': getattr(permission, 'requires_mfa', False),
+                            'is_active': getattr(permission, 'is_active', True),
+                            'scope': getattr(permission, 'scope', 'global')
+                        },
                         'level': base_perm.permission_level,
                         'source': f'designation_{designation.id}',
                         'scope_configuration': base_perm.scope_configuration,
@@ -167,7 +179,8 @@ class TenantRBACService:
                         'temporal_scope': base_perm.temporal_scope,
                         'is_mandatory': base_perm.is_mandatory,
                         'priority_level': base_perm.priority_level,
-                        'conditions': base_perm.conditions
+                        'conditions': base_perm.conditions,
+                        'is_inherited': base_perm.is_inherited
                     }
         
         return designation_permissions
@@ -203,7 +216,19 @@ class TenantRBACService:
                 # Add or update permission from group
                 if perm_code not in group_permissions or group_perm.is_mandatory:
                     group_permissions[perm_code] = {
-                        'permission': permission,
+                        'permission': {
+                            'id': permission.id,
+                            'code': permission.permission_code,
+                            'name': permission.permission_name,
+                            'description': getattr(permission, 'description', ''),
+                            'category': getattr(permission, 'permission_category', None),
+                            'risk_level': getattr(permission, 'risk_level', 'low'),
+                            'permission_type': getattr(permission, 'permission_type', 'action'),
+                            'is_system_permission': getattr(permission, 'is_system_permission', False),
+                            'requires_mfa': getattr(permission, 'requires_mfa', False),
+                            'is_active': getattr(permission, 'is_active', True),
+                            'scope': getattr(permission, 'scope', 'global')
+                        },
                         'level': group_perm.permission_level,
                         'source': f'group_{group.id}',
                         'scope_configuration': group_perm.scope_configuration,
@@ -231,7 +256,19 @@ class TenantRBACService:
             perm_code = permission.permission_code
             
             user_overrides[perm_code] = {
-                'permission': permission,
+                'permission': {
+                    'id': permission.id,
+                    'code': permission.permission_code,
+                    'name': permission.permission_name,
+                    'description': getattr(permission, 'description', ''),
+                    'category': getattr(permission, 'permission_category', None),
+                    'risk_level': getattr(permission, 'risk_level', 'low'),
+                    'permission_type': getattr(permission, 'permission_type', 'action'),
+                    'is_system_permission': getattr(permission, 'is_system_permission', False),
+                    'requires_mfa': getattr(permission, 'requires_mfa', False),
+                    'is_active': getattr(permission, 'is_active', True),
+                    'scope': getattr(permission, 'scope', 'global')
+                },
                 'override_type': override.override_type,
                 'level': override.permission_level,
                 'source': f'user_override_{override.id}',
@@ -386,16 +423,16 @@ class TenantRBACService:
         for perm_code, perm_data in permissions.items():
             permission = perm_data['permission']
             
-            # Count by category
-            category = permission.permission_category
+            # Count by category (permission is a dict, not a model object)
+            category = permission.get('category', 'unknown')
             summary['by_category'][category] = summary['by_category'].get(category, 0) + 1
             
             # Count by risk level
-            risk_level = permission.risk_level
+            risk_level = permission.get('risk_level', 'low')
             summary['by_risk_level'][risk_level] = summary['by_risk_level'].get(risk_level, 0) + 1
             
             # Count by permission type
-            perm_type = permission.permission_type
+            perm_type = permission.get('permission_type', 'unknown')
             summary['by_permission_type'][perm_type] = summary['by_permission_type'].get(perm_type, 0) + 1
             
             # Check for special conditions
@@ -405,10 +442,10 @@ class TenantRBACService:
             if perm_data.get('conditions'):
                 summary['conditional_permissions'].append(perm_code)
             
-            if permission.permission_type == 'administrative':
+            if permission.get('permission_type') == 'administrative':
                 summary['administrative_access'] = True
             
-            if permission.is_system_permission:
+            if permission.get('is_system_permission', False):
                 summary['system_permissions'].append(perm_code)
         
         return summary
@@ -566,15 +603,29 @@ class TenantRBACService:
         
         for permission in all_tenant_permissions:
             perm_code = permission.permission_code
+            # Create isolated permission object to prevent reference bleeding
             all_permissions[perm_code] = {
-                'permission': permission,
-                'permission_level': 'granted',
-                'source_type': 'designation',
-                'source_name': 'Administrator',
+                'permission': {
+                    'id': permission.id,
+                    'code': permission.permission_code,
+                    'name': permission.permission_name,
+                    'description': getattr(permission, 'description', ''),
+                    'category': getattr(permission, 'permission_category', None),
+                    'risk_level': getattr(permission, 'risk_level', 'low'),
+                    'requires_mfa': getattr(permission, 'requires_mfa', False),
+                    'is_active': getattr(permission, 'is_active', True),
+                    'scope': getattr(permission, 'scope', 'global')
+                },
+                'level': 'granted',
+                'source': 'designation_admin',  # Changed from source_type for consistency
                 'scope_configuration': {},
-                'is_temporary': False,
-                'effective_from': None,
-                'effective_to': None
+                'geographic_scope': [],
+                'functional_scope': [],
+                'temporal_scope': {},
+                'is_mandatory': True,
+                'priority_level': 999,  # Highest priority
+                'conditions': {},
+                'is_inherited': True
             }
         
         return {
@@ -582,22 +633,22 @@ class TenantRBACService:
             'scope_limitations': {},
             'permission_summary': {
                 'total_permissions': len(all_permissions),
-                'granted_permissions': len(all_permissions),
-                'denied_permissions': 0,
-                'conditional_permissions': 0,
-                'high_risk_permissions': len([p for p in all_tenant_permissions if p.risk_level == 'high']),
-                'critical_permissions': len([p for p in all_tenant_permissions if p.risk_level == 'critical'])
+                'high_risk_permissions': len([p for p in all_permissions.values() 
+                                            if p['permission'].get('risk_level') == 'critical']),
+                'requires_mfa_count': len([p for p in all_permissions.values() 
+                                         if p['permission'].get('requires_mfa')]),
+                'administrator_mode': True
             },
             'metadata': {
                 'calculation_time': timezone.now().isoformat(),
                 'sources': {
-                    'designation_count': 1,
+                    'designation_count': 1,  # Administrator designation
                     'group_count': 0,
                     'override_count': 0
                 },
                 'conflicts_resolved': 0,
                 'cache_version': self._get_cache_version(),
-                'is_administrator': True
+                'administrator_bypass': True
             }
         }
     
@@ -769,6 +820,24 @@ class TenantRBACService:
             
         except Exception as e:
             logger.error(f"Error invalidating tenant permissions cache: {str(e)}")
+
+    def clear_user_permission_cache(self, user_profile: TenantUserProfile = None):
+        """Clear permission cache for a specific user or all users in tenant."""
+        try:
+            if user_profile:
+                # Clear cache for specific user
+                UserEffectivePermissionsCache.objects.filter(
+                    user_profile=user_profile
+                ).update(is_valid=False)
+                logger.info(f"Cleared permission cache for user {user_profile.user.id}")
+            else:
+                # Clear cache for all users in tenant
+                UserEffectivePermissionsCache.objects.filter(
+                    user_profile__tenant=self.tenant
+                ).update(is_valid=False)
+                logger.info(f"Cleared permission cache for all users in tenant {self.tenant.id}")
+        except Exception as e:
+            logger.error(f"Error clearing permission cache: {str(e)}")
 
 
 # === Utility Functions ===

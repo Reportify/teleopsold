@@ -73,6 +73,7 @@ import {
 } from "@mui/icons-material";
 
 import { useAuth } from "../contexts/AuthContext";
+import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { StatsCard } from "../components";
 import useEmployeeManagement from "../hooks/useEmployeeManagement";
@@ -396,445 +397,289 @@ const CircleUserManagementPage: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 3 }}>
-      {/* Header */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
-            Circle User Management
-          </Typography>
-          <Typography variant="body2" color="text.secondary">
-            Manage users and designations for {currentTenant?.organization_name}
+    <FeatureGate
+      featureId="user_view"
+      fallback={
+        <Box sx={{ p: 4, textAlign: "center" }}>
+          <Typography variant="h6" color="text.secondary">
+            You don't have permission to view user management
           </Typography>
         </Box>
-        <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setCreateDialogOpen(true)} size="large">
-          Add User
-        </Button>
-      </Box>
+      }
+    >
+      <Box sx={{ p: 3 }}>
+        {/* Header */}
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+          <Box>
+            <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
+              Circle User Management
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Manage users and designations for {currentTenant?.organization_name}
+            </Typography>
+          </Box>
+          <FeatureGate featureId="user_create">
+            <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setCreateDialogOpen(true)} size="large">
+              Add User
+            </Button>
+          </FeatureGate>
+        </Box>
 
-      {/* Statistics Cards */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <StatsCard title="Total Users" value={statistics.total_users} subtitle={`${statistics.active_users} active`} icon={Group} color="primary" />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <StatsCard title="Active Users" value={statistics.active_users} subtitle="Currently active" icon={CheckCircle} color="success" />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <StatsCard title="Pending Invites" value={statistics.pending_users} subtitle="Awaiting setup" icon={Send} color="warning" />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <StatsCard title="Administrators" value={statistics.admin_users} subtitle="User managers" icon={AdminPanelSettings} color="info" />
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <StatsCard title="Inactive Users" value={statistics.inactive_users} subtitle="Deactivated" icon={ErrorOutline} color="error" />
-        </Grid>
-      </Grid>
-
-      {/* Filters */}
-      <Card sx={{ mb: 3 }}>
-        <CardContent>
-          <Grid container spacing={3} alignItems="center">
-            <Grid size={{ xs: 12, md: 4 }}>
-              <TextField
-                fullWidth
-                variant="outlined"
-                placeholder="Search users..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                InputProps={{
-                  startAdornment: <Search sx={{ mr: 1, color: "text.secondary" }} />,
-                }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 3 }}>
-              <FormControl fullWidth>
-                <InputLabel>Department</InputLabel>
-                <Select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} label="Department">
-                  <MenuItem value="all">All Departments</MenuItem>
-                  {Object.keys(departmentCounts).map((dept) => (
-                    <MenuItem key={dept} value={dept}>
-                      {dept} ({departmentCounts[dept]})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 3 }}>
-              <FormControl fullWidth>
-                <InputLabel>Status</InputLabel>
-                <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} label="Status">
-                  <MenuItem value="all">All Status</MenuItem>
-                  <MenuItem value="active">Active</MenuItem>
-                  <MenuItem value="inactive">Inactive</MenuItem>
-                  <MenuItem value="pending">Pending Invitation</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 2 }}>
-              <Button fullWidth variant="outlined" startIcon={<Refresh />} onClick={loadCircleUsers}>
-                Refresh
-              </Button>
-            </Grid>
+        {/* Statistics Cards */}
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <StatsCard title="Total Users" value={statistics.total_users} subtitle={`${statistics.active_users} active`} icon={Group} color="primary" />
           </Grid>
-        </CardContent>
-      </Card>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <StatsCard title="Active Users" value={statistics.active_users} subtitle="Currently active" icon={CheckCircle} color="success" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <StatsCard title="Pending Invites" value={statistics.pending_users} subtitle="Awaiting setup" icon={Send} color="warning" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <StatsCard title="Administrators" value={statistics.admin_users} subtitle="User managers" icon={AdminPanelSettings} color="info" />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <StatsCard title="Inactive Users" value={statistics.inactive_users} subtitle="Deactivated" icon={ErrorOutline} color="error" />
+          </Grid>
+        </Grid>
 
-      {/* Users Table */}
-      <Card>
-        <CardContent>
-          {loading && <LinearProgress sx={{ mb: 2 }} />}
+        {/* Filters */}
+        <Card sx={{ mb: 3 }}>
+          <CardContent>
+            <Grid container spacing={3} alignItems="center">
+              <Grid size={{ xs: 12, md: 4 }}>
+                <TextField
+                  fullWidth
+                  variant="outlined"
+                  placeholder="Search users..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  InputProps={{
+                    startAdornment: <Search sx={{ mr: 1, color: "text.secondary" }} />,
+                  }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 3 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Department</InputLabel>
+                  <Select value={departmentFilter} onChange={(e) => setDepartmentFilter(e.target.value)} label="Department">
+                    <MenuItem value="all">All Departments</MenuItem>
+                    {Object.keys(departmentCounts).map((dept) => (
+                      <MenuItem key={dept} value={dept}>
+                        {dept} ({departmentCounts[dept]})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 3 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Status</InputLabel>
+                  <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} label="Status">
+                    <MenuItem value="all">All Status</MenuItem>
+                    <MenuItem value="active">Active</MenuItem>
+                    <MenuItem value="inactive">Inactive</MenuItem>
+                    <MenuItem value="pending">Pending Invitation</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 2 }}>
+                <Button fullWidth variant="outlined" startIcon={<Refresh />} onClick={loadCircleUsers}>
+                  Refresh
+                </Button>
+              </Grid>
+            </Grid>
+          </CardContent>
+        </Card>
 
-          <TableContainer>
-            <Table>
-              <TableHead>
-                <TableRow>
-                  <TableCell>User</TableCell>
-                  <TableCell>Contact</TableCell>
-                  <TableCell>Department</TableCell>
-                  <TableCell>Designations</TableCell>
-                  <TableCell>Status</TableCell>
-                  <TableCell>Access Level</TableCell>
-                  <TableCell>Last Login</TableCell>
-                  <TableCell align="center">Actions</TableCell>
-                </TableRow>
-              </TableHead>
-              <TableBody>
-                {filteredUsers.map((user) => (
-                  <TableRow key={user.id} hover>
-                    <TableCell>
-                      <Box sx={{ display: "flex", alignItems: "center" }}>
-                        <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{user.full_name.charAt(0)}</Avatar>
-                        <Box>
-                          <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                            {user.full_name}
-                          </Typography>
-                          <Typography variant="body2" color="text.secondary">
-                            {user.user?.email || "No email"}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {(user.designation as any)?.name || "No designation"}
-                          </Typography>
-                        </Box>
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Box>
-                        {user.phone_number && (
-                          <Typography variant="body2" sx={{ display: "flex", alignItems: "center", mb: 0.5 }}>
-                            <Phone sx={{ fontSize: 16, mr: 1 }} />
-                            {user.phone_number}
-                          </Typography>
-                        )}
-                        {user.employee_id && (
-                          <Typography variant="caption" color="text.secondary">
-                            ID: {user.employee_id}
-                          </Typography>
-                        )}
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{(user as any).department || "Unassigned"}</Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-                        {user.designation ? (
-                          <Chip key={user.designation.id} label={(user.designation as any).name} size="small" color="primary" variant="outlined" />
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            No designations
-                          </Typography>
-                        )}
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Chip label={getStatusText(user)} color={getStatusColor(user)} size="small" />
-                    </TableCell>
-                    <TableCell>
-                      <Chip label="Member" color="default" size="small" variant="outlined" />
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{formatDate(user.user?.last_login || null)}</Typography>
-                    </TableCell>
-                    <TableCell align="center">
-                      <IconButton onClick={(e) => handleUserMenuClick(e, user)} size="small">
-                        <MoreVert />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {filteredUsers.length === 0 && (
+        {/* Users Table */}
+        <Card>
+          <CardContent>
+            {loading && <LinearProgress sx={{ mb: 2 }} />}
+
+            <TableContainer>
+              <Table>
+                <TableHead>
                   <TableRow>
-                    <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        No users found matching the current filters
-                      </Typography>
-                    </TableCell>
+                    <TableCell>User</TableCell>
+                    <TableCell>Contact</TableCell>
+                    <TableCell>Department</TableCell>
+                    <TableCell>Designations</TableCell>
+                    <TableCell>Status</TableCell>
+                    <TableCell>Access Level</TableCell>
+                    <TableCell>Last Login</TableCell>
+                    <TableCell align="center">Actions</TableCell>
                   </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </CardContent>
-      </Card>
+                </TableHead>
+                <TableBody>
+                  {filteredUsers.map((user) => (
+                    <TableRow key={user.id} hover>
+                      <TableCell>
+                        <Box sx={{ display: "flex", alignItems: "center" }}>
+                          <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{user.full_name.charAt(0)}</Avatar>
+                          <Box>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                              {user.full_name}
+                            </Typography>
+                            <Typography variant="body2" color="text.secondary">
+                              {user.user?.email || "No email"}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {(user.designation as any)?.name || "No designation"}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box>
+                          {user.phone_number && (
+                            <Typography variant="body2" sx={{ display: "flex", alignItems: "center", mb: 0.5 }}>
+                              <Phone sx={{ fontSize: 16, mr: 1 }} />
+                              {user.phone_number}
+                            </Typography>
+                          )}
+                          {user.employee_id && (
+                            <Typography variant="caption" color="text.secondary">
+                              ID: {user.employee_id}
+                            </Typography>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{(user as any).department || "Unassigned"}</Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+                          {user.designation ? (
+                            <Chip key={user.designation.id} label={(user.designation as any).name} size="small" color="primary" variant="outlined" />
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              No designations
+                            </Typography>
+                          )}
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Chip label={getStatusText(user)} color={getStatusColor(user)} size="small" />
+                      </TableCell>
+                      <TableCell>
+                        <Chip label="Member" color="default" size="small" variant="outlined" />
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2">{formatDate(user.user?.last_login || null)}</Typography>
+                      </TableCell>
+                      <TableCell align="center">
+                        <IconButton onClick={(e) => handleUserMenuClick(e, user)} size="small">
+                          <MoreVert />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                  {filteredUsers.length === 0 && (
+                    <TableRow>
+                      <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
+                        <Typography variant="body2" color="text.secondary">
+                          No users found matching the current filters
+                        </Typography>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          </CardContent>
+        </Card>
 
-      {/* User Actions Menu */}
-      <Menu anchorEl={userMenuAnchor} open={Boolean(userMenuAnchor)} onClose={handleUserMenuClose}>
-        <MenuItem
-          onClick={() => {
-            // Handle view user details
-            handleUserMenuClose();
-          }}
-        >
-          <ListItemIcon>
-            <Visibility fontSize="small" />
-          </ListItemIcon>
-          View Details
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (menuUser) {
-              handleOpenEditDialog(menuUser);
-            }
-          }}
-        >
-          <ListItemIcon>
-            <Edit fontSize="small" />
-          </ListItemIcon>
-          Edit User
-        </MenuItem>
-        {menuUser && !menuUser.user?.last_login && (
+        {/* User Actions Menu */}
+        <Menu anchorEl={userMenuAnchor} open={Boolean(userMenuAnchor)} onClose={handleUserMenuClose}>
           <MenuItem
             onClick={() => {
-              if (menuUser) {
-                handleResendInvitation(menuUser.id);
-              }
+              // Handle view user details
               handleUserMenuClose();
             }}
           >
             <ListItemIcon>
-              <Send fontSize="small" />
+              <Visibility fontSize="small" />
             </ListItemIcon>
-            Resend Invitation
+            View Details
           </MenuItem>
-        )}
-        <Divider />
-        <MenuItem
-          onClick={() => {
-            if (menuUser) {
-              handleDeactivateUser(menuUser.id);
-            }
-            handleUserMenuClose();
-          }}
-          sx={{ color: "error.main" }}
-        >
-          <ListItemIcon>
-            <Delete fontSize="small" color="error" />
-          </ListItemIcon>
-          Deactivate User
-        </MenuItem>
-      </Menu>
+          <MenuItem
+            onClick={() => {
+              if (menuUser) {
+                handleOpenEditDialog(menuUser);
+              }
+            }}
+          >
+            <ListItemIcon>
+              <Edit fontSize="small" />
+            </ListItemIcon>
+            Edit User
+          </MenuItem>
+          {menuUser && !menuUser.user?.last_login && (
+            <MenuItem
+              onClick={() => {
+                if (menuUser) {
+                  handleResendInvitation(menuUser.id);
+                }
+                handleUserMenuClose();
+              }}
+            >
+              <ListItemIcon>
+                <Send fontSize="small" />
+              </ListItemIcon>
+              Resend Invitation
+            </MenuItem>
+          )}
+          <Divider />
+          <MenuItem
+            onClick={() => {
+              if (menuUser) {
+                handleDeactivateUser(menuUser.id);
+              }
+              handleUserMenuClose();
+            }}
+            sx={{ color: "error.main" }}
+          >
+            <ListItemIcon>
+              <Delete fontSize="small" color="error" />
+            </ListItemIcon>
+            Deactivate User
+          </MenuItem>
+        </Menu>
 
-      {/* Create User Dialog */}
-      <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Add New User</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            {/* Basic Information */}
-            <Grid size={{ xs: 12 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Basic Information
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="First Name" value={createForm.first_name} onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })} fullWidth required />
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Last Name" value={createForm.last_name} onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })} fullWidth required />
-            </Grid>
-
-            <Grid size={{ xs: 12 }}>
-              <TextField label="Email Address" type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} fullWidth required />
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Phone Number" value={createForm.phone_number} onChange={(e) => setCreateForm({ ...createForm, phone_number: e.target.value })} fullWidth />
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Secondary Phone" value={createForm.secondary_phone} onChange={(e) => setCreateForm({ ...createForm, secondary_phone: e.target.value })} fullWidth />
-            </Grid>
-
-            {/* Job Information */}
-            <Grid size={{ xs: 12 }}>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Job Information
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Job Title (Designation)</InputLabel>
-                <Select
-                  value={createForm.designation_id}
-                  onChange={(e) => {
-                    const designationId = e.target.value as number;
-                    const selectedDesignation = designations?.find((d) => d.id === designationId);
-                    setCreateForm({
-                      ...createForm,
-                      designation_id: designationId,
-                      // Auto-populate department from designation
-                      department_id: selectedDesignation?.department || (selectedDesignation as any)?.department_id || 0,
-                    });
-                  }}
-                  label="Job Title (Designation)"
-                >
-                  <MenuItem value={0}>{designations && designations.length > 0 ? "Select Designation" : "No Designations Available"}</MenuItem>
-                  {designations && designations.length > 0
-                    ? designations.map((designation) => (
-                        <MenuItem key={designation.id} value={designation.id}>
-                          {designation.designation_name || (designation as any).name}
-                          {(designation.department_name || (designation as any).department) && ` (${designation.department_name || (designation as any).department})`}
-                        </MenuItem>
-                      ))
-                    : null}
-                </Select>
-                {(!designations || designations.length === 0) && (
-                  <FormHelperText>No designations found. Create departments and designations first, or leave empty for Administrator role.</FormHelperText>
-                )}
-              </FormControl>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Employee ID" value={createForm.employee_id} onChange={(e) => setCreateForm({ ...createForm, employee_id: e.target.value })} fullWidth />
-            </Grid>
-
-            {/* Show guidance for first-time setup */}
-            {(!designations || designations.length === 0) && (
-              <Grid size={{ xs: 12 }}>
-                <Alert severity="info" sx={{ mt: 2 }}>
-                  <Typography variant="body2" fontWeight={600} gutterBottom>
-                    First Time Setup Detected
-                  </Typography>
-                  <Typography variant="body2">
-                    Since no departments and designations exist yet, this user will be created with Administrator privileges. You can later:
-                    <br />• Create departments and designations using the "Designation Management" page
-                    <br />• Update user designations from this page or their profile
-                    <br />• Assign specific roles and permissions as needed
-                  </Typography>
-                </Alert>
-              </Grid>
-            )}
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Employment Type</InputLabel>
-                <Select value={createForm.employment_type} onChange={(e) => setCreateForm({ ...createForm, employment_type: e.target.value })} label="Employment Type">
-                  <MenuItem value="Full-time">Full-time</MenuItem>
-                  <MenuItem value="Part-time">Part-time</MenuItem>
-                  <MenuItem value="Contract">Contract</MenuItem>
-                  <MenuItem value="Consultant">Consultant</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Password Field */}
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Password"
-                type="password"
-                value={createForm.password}
-                onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
-                fullWidth
-                required
-                helperText="Temporary password: TempPassword123!"
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
-          <Button onClick={handleCreateUser} variant="contained" disabled={creating}>
-            {creating ? "Creating..." : "Create User"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Edit User Dialog */}
-      <Dialog open={editDialog.open} onClose={() => setEditDialog({ open: false, user: null, form: null })} maxWidth="md" fullWidth>
-        <DialogTitle>Edit User</DialogTitle>
-        <DialogContent>
-          {editDialog.user && editDialog.form ? (
+        {/* Create User Dialog */}
+        <Dialog open={createDialogOpen} onClose={() => setCreateDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Add New User</DialogTitle>
+          <DialogContent>
             <Grid container spacing={3} sx={{ mt: 1 }}>
-              {/* User Info Header */}
-              <Grid size={{ xs: 12 }}>
-                <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-                  <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{editDialog.user.full_name.charAt(0)}</Avatar>
-                  <Box>
-                    <Typography variant="h6">{editDialog.user.full_name}</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {editDialog.user.user?.email || "No email"}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      Employee ID: {editDialog.user.employee_id || "Not set"}
-                    </Typography>
-                  </Box>
-                </Box>
-                <Divider />
-              </Grid>
               {/* Basic Information */}
               <Grid size={{ xs: 12 }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
                   Basic Information
                 </Typography>
               </Grid>
+
               <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="First Name"
-                  value={editDialog.form.first_name}
-                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, first_name: e.target.value } }))}
-                  fullWidth
-                  required
-                />
+                <TextField label="First Name" value={createForm.first_name} onChange={(e) => setCreateForm({ ...createForm, first_name: e.target.value })} fullWidth required />
               </Grid>
+
               <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Last Name"
-                  value={editDialog.form.last_name}
-                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, last_name: e.target.value } }))}
-                  fullWidth
-                  required
-                />
+                <TextField label="Last Name" value={createForm.last_name} onChange={(e) => setCreateForm({ ...createForm, last_name: e.target.value })} fullWidth required />
               </Grid>
+
+              <Grid size={{ xs: 12 }}>
+                <TextField label="Email Address" type="email" value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} fullWidth required />
+              </Grid>
+
               <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Email Address"
-                  type="email"
-                  value={editDialog.form.email}
-                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, email: e.target.value } }))}
-                  fullWidth
-                  required
-                />
+                <TextField label="Phone Number" value={createForm.phone_number} onChange={(e) => setCreateForm({ ...createForm, phone_number: e.target.value })} fullWidth />
               </Grid>
+
               <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Employee ID"
-                  value={editDialog.form.employee_id}
-                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, employee_id: e.target.value } }))}
-                  fullWidth
-                />
+                <TextField label="Secondary Phone" value={createForm.secondary_phone} onChange={(e) => setCreateForm({ ...createForm, secondary_phone: e.target.value })} fullWidth />
               </Grid>
-              <Grid size={{ xs: 12, sm: 6 }}>
-                <TextField
-                  label="Phone Number"
-                  value={editDialog.form.phone_number}
-                  onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, phone_number: e.target.value } }))}
-                  fullWidth
-                />
-              </Grid>
+
               {/* Job Information */}
               <Grid size={{ xs: 12 }}>
                 <Divider sx={{ my: 2 }} />
@@ -842,15 +687,25 @@ const CircleUserManagementPage: React.FC = () => {
                   Job Information
                 </Typography>
               </Grid>
+
               <Grid size={{ xs: 12, sm: 6 }}>
                 <FormControl fullWidth>
                   <InputLabel>Job Title (Designation)</InputLabel>
                   <Select
-                    value={editDialog.form.designation_id}
-                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, designation_id: e.target.value as number } }))}
+                    value={createForm.designation_id}
+                    onChange={(e) => {
+                      const designationId = e.target.value as number;
+                      const selectedDesignation = designations?.find((d) => d.id === designationId);
+                      setCreateForm({
+                        ...createForm,
+                        designation_id: designationId,
+                        // Auto-populate department from designation
+                        department_id: selectedDesignation?.department || (selectedDesignation as any)?.department_id || 0,
+                      });
+                    }}
                     label="Job Title (Designation)"
                   >
-                    <MenuItem value={0}>No Designation</MenuItem>
+                    <MenuItem value={0}>{designations && designations.length > 0 ? "Select Designation" : "No Designations Available"}</MenuItem>
                     {designations && designations.length > 0
                       ? designations.map((designation) => (
                           <MenuItem key={designation.id} value={designation.id}>
@@ -860,39 +715,198 @@ const CircleUserManagementPage: React.FC = () => {
                         ))
                       : null}
                   </Select>
+                  {(!designations || designations.length === 0) && (
+                    <FormHelperText>No designations found. Create departments and designations first, or leave empty for Administrator role.</FormHelperText>
+                  )}
                 </FormControl>
               </Grid>
-              {/* Account Status */}
-              <Grid size={{ xs: 12 }}>
-                <Divider sx={{ my: 2 }} />
-                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                  Account Status
-                </Typography>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField label="Employee ID" value={createForm.employee_id} onChange={(e) => setCreateForm({ ...createForm, employee_id: e.target.value })} fullWidth />
               </Grid>
+
+              {/* Show guidance for first-time setup */}
+              {(!designations || designations.length === 0) && (
+                <Grid size={{ xs: 12 }}>
+                  <Alert severity="info" sx={{ mt: 2 }}>
+                    <Typography variant="body2" fontWeight={600} gutterBottom>
+                      First Time Setup Detected
+                    </Typography>
+                    <Typography variant="body2">
+                      Since no departments and designations exist yet, this user will be created with Administrator privileges. You can later:
+                      <br />• Create departments and designations using the "Designation Management" page
+                      <br />• Update user designations from this page or their profile
+                      <br />• Assign specific roles and permissions as needed
+                    </Typography>
+                  </Alert>
+                </Grid>
+              )}
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Employment Type</InputLabel>
+                  <Select value={createForm.employment_type} onChange={(e) => setCreateForm({ ...createForm, employment_type: e.target.value })} label="Employment Type">
+                    <MenuItem value="Full-time">Full-time</MenuItem>
+                    <MenuItem value="Part-time">Part-time</MenuItem>
+                    <MenuItem value="Contract">Contract</MenuItem>
+                    <MenuItem value="Consultant">Consultant</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {/* Password Field */}
               <Grid size={{ xs: 12 }}>
-                <FormControlLabel
-                  control={<Checkbox checked={editDialog.form.is_active} onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, is_active: e.target.checked } }))} />}
-                  label="User is active"
+                <TextField
+                  label="Password"
+                  type="password"
+                  value={createForm.password}
+                  onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="Temporary password: TempPassword123!"
                 />
-                <FormHelperText>Inactive users cannot log in to the system. Use this to temporarily disable user access.</FormHelperText>
               </Grid>
             </Grid>
-          ) : (
-            <Box sx={{ textAlign: "center", py: 4 }}>
-              <Typography variant="body1" color="text.secondary">
-                No user selected for editing.
-              </Typography>
-            </Box>
-          )}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEditDialog({ open: false, user: null, form: null })}>Cancel</Button>
-          <Button onClick={handleEditUser} variant="contained" disabled={updating}>
-            {updating ? "Updating..." : "Update User"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-    </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCreateDialogOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateUser} variant="contained" disabled={creating}>
+              {creating ? "Creating..." : "Create User"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Edit User Dialog */}
+        <Dialog open={editDialog.open} onClose={() => setEditDialog({ open: false, user: null, form: null })} maxWidth="md" fullWidth>
+          <DialogTitle>Edit User</DialogTitle>
+          <DialogContent>
+            {editDialog.user && editDialog.form ? (
+              <Grid container spacing={3} sx={{ mt: 1 }}>
+                {/* User Info Header */}
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
+                    <Avatar sx={{ mr: 2, bgcolor: "primary.main" }}>{editDialog.user.full_name.charAt(0)}</Avatar>
+                    <Box>
+                      <Typography variant="h6">{editDialog.user.full_name}</Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        {editDialog.user.user?.email || "No email"}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Employee ID: {editDialog.user.employee_id || "Not set"}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Divider />
+                </Grid>
+                {/* Basic Information */}
+                <Grid size={{ xs: 12 }}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                    Basic Information
+                  </Typography>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="First Name"
+                    value={editDialog.form.first_name}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, first_name: e.target.value } }))}
+                    fullWidth
+                    required
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Last Name"
+                    value={editDialog.form.last_name}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, last_name: e.target.value } }))}
+                    fullWidth
+                    required
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Email Address"
+                    type="email"
+                    value={editDialog.form.email}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, email: e.target.value } }))}
+                    fullWidth
+                    required
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Employee ID"
+                    value={editDialog.form.employee_id}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, employee_id: e.target.value } }))}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Phone Number"
+                    value={editDialog.form.phone_number}
+                    onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, phone_number: e.target.value } }))}
+                    fullWidth
+                  />
+                </Grid>
+                {/* Job Information */}
+                <Grid size={{ xs: 12 }}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                    Job Information
+                  </Typography>
+                </Grid>
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Job Title (Designation)</InputLabel>
+                    <Select
+                      value={editDialog.form.designation_id}
+                      onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, designation_id: e.target.value as number } }))}
+                      label="Job Title (Designation)"
+                    >
+                      <MenuItem value={0}>No Designation</MenuItem>
+                      {designations && designations.length > 0
+                        ? designations.map((designation) => (
+                            <MenuItem key={designation.id} value={designation.id}>
+                              {designation.designation_name || (designation as any).name}
+                              {(designation.department_name || (designation as any).department) && ` (${designation.department_name || (designation as any).department})`}
+                            </MenuItem>
+                          ))
+                        : null}
+                    </Select>
+                  </FormControl>
+                </Grid>
+                {/* Account Status */}
+                <Grid size={{ xs: 12 }}>
+                  <Divider sx={{ my: 2 }} />
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                    Account Status
+                  </Typography>
+                </Grid>
+                <Grid size={{ xs: 12 }}>
+                  <FormControlLabel
+                    control={<Checkbox checked={editDialog.form.is_active} onChange={(e) => setEditDialog((prev) => ({ ...prev, form: { ...prev.form!, is_active: e.target.checked } }))} />}
+                    label="User is active"
+                  />
+                  <FormHelperText>Inactive users cannot log in to the system. Use this to temporarily disable user access.</FormHelperText>
+                </Grid>
+              </Grid>
+            ) : (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="body1" color="text.secondary">
+                  No user selected for editing.
+                </Typography>
+              </Box>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEditDialog({ open: false, user: null, form: null })}>Cancel</Button>
+            <Button onClick={handleEditUser} variant="contained" disabled={updating}>
+              {updating ? "Updating..." : "Update User"}
+            </Button>
+          </DialogActions>
+        </Dialog>
+      </Box>
+    </FeatureGate>
   );
 };
 

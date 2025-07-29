@@ -76,9 +76,10 @@ import {
   SelectAll,
   PlaylistAddCheck,
   ClearAll,
+  Remove,
 } from "@mui/icons-material";
 import { useRBAC } from "../hooks/useRBAC";
-import { PermissionGroup, Permission, CreatePermissionGroupData, UpdatePermissionGroupData } from "../services/rbacAPI";
+import { PermissionGroup, Permission, CreatePermissionGroupData, UpdatePermissionGroupData, rbacAPI } from "../services/rbacAPI";
 import { ModernSnackbar, AppBreadcrumbs } from "../components";
 import EmptyState from "../components/EmptyState";
 import type { BreadcrumbItem } from "../components";
@@ -387,6 +388,43 @@ const PermissionGroupsPage: React.FC = () => {
   const handleCloseViewPermissions = () => {
     setViewPermissionsDialog(false);
     setViewingGroup(null);
+  };
+
+  const handleRemovePermissionFromGroup = async (groupId: number, permissionId: number, permissionName: string) => {
+    if (window.confirm(`Remove permission "${permissionName}" from this group? Users in this group will lose this permission naturally.`)) {
+      try {
+        const result = await rbacAPI.bulkRevokePermissions({
+          permission_ids: [permissionId],
+          target_type: "groups",
+          target_ids: [groupId],
+          reason: `Removed permission from group via management interface`,
+        });
+
+        if (result.success) {
+          const groupResult = result.results[0];
+          setSnackbar({
+            open: true,
+            message: `Permission removed from group. ${groupResult.users_affected} users affected.`,
+            severity: "success",
+          });
+          // Refresh group data
+          loadPermissionGroups();
+          // Close and reopen the permissions dialog to refresh
+          if (viewingGroup && viewingGroup.id === groupId) {
+            const updatedGroup = permissionGroups.find((g) => g.id === groupId);
+            if (updatedGroup) {
+              setViewingGroup(updatedGroup);
+            }
+          }
+        }
+      } catch (error: any) {
+        setSnackbar({
+          open: true,
+          message: error.message || "Failed to remove permission from group",
+          severity: "error",
+        });
+      }
+    }
   };
 
   const getGroupTypeColor = (type: string) => {
@@ -1383,14 +1421,24 @@ const PermissionGroupsPage: React.FC = () => {
                             <Typography variant="body2" fontWeight={600}>
                               {groupPermission.permission_name}
                             </Typography>
-                            <Chip
-                              label={groupPermission.risk_level}
-                              size="small"
-                              color={
-                                groupPermission.risk_level === "critical" ? "error" : groupPermission.risk_level === "high" ? "warning" : groupPermission.risk_level === "medium" ? "info" : "success"
-                              }
-                              variant="outlined"
-                            />
+                            <Box sx={{ display: "flex", gap: 1, alignItems: "center" }}>
+                              <Chip
+                                label={groupPermission.risk_level}
+                                size="small"
+                                color={
+                                  groupPermission.risk_level === "critical" ? "error" : groupPermission.risk_level === "high" ? "warning" : groupPermission.risk_level === "medium" ? "info" : "success"
+                                }
+                                variant="outlined"
+                              />
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => handleRemovePermissionFromGroup(viewingGroup.id, groupPermission.permission, groupPermission.permission_name)}
+                                title="Remove permission from group"
+                              >
+                                <Remove fontSize="small" />
+                              </IconButton>
+                            </Box>
                           </Box>
                           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
                             {groupPermission.permission_code}

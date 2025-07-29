@@ -155,10 +155,9 @@ class CanViewRBACDashboard(BasePermission):
                 # Import here to avoid circular imports
                 from apps.tenants.services import get_rbac_service
                 
-                rbac_service = get_rbac_service()
-                has_view_permission = rbac_service.check_permission(
-                    user=request.user,
-                    tenant=tenant,
+                rbac_service = get_rbac_service(tenant)
+                has_view_permission, _ = rbac_service.check_permission(
+                    user_profile=profile,
                     permission_code='rbac_management.view_permissions'
                 )
                 
@@ -464,4 +463,50 @@ class ReportingPermission(BasePermission):
                     if designation.can_manage_users or designation.approval_authority_level > 0:
                         return True
         
-        return False 
+        return False
+
+
+class HasRBACPermission(BasePermission):
+    """
+    Permission class that checks for specific RBAC permissions
+    Usage: permission_classes = [HasRBACPermission] with permission_required attribute on the view
+    """
+    
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        
+        if request.user.is_superuser:
+            return True
+        
+        # Get the required permission from the view
+        required_permission = getattr(view, 'permission_required', None)
+        if not required_permission:
+            # Fallback to IsTenantMember if no specific permission required
+            return IsTenantMember().has_permission(request, view)
+        
+        # Check if user has tenant profile
+        if not hasattr(request.user, 'tenant_user_profile') or not request.user.tenant_user_profile:
+            return False
+        
+        profile = request.user.tenant_user_profile
+        tenant = getattr(request, 'tenant', None) or profile.tenant
+        
+        if not tenant:
+            return False
+        
+        try:
+            # Import RBAC service
+            from apps.tenants.services.rbac_service import get_rbac_service
+            rbac_service = get_rbac_service(tenant)
+            
+            # Get user's effective permissions
+            effective_perms = rbac_service.get_user_effective_permissions(profile, force_refresh=False)
+            user_permissions = effective_perms.get('permissions', {})
+            
+            # Check if user has the required permission
+            return required_permission in user_permissions
+            
+        except Exception as e:
+            logger.error(f"Error checking RBAC permission {required_permission} for user {request.user.id}: {str(e)}")
+            return False 

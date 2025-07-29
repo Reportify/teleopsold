@@ -1,4 +1,54 @@
 """
+Tenant Constants
+Centralized definitions for resource types and other constants used across the application.
+"""
+
+# Resource type definitions - single source of truth
+RESOURCE_TYPES = {
+    'project': 'Project Management',
+    'task': 'Task Management', 
+    'site': 'Site Management',
+    'user': 'User Management',
+    'deviation': 'Deviation Management',
+    'report': 'Reporting & Analytics',
+    'compliance': 'Compliance Management',
+    'vendor': 'Vendor Management',
+    'asset': 'Asset Management',
+    'document': 'Document Management',
+    'audit': 'Audit & Logging',
+    'system': 'System Administration',
+    'workflow': 'Workflow Management',
+    'notification': 'Notification Management',
+    'rbac': 'RBAC Management',
+    'custom': 'Custom Resource',
+}
+
+# Django model choices format
+RESOURCE_TYPE_CHOICES = [
+    (key, value) for key, value in RESOURCE_TYPES.items()
+]
+
+# Frontend format with additional metadata
+RESOURCE_TYPES_FRONTEND = [
+    {'value': 'project', 'label': 'Project Management', 'icon': '📋', 'description': 'Project creation, tracking, and management'},
+    {'value': 'task', 'label': 'Task Management', 'icon': '✅', 'description': 'Task assignment, updates, and completion'},
+    {'value': 'site', 'label': 'Site Management', 'icon': '📍', 'description': 'Site information, locations, and details'},
+    {'value': 'user', 'label': 'User Management', 'icon': '👥', 'description': 'User profiles, roles, and access control'},
+    {'value': 'deviation', 'label': 'Deviation Management', 'icon': '⚠️', 'description': 'Deviation records, approvals, and reports'},
+    {'value': 'report', 'label': 'Reporting & Analytics', 'icon': '📊', 'description': 'Reports, dashboards, and data analysis'},
+    {'value': 'compliance', 'label': 'Compliance Management', 'icon': '📜', 'description': 'Compliance tracking and regulatory requirements'},
+    {'value': 'vendor', 'label': 'Vendor Management', 'icon': '🏢', 'description': 'Vendor relationships and contracts'},
+    {'value': 'asset', 'label': 'Asset Management', 'icon': '🔧', 'description': 'Equipment, tools, and asset tracking'},
+    {'value': 'document', 'label': 'Document Management', 'icon': '📄', 'description': 'Document storage, sharing, and version control'},
+    {'value': 'audit', 'label': 'Audit & Logging', 'icon': '🔍', 'description': 'Audit trails, logs, and security monitoring'},
+    {'value': 'system', 'label': 'System Administration', 'icon': '⚙️', 'description': 'System settings, configuration, and maintenance'},
+    {'value': 'workflow', 'label': 'Workflow Management', 'icon': '🔄', 'description': 'Business processes and workflow automation'},
+    {'value': 'notification', 'label': 'Notification Management', 'icon': '🔔', 'description': 'Alerts, notifications, and communication'},
+    {'value': 'rbac', 'label': 'RBAC Management', 'icon': '🔐', 'description': 'Role-based access control and permissions'},
+    {'value': 'custom', 'label': 'Custom Resource', 'icon': '🎯', 'description': 'Custom functionality specific to your organization'},
+]
+
+"""
 Constants for tenant management
 """
 

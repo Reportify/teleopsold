@@ -40,6 +40,7 @@ import {
 } from "@mui/material";
 import { Add, Business, School, People, Assignment, MoreVert, Edit, Delete, Visibility, CheckCircle, Cancel, Warning, Search, FilterList, Download, Refresh, PersonAdd } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
+import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { ModernSnackbar } from "../components";
 
 // ============================================================================
@@ -1128,392 +1129,421 @@ const VendorOperationsManagementPage: React.FC = () => {
 
   if (loading) {
     return (
-      <Box sx={{ p: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          Vendor Operations Management
-        </Typography>
-        <LinearProgress />
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-          Loading operational data...
-        </Typography>
-      </Box>
+      <FeatureGate
+        featureId="vendor_view"
+        fallback={
+          <Box sx={{ p: 4, textAlign: "center" }}>
+            <Typography variant="h6" color="text.secondary">
+              You don't have permission to view vendor operations
+            </Typography>
+          </Box>
+        }
+      >
+        <Box sx={{ p: 4 }}>
+          <Typography variant="h4" gutterBottom>
+            Vendor Operations Management
+          </Typography>
+          <LinearProgress />
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            Loading operational data...
+          </Typography>
+        </Box>
+      </FeatureGate>
     );
   }
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      {/* Header */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={700}>
-            Vendor Operations Management
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-            Manage operational designations, certifications, and employee readiness for {currentTenant?.organization_name}
+    <FeatureGate
+      featureId="vendor_view"
+      fallback={
+        <Box sx={{ p: 4, textAlign: "center" }}>
+          <Typography variant="h6" color="text.secondary">
+            You don't have permission to view vendor operations
           </Typography>
         </Box>
-        <Button variant="outlined" startIcon={<Refresh />} onClick={loadAllData} disabled={loading}>
-          Refresh Data
-        </Button>
+      }
+    >
+      <Box sx={{ p: { xs: 2, md: 4 } }}>
+        {/* Header */}
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
+          <Box>
+            <Typography variant="h4" fontWeight={700}>
+              Vendor Operations Management
+            </Typography>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+              Manage operational designations, certifications, and employee readiness for {currentTenant?.organization_name}
+            </Typography>
+          </Box>
+          <Button variant="outlined" startIcon={<Refresh />} onClick={loadAllData} disabled={loading}>
+            Refresh Data
+          </Button>
+        </Box>
+
+        {/* Main Content */}
+        <Paper elevation={3}>
+          <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ borderBottom: 1, borderColor: "divider" }}>
+            <Tab label="Dashboard" icon={<Business />} />
+            <Tab label="Departments" icon={<Business />} />
+            <Tab label="Certifications" icon={<School />} />
+            <Tab label="Designations" icon={<Assignment />} />
+            <Tab label="Employees" icon={<People />} />
+          </Tabs>
+
+          {activeTab === 0 && renderDashboardTab()}
+          {activeTab === 1 && renderDepartmentsTab()}
+          {activeTab === 2 && renderCertificationsTab()}
+          {activeTab === 3 && renderDesignationsTab()}
+          {activeTab === 4 && renderEmployeesTab()}
+        </Paper>
+
+        {/* Department Dialog */}
+        <Dialog open={departmentDialogOpen} onClose={() => setDepartmentDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Add New Department</DialogTitle>
+          <DialogContent>
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Department Name" value={departmentForm.name} onChange={(e) => setDepartmentForm({ ...departmentForm, name: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Department Code" value={departmentForm.code} onChange={(e) => setDepartmentForm({ ...departmentForm, code: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="Description"
+                  value={departmentForm.description}
+                  onChange={(e) => setDepartmentForm({ ...departmentForm, description: e.target.value })}
+                  fullWidth
+                  multiline
+                  rows={3}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Parent Department</InputLabel>
+                  <Select value={departmentForm.parent_department} onChange={(e) => setDepartmentForm({ ...departmentForm, parent_department: e.target.value })} label="Parent Department">
+                    <MenuItem value="">None (Top Level)</MenuItem>
+                    {departments.map((dept) => (
+                      <MenuItem key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControlLabel
+                  control={<Switch checked={departmentForm.is_operational} onChange={(e) => setDepartmentForm({ ...departmentForm, is_operational: e.target.checked })} />}
+                  label="Operational Department"
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDepartmentDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateDepartment}>
+              Create Department
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Certification Type Dialog */}
+        <Dialog open={certificationDialogOpen} onClose={() => setCertificationDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Add New Certification Type</DialogTitle>
+          <DialogContent>
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Certification Name" value={certificationForm.name} onChange={(e) => setCertificationForm({ ...certificationForm, name: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Certification Code" value={certificationForm.code} onChange={(e) => setCertificationForm({ ...certificationForm, code: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="Description"
+                  value={certificationForm.description}
+                  onChange={(e) => setCertificationForm({ ...certificationForm, description: e.target.value })}
+                  fullWidth
+                  multiline
+                  rows={3}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Category</InputLabel>
+                  <Select value={certificationForm.category} onChange={(e) => setCertificationForm({ ...certificationForm, category: e.target.value })} label="Category">
+                    <MenuItem value="Safety">Safety</MenuItem>
+                    <MenuItem value="Technical">Technical</MenuItem>
+                    <MenuItem value="Medical">Medical</MenuItem>
+                    <MenuItem value="Compliance">Compliance</MenuItem>
+                    <MenuItem value="Quality">Quality</MenuItem>
+                    <MenuItem value="Custom">Custom</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Validity Period (Days)"
+                  type="number"
+                  value={certificationForm.validity_period_days || ""}
+                  onChange={(e) =>
+                    setCertificationForm({
+                      ...certificationForm,
+                      validity_period_days: e.target.value ? parseInt(e.target.value) : null,
+                    })
+                  }
+                  fullWidth
+                  helperText="Leave empty for no expiry"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Advance Notification (Days)"
+                  type="number"
+                  value={certificationForm.advance_notification_days}
+                  onChange={(e) =>
+                    setCertificationForm({
+                      ...certificationForm,
+                      advance_notification_days: parseInt(e.target.value) || 30,
+                    })
+                  }
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControlLabel
+                  control={<Switch checked={certificationForm.is_mandatory_for_field} onChange={(e) => setCertificationForm({ ...certificationForm, is_mandatory_for_field: e.target.checked })} />}
+                  label="Mandatory for Field Work"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControlLabel
+                  control={<Switch checked={certificationForm.renewal_required} onChange={(e) => setCertificationForm({ ...certificationForm, renewal_required: e.target.checked })} />}
+                  label="Renewal Required"
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setCertificationDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateCertificationType}>
+              Create Certification Type
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Designation Dialog */}
+        <Dialog open={designationDialogOpen} onClose={() => setDesignationDialogOpen(false)} maxWidth="lg" fullWidth>
+          <DialogTitle>Add New Designation</DialogTitle>
+          <DialogContent>
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Designation Name" value={designationForm.name} onChange={(e) => setDesignationForm({ ...designationForm, name: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Designation Code" value={designationForm.code} onChange={(e) => setDesignationForm({ ...designationForm, code: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="Description"
+                  value={designationForm.description}
+                  onChange={(e) => setDesignationForm({ ...designationForm, description: e.target.value })}
+                  fullWidth
+                  multiline
+                  rows={3}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth required>
+                  <InputLabel>Department</InputLabel>
+                  <Select value={designationForm.department} onChange={(e) => setDesignationForm({ ...designationForm, department: e.target.value })} label="Department">
+                    {departments.map((dept) => (
+                      <MenuItem key={dept.id} value={dept.id}>
+                        {dept.name}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Hierarchy Level"
+                  type="number"
+                  value={designationForm.hierarchy_level}
+                  onChange={(e) =>
+                    setDesignationForm({
+                      ...designationForm,
+                      hierarchy_level: parseInt(e.target.value) || 1,
+                    })
+                  }
+                  fullWidth
+                  inputProps={{ min: 1 }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Parent Designation</InputLabel>
+                  <Select value={designationForm.parent_designation} onChange={(e) => setDesignationForm({ ...designationForm, parent_designation: e.target.value })} label="Parent Designation">
+                    <MenuItem value="">None (Top Level)</MenuItem>
+                    {designations.map((designation) => (
+                      <MenuItem key={designation.id} value={designation.id}>
+                        {designation.name} (Level {designation.hierarchy_level})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Max Team Size"
+                  type="number"
+                  value={designationForm.max_team_size || ""}
+                  onChange={(e) =>
+                    setDesignationForm({
+                      ...designationForm,
+                      max_team_size: e.target.value ? parseInt(e.target.value) : null,
+                    })
+                  }
+                  fullWidth
+                  helperText="Leave empty for no limit"
+                />
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <Autocomplete
+                  multiple
+                  options={certificationTypes}
+                  getOptionLabel={(option) => option.name}
+                  value={certificationTypes.filter((cert) => designationForm.required_certifications.includes(cert.id))}
+                  onChange={(_, newValue) =>
+                    setDesignationForm({
+                      ...designationForm,
+                      required_certifications: newValue.map((cert) => cert.id),
+                    })
+                  }
+                  renderInput={(params) => <TextField {...params} label="Required Certifications" placeholder="Select certifications required for this designation" />}
+                  renderOption={(props, option, { selected }) => (
+                    <li {...props}>
+                      <Checkbox style={{ marginRight: 8 }} checked={selected} />
+                      <Box>
+                        <Typography variant="body2">{option.name}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          {option.category} • {option.is_mandatory_for_field ? "Field Required" : "Optional"}
+                        </Typography>
+                      </Box>
+                    </li>
+                  )}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <FormControlLabel
+                  control={<Switch checked={designationForm.is_field_designation} onChange={(e) => setDesignationForm({ ...designationForm, is_field_designation: e.target.checked })} />}
+                  label="Field Designation"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <FormControlLabel
+                  control={<Switch checked={designationForm.requires_supervision} onChange={(e) => setDesignationForm({ ...designationForm, requires_supervision: e.target.checked })} />}
+                  label="Requires Supervision"
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 4 }}>
+                <FormControlLabel
+                  control={<Switch checked={designationForm.can_supervise_others} onChange={(e) => setDesignationForm({ ...designationForm, can_supervise_others: e.target.checked })} />}
+                  label="Can Supervise Others"
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setDesignationDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateDesignation}>
+              Create Designation
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Employee Dialog */}
+        <Dialog open={employeeDialogOpen} onClose={() => setEmployeeDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>Add New Employee</DialogTitle>
+          <DialogContent>
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Full Name" value={employeeForm.name} onChange={(e) => setEmployeeForm({ ...employeeForm, name: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Employee ID" value={employeeForm.employee_id} onChange={(e) => setEmployeeForm({ ...employeeForm, employee_id: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Email" type="email" value={employeeForm.email} onChange={(e) => setEmployeeForm({ ...employeeForm, email: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField label="Phone" value={employeeForm.phone} onChange={(e) => setEmployeeForm({ ...employeeForm, phone: e.target.value })} fullWidth required />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth required>
+                  <InputLabel>Designation</InputLabel>
+                  <Select value={employeeForm.designation} onChange={(e) => setEmployeeForm({ ...employeeForm, designation: e.target.value })} label="Designation">
+                    {designations.map((designation) => (
+                      <MenuItem key={designation.id} value={designation.id}>
+                        {designation.name} ({designation.department_name})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Date of Joining"
+                  type="date"
+                  value={employeeForm.date_of_joining}
+                  onChange={(e) => setEmployeeForm({ ...employeeForm, date_of_joining: e.target.value })}
+                  fullWidth
+                  InputLabelProps={{ shrink: true }}
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Employment Type</InputLabel>
+                  <Select value={employeeForm.employment_type} onChange={(e) => setEmployeeForm({ ...employeeForm, employment_type: e.target.value })} label="Employment Type">
+                    <MenuItem value="Full-time">Full-time</MenuItem>
+                    <MenuItem value="Part-time">Part-time</MenuItem>
+                    <MenuItem value="Contract">Contract</MenuItem>
+                    <MenuItem value="Temporary">Temporary</MenuItem>
+                    <MenuItem value="Consultant">Consultant</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12 }}>
+                <TextField label="Address" value={employeeForm.address} onChange={(e) => setEmployeeForm({ ...employeeForm, address: e.target.value })} fullWidth multiline rows={2} />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Emergency Contact Name"
+                  value={employeeForm.emergency_contact_name}
+                  onChange={(e) => setEmployeeForm({ ...employeeForm, emergency_contact_name: e.target.value })}
+                  fullWidth
+                />
+              </Grid>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <TextField
+                  label="Emergency Contact Phone"
+                  value={employeeForm.emergency_contact_phone}
+                  onChange={(e) => setEmployeeForm({ ...employeeForm, emergency_contact_phone: e.target.value })}
+                  fullWidth
+                />
+              </Grid>
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setEmployeeDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={handleCreateEmployee}>
+              Add Employee
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <ModernSnackbar open={snackbar.open} message={snackbar.message} severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })} />
       </Box>
-
-      {/* Main Content */}
-      <Paper elevation={3}>
-        <Tabs value={activeTab} onChange={(_, newValue) => setActiveTab(newValue)} sx={{ borderBottom: 1, borderColor: "divider" }}>
-          <Tab label="Dashboard" icon={<Business />} />
-          <Tab label="Departments" icon={<Business />} />
-          <Tab label="Certifications" icon={<School />} />
-          <Tab label="Designations" icon={<Assignment />} />
-          <Tab label="Employees" icon={<People />} />
-        </Tabs>
-
-        {activeTab === 0 && renderDashboardTab()}
-        {activeTab === 1 && renderDepartmentsTab()}
-        {activeTab === 2 && renderCertificationsTab()}
-        {activeTab === 3 && renderDesignationsTab()}
-        {activeTab === 4 && renderEmployeesTab()}
-      </Paper>
-
-      {/* Department Dialog */}
-      <Dialog open={departmentDialogOpen} onClose={() => setDepartmentDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Add New Department</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Department Name" value={departmentForm.name} onChange={(e) => setDepartmentForm({ ...departmentForm, name: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Department Code" value={departmentForm.code} onChange={(e) => setDepartmentForm({ ...departmentForm, code: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField label="Description" value={departmentForm.description} onChange={(e) => setDepartmentForm({ ...departmentForm, description: e.target.value })} fullWidth multiline rows={3} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Parent Department</InputLabel>
-                <Select value={departmentForm.parent_department} onChange={(e) => setDepartmentForm({ ...departmentForm, parent_department: e.target.value })} label="Parent Department">
-                  <MenuItem value="">None (Top Level)</MenuItem>
-                  {departments.map((dept) => (
-                    <MenuItem key={dept.id} value={dept.id}>
-                      {dept.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControlLabel
-                control={<Switch checked={departmentForm.is_operational} onChange={(e) => setDepartmentForm({ ...departmentForm, is_operational: e.target.checked })} />}
-                label="Operational Department"
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDepartmentDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateDepartment}>
-            Create Department
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Certification Type Dialog */}
-      <Dialog open={certificationDialogOpen} onClose={() => setCertificationDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Add New Certification Type</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Certification Name" value={certificationForm.name} onChange={(e) => setCertificationForm({ ...certificationForm, name: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Certification Code" value={certificationForm.code} onChange={(e) => setCertificationForm({ ...certificationForm, code: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Description"
-                value={certificationForm.description}
-                onChange={(e) => setCertificationForm({ ...certificationForm, description: e.target.value })}
-                fullWidth
-                multiline
-                rows={3}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Category</InputLabel>
-                <Select value={certificationForm.category} onChange={(e) => setCertificationForm({ ...certificationForm, category: e.target.value })} label="Category">
-                  <MenuItem value="Safety">Safety</MenuItem>
-                  <MenuItem value="Technical">Technical</MenuItem>
-                  <MenuItem value="Medical">Medical</MenuItem>
-                  <MenuItem value="Compliance">Compliance</MenuItem>
-                  <MenuItem value="Quality">Quality</MenuItem>
-                  <MenuItem value="Custom">Custom</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Validity Period (Days)"
-                type="number"
-                value={certificationForm.validity_period_days || ""}
-                onChange={(e) =>
-                  setCertificationForm({
-                    ...certificationForm,
-                    validity_period_days: e.target.value ? parseInt(e.target.value) : null,
-                  })
-                }
-                fullWidth
-                helperText="Leave empty for no expiry"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Advance Notification (Days)"
-                type="number"
-                value={certificationForm.advance_notification_days}
-                onChange={(e) =>
-                  setCertificationForm({
-                    ...certificationForm,
-                    advance_notification_days: parseInt(e.target.value) || 30,
-                  })
-                }
-                fullWidth
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControlLabel
-                control={<Switch checked={certificationForm.is_mandatory_for_field} onChange={(e) => setCertificationForm({ ...certificationForm, is_mandatory_for_field: e.target.checked })} />}
-                label="Mandatory for Field Work"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControlLabel
-                control={<Switch checked={certificationForm.renewal_required} onChange={(e) => setCertificationForm({ ...certificationForm, renewal_required: e.target.checked })} />}
-                label="Renewal Required"
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCertificationDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateCertificationType}>
-            Create Certification Type
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Designation Dialog */}
-      <Dialog open={designationDialogOpen} onClose={() => setDesignationDialogOpen(false)} maxWidth="lg" fullWidth>
-        <DialogTitle>Add New Designation</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Designation Name" value={designationForm.name} onChange={(e) => setDesignationForm({ ...designationForm, name: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Designation Code" value={designationForm.code} onChange={(e) => setDesignationForm({ ...designationForm, code: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Description"
-                value={designationForm.description}
-                onChange={(e) => setDesignationForm({ ...designationForm, description: e.target.value })}
-                fullWidth
-                multiline
-                rows={3}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth required>
-                <InputLabel>Department</InputLabel>
-                <Select value={designationForm.department} onChange={(e) => setDesignationForm({ ...designationForm, department: e.target.value })} label="Department">
-                  {departments.map((dept) => (
-                    <MenuItem key={dept.id} value={dept.id}>
-                      {dept.name}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Hierarchy Level"
-                type="number"
-                value={designationForm.hierarchy_level}
-                onChange={(e) =>
-                  setDesignationForm({
-                    ...designationForm,
-                    hierarchy_level: parseInt(e.target.value) || 1,
-                  })
-                }
-                fullWidth
-                inputProps={{ min: 1 }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Parent Designation</InputLabel>
-                <Select value={designationForm.parent_designation} onChange={(e) => setDesignationForm({ ...designationForm, parent_designation: e.target.value })} label="Parent Designation">
-                  <MenuItem value="">None (Top Level)</MenuItem>
-                  {designations.map((designation) => (
-                    <MenuItem key={designation.id} value={designation.id}>
-                      {designation.name} (Level {designation.hierarchy_level})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Max Team Size"
-                type="number"
-                value={designationForm.max_team_size || ""}
-                onChange={(e) =>
-                  setDesignationForm({
-                    ...designationForm,
-                    max_team_size: e.target.value ? parseInt(e.target.value) : null,
-                  })
-                }
-                fullWidth
-                helperText="Leave empty for no limit"
-              />
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <Autocomplete
-                multiple
-                options={certificationTypes}
-                getOptionLabel={(option) => option.name}
-                value={certificationTypes.filter((cert) => designationForm.required_certifications.includes(cert.id))}
-                onChange={(_, newValue) =>
-                  setDesignationForm({
-                    ...designationForm,
-                    required_certifications: newValue.map((cert) => cert.id),
-                  })
-                }
-                renderInput={(params) => <TextField {...params} label="Required Certifications" placeholder="Select certifications required for this designation" />}
-                renderOption={(props, option, { selected }) => (
-                  <li {...props}>
-                    <Checkbox style={{ marginRight: 8 }} checked={selected} />
-                    <Box>
-                      <Typography variant="body2">{option.name}</Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {option.category} • {option.is_mandatory_for_field ? "Field Required" : "Optional"}
-                      </Typography>
-                    </Box>
-                  </li>
-                )}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <FormControlLabel
-                control={<Switch checked={designationForm.is_field_designation} onChange={(e) => setDesignationForm({ ...designationForm, is_field_designation: e.target.checked })} />}
-                label="Field Designation"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <FormControlLabel
-                control={<Switch checked={designationForm.requires_supervision} onChange={(e) => setDesignationForm({ ...designationForm, requires_supervision: e.target.checked })} />}
-                label="Requires Supervision"
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 4 }}>
-              <FormControlLabel
-                control={<Switch checked={designationForm.can_supervise_others} onChange={(e) => setDesignationForm({ ...designationForm, can_supervise_others: e.target.checked })} />}
-                label="Can Supervise Others"
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDesignationDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateDesignation}>
-            Create Designation
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* Employee Dialog */}
-      <Dialog open={employeeDialogOpen} onClose={() => setEmployeeDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>Add New Employee</DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Full Name" value={employeeForm.name} onChange={(e) => setEmployeeForm({ ...employeeForm, name: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Employee ID" value={employeeForm.employee_id} onChange={(e) => setEmployeeForm({ ...employeeForm, employee_id: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Email" type="email" value={employeeForm.email} onChange={(e) => setEmployeeForm({ ...employeeForm, email: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField label="Phone" value={employeeForm.phone} onChange={(e) => setEmployeeForm({ ...employeeForm, phone: e.target.value })} fullWidth required />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth required>
-                <InputLabel>Designation</InputLabel>
-                <Select value={employeeForm.designation} onChange={(e) => setEmployeeForm({ ...employeeForm, designation: e.target.value })} label="Designation">
-                  {designations.map((designation) => (
-                    <MenuItem key={designation.id} value={designation.id}>
-                      {designation.name} ({designation.department_name})
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Date of Joining"
-                type="date"
-                value={employeeForm.date_of_joining}
-                onChange={(e) => setEmployeeForm({ ...employeeForm, date_of_joining: e.target.value })}
-                fullWidth
-                InputLabelProps={{ shrink: true }}
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Employment Type</InputLabel>
-                <Select value={employeeForm.employment_type} onChange={(e) => setEmployeeForm({ ...employeeForm, employment_type: e.target.value })} label="Employment Type">
-                  <MenuItem value="Full-time">Full-time</MenuItem>
-                  <MenuItem value="Part-time">Part-time</MenuItem>
-                  <MenuItem value="Contract">Contract</MenuItem>
-                  <MenuItem value="Temporary">Temporary</MenuItem>
-                  <MenuItem value="Consultant">Consultant</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField label="Address" value={employeeForm.address} onChange={(e) => setEmployeeForm({ ...employeeForm, address: e.target.value })} fullWidth multiline rows={2} />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Emergency Contact Name"
-                value={employeeForm.emergency_contact_name}
-                onChange={(e) => setEmployeeForm({ ...employeeForm, emergency_contact_name: e.target.value })}
-                fullWidth
-              />
-            </Grid>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <TextField
-                label="Emergency Contact Phone"
-                value={employeeForm.emergency_contact_phone}
-                onChange={(e) => setEmployeeForm({ ...employeeForm, emergency_contact_phone: e.target.value })}
-                fullWidth
-              />
-            </Grid>
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setEmployeeDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleCreateEmployee}>
-            Add Employee
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <ModernSnackbar open={snackbar.open} message={snackbar.message} severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })} />
-    </Box>
+    </FeatureGate>
   );
 };
 

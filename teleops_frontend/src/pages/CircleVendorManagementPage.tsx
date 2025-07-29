@@ -50,6 +50,7 @@ import {
   CheckCircleOutline,
 } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
+import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { ModernSnackbar } from "../components";
 import circleVendorService, { VendorRelationship, VendorInviteRequest } from "../services/circleVendorService";
 
@@ -510,12 +511,10 @@ const CircleVendorManagementPage: React.FC = () => {
 
   const handleDeleteInvitation = async (invitation: VendorInvitation) => {
     try {
-      if (invitation.status !== "Cancelled" && invitation.status !== "Expired") {
-        setSnackbar({
-          open: true,
-          message: "Only cancelled or expired invitations can be deleted",
-          severity: "error",
-        });
+      // Allow deletion of any invitation with confirmation
+      const confirmDelete = window.confirm(`Are you sure you want to delete the invitation for ${invitation.vendor_name}?`);
+
+      if (!confirmDelete) {
         return;
       }
 
@@ -655,825 +654,846 @@ const CircleVendorManagementPage: React.FC = () => {
   }
 
   return (
-    <Box sx={{ p: { xs: 2, md: 4 } }}>
-      {/* Header */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
-        <Box>
-          <Typography variant="h4" fontWeight={700}>
-            Vendor Management
-          </Typography>
-          <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-            Manage vendor relationships, invitations, and performance for {currentTenant?.circle_name} circle
+    <FeatureGate
+      featureId="vendor_view"
+      fallback={
+        <Box sx={{ p: 4, textAlign: "center" }}>
+          <Typography variant="h6" color="text.secondary">
+            You don't have permission to view vendor management
           </Typography>
         </Box>
-        <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setInviteDialogOpen(true)} sx={{ borderRadius: 2 }}>
-          Invite Vendor
-        </Button>
-      </Box>
-
-      {/* Vendor Metrics */}
-      <Grid container spacing={3} sx={{ mb: 4 }}>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Total Vendors
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600}>
-                    {vendorMetrics.onboarded_vendors}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {vendorMetrics.active_vendors} active
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.primary.main }}>
-                  <Business />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Pending Invitations
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="warning.main">
-                    {vendorMetrics.pending_invitations}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {vendorMetrics.expired_invitations} expired
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.warning.main }}>
-                  <Assessment />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Pending Approval
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="info.main">
-                    {vendorMetrics.pending_vendors}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Awaiting internal review
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.info.main }}>
-                  <Assignment />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Rejected Vendors
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="error.main">
-                    {vendorMetrics.rejected_vendors}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Registration denied
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.error.main }}>
-                  <Delete />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Avg Performance
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="success.main">
-                    {vendorMetrics.average_performance.toFixed(1)}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    {vendorMetrics.high_performers} high performers
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.success.main }}>
-                  <Star />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Monthly Spend
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="secondary.main">
-                    {formatCurrency(vendorMetrics.total_monthly_spend)}
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    Across all vendors
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.secondary.main }}>
-                  <MonetizationOn />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-        <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
-          <Card elevation={2}>
-            <CardContent>
-              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <Box>
-                  <Typography variant="body2" color="text.secondary">
-                    Performance Trend
-                  </Typography>
-                  <Typography variant="h5" fontWeight={600} color="info.main">
-                    +8.5%
-                  </Typography>
-                  <Typography variant="caption" color="text.secondary">
-                    This month
-                  </Typography>
-                </Box>
-                <Avatar sx={{ bgcolor: theme.palette.info.main }}>
-                  <TrendingUp />
-                </Avatar>
-              </Box>
-            </CardContent>
-          </Card>
-        </Grid>
-      </Grid>
-
-      {/* Loading Indicator for Data Refresh */}
-      {loading && vendors.length > 0 && <LinearProgress sx={{ mb: 2 }} />}
-
-      {/* Vendor Invitations Section */}
-      <Paper elevation={3} sx={{ mb: 4 }}>
-        <Box sx={{ p: 3 }}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-            <Typography variant="h6" fontWeight={600}>
-              Vendor Invitations
+      }
+    >
+      <Box sx={{ p: { xs: 2, md: 4 } }}>
+        {/* Header */}
+        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
+          <Box>
+            <Typography variant="h4" fontWeight={700}>
+              Vendor Management
             </Typography>
-            <Button variant="outlined" size="small" onClick={handleInvitationsRefresh} disabled={invitationsLoading} sx={{ borderRadius: 2 }}>
-              Refresh
-            </Button>
+            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+              Manage vendor relationships, invitations, and performance for {currentTenant?.circle_name} circle
+            </Typography>
           </Box>
+          <FeatureGate featureId="vendor_create">
+            <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setInviteDialogOpen(true)} sx={{ borderRadius: 2 }}>
+              Invite Vendor
+            </Button>
+          </FeatureGate>
+        </Box>
 
-          {invitationsLoading ? (
-            <LinearProgress />
-          ) : invitations.length === 0 ? (
-            <Box sx={{ textAlign: "center", py: 4 }}>
-              <Typography variant="body1" color="text.secondary">
-                No vendor invitations found
+        {/* Vendor Metrics */}
+        <Grid container spacing={3} sx={{ mb: 4 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Total Vendors
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600}>
+                      {vendorMetrics.onboarded_vendors}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {vendorMetrics.active_vendors} active
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.primary.main }}>
+                    <Business />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Pending Invitations
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="warning.main">
+                      {vendorMetrics.pending_invitations}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {vendorMetrics.expired_invitations} expired
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.warning.main }}>
+                    <Assessment />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Pending Approval
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="info.main">
+                      {vendorMetrics.pending_vendors}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Awaiting internal review
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.info.main }}>
+                    <Assignment />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Rejected Vendors
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="error.main">
+                      {vendorMetrics.rejected_vendors}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Registration denied
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.error.main }}>
+                    <Delete />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Avg Performance
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="success.main">
+                      {vendorMetrics.average_performance.toFixed(1)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {vendorMetrics.high_performers} high performers
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.success.main }}>
+                    <Star />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Monthly Spend
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="secondary.main">
+                      {formatCurrency(vendorMetrics.total_monthly_spend)}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      Across all vendors
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.secondary.main }}>
+                    <MonetizationOn />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 2.4 }}>
+            <Card elevation={2}>
+              <CardContent>
+                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <Box>
+                    <Typography variant="body2" color="text.secondary">
+                      Performance Trend
+                    </Typography>
+                    <Typography variant="h5" fontWeight={600} color="info.main">
+                      +8.5%
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      This month
+                    </Typography>
+                  </Box>
+                  <Avatar sx={{ bgcolor: theme.palette.info.main }}>
+                    <TrendingUp />
+                  </Avatar>
+                </Box>
+              </CardContent>
+            </Card>
+          </Grid>
+        </Grid>
+
+        {/* Loading Indicator for Data Refresh */}
+        {loading && vendors.length > 0 && <LinearProgress sx={{ mb: 2 }} />}
+
+        {/* Vendor Invitations Section */}
+        <Paper elevation={3} sx={{ mb: 4 }}>
+          <Box sx={{ p: 3 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+              <Typography variant="h6" fontWeight={600}>
+                Vendor Invitations
               </Typography>
-              <Typography variant="body2" color="text.secondary">
-                Use the "Invite Vendor" button to send new invitations.
-              </Typography>
+              <Button variant="outlined" size="small" onClick={handleInvitationsRefresh} disabled={invitationsLoading} sx={{ borderRadius: 2 }}>
+                Refresh
+              </Button>
             </Box>
-          ) : (
-            <TableContainer
-              sx={{
-                border: `1px solid ${theme.palette.divider}`,
-                borderRadius: 1,
-                "& .MuiTableHead-root": {
-                  backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
-                },
-                "& .MuiTableRow-hover:hover": {
-                  backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                },
-              }}
-            >
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Vendor Details</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Contact Person</TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Status
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Access Level
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Expires
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1 }}>
-                        Time Left
-                        <IconButton size="small" onClick={handleTimeRefresh} title="Refresh time calculations">
-                          🔄
-                        </IconButton>
-                      </Box>
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {invitations.map((invitation) => (
-                    <TableRow key={invitation.id} hover>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <Avatar sx={{ bgcolor: theme.palette.primary.main }}>{invitation.vendor_name.charAt(0)}</Avatar>
-                          <Box>
-                            <Typography variant="body1" fontWeight={600} color="text.primary">
-                              {invitation.vendor_name}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              Code: {invitation.vendor_code}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary" display="block">
-                              📧 {invitation.email}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" color="text.primary">
-                          {invitation.contact_name}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip
-                          label={invitation.status}
-                          size="small"
-                          sx={{
-                            bgcolor:
-                              invitation.status === "Pending"
-                                ? theme.palette.warning.main
-                                : invitation.status === "Accepted"
-                                ? theme.palette.primary.main
-                                : invitation.status === "Expired"
-                                ? theme.palette.error.main
-                                : theme.palette.grey[600],
-                            color: "white",
-                            fontWeight: 600,
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Chip label={invitation.contact_access_level} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2" color="text.primary">
-                          {formatDate(invitation.expires_at)}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {new Date(invitation.expires_at).toLocaleTimeString("en-US", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2" fontWeight={600} color={getTimeLeft(invitation.expires_at) === "Expired" ? "error.main" : "text.primary"} key={timeRefreshKey}>
-                          {getTimeLeft(invitation.expires_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <IconButton onClick={(e) => handleInvitationMenuOpen(e, invitation)} size="small">
-                          <MoreVert />
-                        </IconButton>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </Box>
-      </Paper>
 
-      {/* Vendors Section */}
-      <Paper elevation={3}>
-        <Box sx={{ p: 3 }}>
-          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-            <Typography variant="h6" fontWeight={600}>
-              Active Vendors
-            </Typography>
-            <Button variant="outlined" size="small" onClick={loadVendorRelationships} disabled={loading} sx={{ borderRadius: 2 }}>
-              Refresh
-            </Button>
-          </Box>
-
-          {/* Filters */}
-          <Grid container spacing={2} sx={{ mb: 3 }}>
-            <Grid size={{ xs: 12, sm: 6, md: 3 }}>
-              <FormControl
-                fullWidth
-                size="small"
+            {invitationsLoading ? (
+              <LinearProgress />
+            ) : invitations.length === 0 ? (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="body1" color="text.secondary">
+                  No vendor invitations found
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Use the "Invite Vendor" button to send new invitations.
+                </Typography>
+              </Box>
+            ) : (
+              <TableContainer
                 sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "transparent",
-                    "& fieldset": {
-                      borderColor: theme.palette.mode === "dark" ? theme.palette.grey[600] : theme.palette.grey[300],
-                    },
-                    "&:hover fieldset": {
-                      borderColor: theme.palette.mode === "dark" ? theme.palette.grey[500] : theme.palette.grey[400],
-                    },
-                    "&.Mui-focused fieldset": {
-                      borderColor: theme.palette.primary.main,
-                    },
+                  border: `1px solid ${theme.palette.divider}`,
+                  borderRadius: 1,
+                  "& .MuiTableHead-root": {
+                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
                   },
-                  "& .MuiInputLabel-root": {
-                    color: theme.palette.text.secondary,
+                  "& .MuiTableRow-hover:hover": {
+                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.04)",
                   },
                 }}
               >
-                <InputLabel>Status</InputLabel>
-                <Select value={statusFilter || ""} onChange={(e) => setStatusFilter(e.target.value as string)} label="Status">
-                  <MenuItem value="">All Status</MenuItem>
-                  <MenuItem value="Active">Active</MenuItem>
-                  <MenuItem value="Pending Approval">Pending Approval</MenuItem>
-                  <MenuItem value="Rejected">Rejected</MenuItem>
-                  <MenuItem value="Suspended">Suspended</MenuItem>
-                  <MenuItem value="Terminated">Terminated</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6, md: 9 }}>
-              <TextField
-                fullWidth
-                size="small"
-                placeholder="Search vendors by name, code, contact, or email..."
-                value={searchTerm || ""}
-                onChange={(e) => setSearchTerm(e.target.value || "")}
-                sx={{
-                  "& .MuiOutlinedInput-root": {
-                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "transparent",
-                    "& fieldset": {
-                      borderColor: theme.palette.mode === "dark" ? theme.palette.grey[600] : theme.palette.grey[300],
-                    },
-                    "&:hover fieldset": {
-                      borderColor: theme.palette.mode === "dark" ? theme.palette.grey[500] : theme.palette.grey[400],
-                    },
-                    "&.Mui-focused fieldset": {
-                      borderColor: theme.palette.primary.main,
-                    },
-                  },
-                  "& .MuiInputBase-input::placeholder": {
-                    color: theme.palette.text.secondary,
-                    opacity: 1,
-                  },
-                }}
-                InputProps={{
-                  startAdornment: <Search fontSize="small" sx={{ mr: 1, color: "text.secondary" }} />,
-                }}
-              />
-            </Grid>
-          </Grid>
-
-          {/* Vendors Table */}
-          {getFilteredVendors().length === 0 && !loading ? (
-            <Box sx={{ textAlign: "center", py: 8 }}>
-              <Business sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
-              <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
-                No vendors found
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-                {vendors.length === 0 ? "Start building your vendor network by inviting service providers to your circle" : "Try adjusting your search criteria or filters"}
-              </Typography>
-              {vendors.length === 0 && (
-                <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setInviteDialogOpen(true)}>
-                  Invite Your First Vendor
-                </Button>
-              )}
-            </Box>
-          ) : (
-            <TableContainer
-              sx={{
-                border: `1px solid ${theme.palette.divider}`,
-                borderRadius: 1,
-                "& .MuiTableHead-root": {
-                  backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
-                },
-                "& .MuiTableRow-hover:hover": {
-                  backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.04)",
-                },
-              }}
-            >
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Vendor Details</TableCell>
-                    <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Contact Information</TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Status
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Performance
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Access Level
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Joined Date
-                    </TableCell>
-                    <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
-                      Actions
-                    </TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {getFilteredVendors().map((vendor) => (
-                    <TableRow key={vendor.id} hover>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                          <Avatar sx={{ bgcolor: theme.palette.primary.main }}>{vendor.vendor_organization_name ? vendor.vendor_organization_name.charAt(0) : vendor.vendor_code.charAt(0)}</Avatar>
-                          <Box>
-                            <Typography variant="body1" fontWeight={600} color="text.primary">
-                              {vendor.vendor_organization_name || "Unknown Organization"}
-                            </Typography>
-                            <Typography variant="body2" color="text.secondary">
-                              Code: {vendor.vendor_code} • ID: {getVendorIdString(vendor).slice(-8)}
-                            </Typography>
-                          </Box>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Vendor Details</TableCell>
+                      <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Contact Person</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Status
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Access Level
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Expires
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1 }}>
+                          Time Left
+                          <IconButton size="small" onClick={handleTimeRefresh} title="Refresh time calculations">
+                            🔄
+                          </IconButton>
                         </Box>
                       </TableCell>
-                      <TableCell>
-                        <Box>
-                          <Typography variant="body2" color="text.primary">
-                            {vendor.contact_person_name || "Not specified"}
-                          </Typography>
-                          {vendor.vendor_email && (
-                            <Typography variant="caption" color="text.secondary">
-                              {vendor.vendor_email}
-                            </Typography>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell align="center">
-                        {(() => {
-                          const status = getConsolidatedVendorStatus(vendor);
-                          return (
-                            <Chip
-                              label={status.label}
-                              size="small"
-                              sx={{
-                                bgcolor: status.color,
-                                color: "white",
-                                fontWeight: 600,
-                                minWidth: 120,
-                              }}
-                            />
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell align="center">
-                        {vendor.performance_rating ? (
-                          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0.5 }}>
-                            <Star sx={{ fontSize: 16, color: "warning.main" }} />
-                            <Typography variant="body2" fontWeight={600} color="text.primary">
-                              {vendor.performance_rating.toFixed(1)}
-                            </Typography>
-                          </Box>
-                        ) : (
-                          <Typography variant="caption" color="text.secondary">
-                            Not rated
-                          </Typography>
-                        )}
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2" color="text.primary">
-                          {vendor.contact_access_level}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <Typography variant="body2" color="text.primary">
-                          {formatDate(vendor.created_at)}
-                        </Typography>
-                      </TableCell>
-                      <TableCell align="center">
-                        <IconButton onClick={(e) => handleVendorMenuOpen(e, vendor)} size="small">
-                          <MoreVert />
-                        </IconButton>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Actions
                       </TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-          )}
-        </Box>
-      </Paper>
+                  </TableHead>
+                  <TableBody>
+                    {invitations.map((invitation) => (
+                      <TableRow key={invitation.id} hover>
+                        <TableCell>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <Avatar sx={{ bgcolor: theme.palette.primary.main }}>{invitation.vendor_name.charAt(0)}</Avatar>
+                            <Box>
+                              <Typography variant="body1" fontWeight={600} color="text.primary">
+                                {invitation.vendor_name}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Code: {invitation.vendor_code}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" display="block">
+                                📧 {invitation.email}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" color="text.primary">
+                            {invitation.contact_name}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <Chip
+                            label={invitation.status}
+                            size="small"
+                            sx={{
+                              bgcolor:
+                                invitation.status === "Pending"
+                                  ? theme.palette.warning.main
+                                  : invitation.status === "Accepted"
+                                  ? theme.palette.primary.main
+                                  : invitation.status === "Expired"
+                                  ? theme.palette.error.main
+                                  : theme.palette.grey[600],
+                              color: "white",
+                              fontWeight: 600,
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell align="center">
+                          <Chip label={invitation.contact_access_level} size="small" variant="outlined" />
+                        </TableCell>
+                        <TableCell align="center">
+                          <Typography variant="body2" color="text.primary">
+                            {formatDate(invitation.expires_at)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(invitation.expires_at).toLocaleTimeString("en-US", {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <Typography variant="body2" fontWeight={600} color={getTimeLeft(invitation.expires_at) === "Expired" ? "error.main" : "text.primary"} key={timeRefreshKey}>
+                            {getTimeLeft(invitation.expires_at)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <IconButton onClick={(e) => handleInvitationMenuOpen(e, invitation)} size="small">
+                            <MoreVert />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        </Paper>
 
-      {/* Vendor Invitation Dialog */}
-      <Dialog open={inviteDialogOpen} onClose={() => setInviteDialogOpen(false)} maxWidth="md" fullWidth>
-        <DialogTitle>
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
-            Invite Vendor to {currentTenant?.circle_name}
-          </Typography>
-        </DialogTitle>
-        <DialogContent>
-          <Grid container spacing={3} sx={{ mt: 1 }}>
-            {/* Basic Information */}
-            <Grid size={{ xs: 12 }}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Vendor Information
+        {/* Vendors Section */}
+        <Paper elevation={3}>
+          <Box sx={{ p: 3 }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+              <Typography variant="h6" fontWeight={600}>
+                Active Vendors
               </Typography>
+              <Button variant="outlined" size="small" onClick={loadVendorRelationships} disabled={loading} sx={{ borderRadius: 2 }}>
+                Refresh
+              </Button>
+            </Box>
+
+            {/* Filters */}
+            <Grid container spacing={2} sx={{ mb: 3 }}>
+              <Grid size={{ xs: 12, sm: 6, md: 3 }}>
+                <FormControl
+                  fullWidth
+                  size="small"
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "transparent",
+                      "& fieldset": {
+                        borderColor: theme.palette.mode === "dark" ? theme.palette.grey[600] : theme.palette.grey[300],
+                      },
+                      "&:hover fieldset": {
+                        borderColor: theme.palette.mode === "dark" ? theme.palette.grey[500] : theme.palette.grey[400],
+                      },
+                      "&.Mui-focused fieldset": {
+                        borderColor: theme.palette.primary.main,
+                      },
+                    },
+                    "& .MuiInputLabel-root": {
+                      color: theme.palette.text.secondary,
+                    },
+                  }}
+                >
+                  <InputLabel>Status</InputLabel>
+                  <Select value={statusFilter || ""} onChange={(e) => setStatusFilter(e.target.value as string)} label="Status">
+                    <MenuItem value="">All Status</MenuItem>
+                    <MenuItem value="Active">Active</MenuItem>
+                    <MenuItem value="Pending Approval">Pending Approval</MenuItem>
+                    <MenuItem value="Rejected">Rejected</MenuItem>
+                    <MenuItem value="Suspended">Suspended</MenuItem>
+                    <MenuItem value="Terminated">Terminated</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              <Grid size={{ xs: 12, sm: 6, md: 9 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="Search vendors by name, code, contact, or email..."
+                  value={searchTerm || ""}
+                  onChange={(e) => setSearchTerm(e.target.value || "")}
+                  sx={{
+                    "& .MuiOutlinedInput-root": {
+                      backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "transparent",
+                      "& fieldset": {
+                        borderColor: theme.palette.mode === "dark" ? theme.palette.grey[600] : theme.palette.grey[300],
+                      },
+                      "&:hover fieldset": {
+                        borderColor: theme.palette.mode === "dark" ? theme.palette.grey[500] : theme.palette.grey[400],
+                      },
+                      "&.Mui-focused fieldset": {
+                        borderColor: theme.palette.primary.main,
+                      },
+                    },
+                    "& .MuiInputBase-input::placeholder": {
+                      color: theme.palette.text.secondary,
+                      opacity: 1,
+                    },
+                  }}
+                  InputProps={{
+                    startAdornment: <Search fontSize="small" sx={{ mr: 1, color: "text.secondary" }} />,
+                  }}
+                />
+              </Grid>
             </Grid>
 
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField label="Vendor Name" value={inviteForm.vendor_name} onChange={(e) => setInviteForm({ ...inviteForm, vendor_name: e.target.value })} fullWidth required />
-            </Grid>
+            {/* Vendors Table */}
+            {getFilteredVendors().length === 0 && !loading ? (
+              <Box sx={{ textAlign: "center", py: 8 }}>
+                <Business sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
+                <Typography variant="h6" color="text.secondary" sx={{ mb: 1 }}>
+                  No vendors found
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                  {vendors.length === 0 ? "Start building your vendor network by inviting service providers to your circle" : "Try adjusting your search criteria or filters"}
+                </Typography>
+                {vendors.length === 0 && (
+                  <Button variant="contained" startIcon={<PersonAdd />} onClick={() => setInviteDialogOpen(true)}>
+                    Invite Your First Vendor
+                  </Button>
+                )}
+              </Box>
+            ) : (
+              <TableContainer
+                sx={{
+                  border: `1px solid ${theme.palette.divider}`,
+                  borderRadius: 1,
+                  "& .MuiTableHead-root": {
+                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.05)" : "rgba(0, 0, 0, 0.04)",
+                  },
+                  "& .MuiTableRow-hover:hover": {
+                    backgroundColor: theme.palette.mode === "dark" ? "rgba(255, 255, 255, 0.08)" : "rgba(0, 0, 0, 0.04)",
+                  },
+                }}
+              >
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Vendor Details</TableCell>
+                      <TableCell sx={{ fontWeight: 600, color: theme.palette.text.primary }}>Contact Information</TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Status
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Performance
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Access Level
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Joined Date
+                      </TableCell>
+                      <TableCell align="center" sx={{ fontWeight: 600, color: theme.palette.text.primary }}>
+                        Actions
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {getFilteredVendors().map((vendor) => (
+                      <TableRow key={vendor.id} hover>
+                        <TableCell>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
+                            <Avatar sx={{ bgcolor: theme.palette.primary.main }}>{vendor.vendor_organization_name ? vendor.vendor_organization_name.charAt(0) : vendor.vendor_code.charAt(0)}</Avatar>
+                            <Box>
+                              <Typography variant="body1" fontWeight={600} color="text.primary">
+                                {vendor.vendor_organization_name || "Unknown Organization"}
+                              </Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                Code: {vendor.vendor_code} • ID: {getVendorIdString(vendor).slice(-8)}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Box>
+                            <Typography variant="body2" color="text.primary">
+                              {vendor.contact_person_name || "Not specified"}
+                            </Typography>
+                            {vendor.vendor_email && (
+                              <Typography variant="caption" color="text.secondary">
+                                {vendor.vendor_email}
+                              </Typography>
+                            )}
+                          </Box>
+                        </TableCell>
+                        <TableCell align="center">
+                          {(() => {
+                            const status = getConsolidatedVendorStatus(vendor);
+                            return (
+                              <Chip
+                                label={status.label}
+                                size="small"
+                                sx={{
+                                  bgcolor: status.color,
+                                  color: "white",
+                                  fontWeight: 600,
+                                  minWidth: 120,
+                                }}
+                              />
+                            );
+                          })()}
+                        </TableCell>
+                        <TableCell align="center">
+                          {vendor.performance_rating ? (
+                            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 0.5 }}>
+                              <Star sx={{ fontSize: 16, color: "warning.main" }} />
+                              <Typography variant="body2" fontWeight={600} color="text.primary">
+                                {vendor.performance_rating.toFixed(1)}
+                              </Typography>
+                            </Box>
+                          ) : (
+                            <Typography variant="caption" color="text.secondary">
+                              Not rated
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell align="center">
+                          <Typography variant="body2" color="text.primary">
+                            {vendor.contact_access_level}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <Typography variant="body2" color="text.primary">
+                            {formatDate(vendor.created_at)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <IconButton onClick={(e) => handleVendorMenuOpen(e, vendor)} size="small">
+                            <MoreVert />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Box>
+        </Paper>
 
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField
-                label="Vendor Code"
-                value={inviteForm.vendor_code}
-                onChange={(e) => setInviteForm({ ...inviteForm, vendor_code: e.target.value })}
-                fullWidth
-                required
-                helperText="Your internal reference code for this vendor"
-              />
-            </Grid>
+        {/* Vendor Invitation Dialog */}
+        <Dialog open={inviteDialogOpen} onClose={() => setInviteDialogOpen(false)} maxWidth="md" fullWidth>
+          <DialogTitle>
+            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+              Invite Vendor to {currentTenant?.circle_name}
+            </Typography>
+          </DialogTitle>
+          <DialogContent>
+            <Grid container spacing={3} sx={{ mt: 1 }}>
+              {/* Basic Information */}
+              <Grid size={{ xs: 12 }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Vendor Information
+                </Typography>
+              </Grid>
 
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Contact Person Name"
-                value={inviteForm.contact_person_name}
-                onChange={(e) => setInviteForm({ ...inviteForm, contact_person_name: e.target.value })}
-                fullWidth
-                required
-                helperText="Name of the person responsible for this vendor relationship"
-              />
-            </Grid>
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <TextField label="Vendor Name" value={inviteForm.vendor_name} onChange={(e) => setInviteForm({ ...inviteForm, vendor_name: e.target.value })} fullWidth required />
+              </Grid>
 
-            <Grid size={{ xs: 12 }}>
-              <TextField
-                label="Vendor Email"
-                type="email"
-                value={inviteForm.vendor_email}
-                onChange={(e) => setInviteForm({ ...inviteForm, vendor_email: e.target.value })}
-                fullWidth
-                required
-                helperText="Invitation will be sent to this email address"
-              />
-            </Grid>
-
-            {/* Access Configuration */}
-            <Grid size={{ xs: 12 }}>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Access Configuration
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Contact Access Level</InputLabel>
-                <Select value={inviteForm.contact_access_level} onChange={(e) => setInviteForm({ ...inviteForm, contact_access_level: e.target.value })}>
-                  <MenuItem value="Basic">Basic - Limited contact information</MenuItem>
-                  <MenuItem value="Full">Full - Complete contact access</MenuItem>
-                  <MenuItem value="Restricted">Restricted - Minimal contact details</MenuItem>
-                  <MenuItem value="None">None - No direct contact access</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {/* Expiry Date */}
-            <Grid size={{ xs: 12 }}>
-              <Divider sx={{ my: 2 }} />
-              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
-                Invitation Expiry
-              </Typography>
-            </Grid>
-
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Invitation Expires In</InputLabel>
-                <Select value={inviteForm.expiry_option} onChange={(e) => setInviteForm({ ...inviteForm, expiry_option: e.target.value as "1" | "3" | "7" | "14" | "30" | "custom" })}>
-                  <MenuItem value="1">1 Day</MenuItem>
-                  <MenuItem value="3">3 Days</MenuItem>
-                  <MenuItem value="7">7 Days</MenuItem>
-                  <MenuItem value="14">14 Days</MenuItem>
-                  <MenuItem value="30">30 Days</MenuItem>
-                  <MenuItem value="custom">Custom Date</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {inviteForm.expiry_option === "custom" && (
               <Grid size={{ xs: 12, sm: 6 }}>
                 <TextField
-                  label="Custom Expiry Date"
-                  type="datetime-local"
-                  value={inviteForm.custom_expiry_date}
-                  onChange={(e) => setInviteForm({ ...inviteForm, custom_expiry_date: e.target.value })}
+                  label="Vendor Code"
+                  value={inviteForm.vendor_code}
+                  onChange={(e) => setInviteForm({ ...inviteForm, vendor_code: e.target.value })}
                   fullWidth
-                  InputLabelProps={{ shrink: true }}
+                  required
+                  helperText="Your internal reference code for this vendor"
                 />
               </Grid>
-            )}
-          </Grid>
-        </DialogContent>
-        <DialogActions sx={{ p: 3, pt: 0 }}>
-          <Button onClick={() => setInviteDialogOpen(false)}>Cancel</Button>
-          <Button variant="contained" onClick={handleInviteVendor} disabled={!inviteForm.vendor_name || !inviteForm.vendor_code || !inviteForm.vendor_email}>
-            Send Invitation
-          </Button>
-        </DialogActions>
-      </Dialog>
 
-      {/* Vendor Actions Menu */}
-      <Menu anchorEl={vendorMenuAnchor} open={Boolean(vendorMenuAnchor)} onClose={handleVendorMenuClose}>
-        <MenuItem onClick={handleVendorMenuClose}>
-          <Visibility sx={{ mr: 1 }} />
-          View Details
-        </MenuItem>
-        <MenuItem onClick={handleVendorMenuClose}>
-          <Edit sx={{ mr: 1 }} />
-          Edit Relationship
-        </MenuItem>
-        <Divider />
-        <MenuItem onClick={handleVendorMenuClose}>
-          <Assessment sx={{ mr: 1 }} />
-          Performance Report
-        </MenuItem>
-        <MenuItem onClick={handleVendorMenuClose}>
-          <Assignment sx={{ mr: 1 }} />
-          Contract Details
-        </MenuItem>
-        <Divider />
-        {selectedVendor?.relationship_status === "Active" ? (
-          <MenuItem onClick={handleVendorMenuClose} sx={{ color: "warning.main" }}>
-            <Pause sx={{ mr: 1 }} />
-            Suspend Vendor
-          </MenuItem>
-        ) : selectedVendor?.relationship_status === "Suspended" ? (
-          <MenuItem onClick={handleVendorMenuClose} sx={{ color: "success.main" }}>
-            <PlayArrow sx={{ mr: 1 }} />
-            Reactivate Vendor
-          </MenuItem>
-        ) : selectedVendor?.relationship_status === "Pending_Approval" ? (
-          <MenuItem onClick={handleVendorMenuClose} sx={{ color: "success.main" }}>
-            <CheckCircleOutline sx={{ mr: 1 }} />
-            Approve Vendor
-          </MenuItem>
-        ) : null}
-        <MenuItem onClick={handleVendorMenuClose} sx={{ color: "error.main" }}>
-          <Delete sx={{ mr: 1 }} />
-          Terminate Relationship
-        </MenuItem>
-      </Menu>
-
-      {/* Vendor Invitation Actions Menu */}
-      <Menu anchorEl={invitationMenuAnchor} open={Boolean(invitationMenuAnchor)} onClose={handleInvitationMenuClose}>
-        {/* Show different options based on invitation status */}
-        {selectedInvitation?.status === "Pending" && [
-          <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)}>
-            <Email fontSize="small" sx={{ mr: 1 }} />
-            Resend Invitation
-          </MenuItem>,
-          <MenuItem key="copy" onClick={handleInvitationMenuClose}>
-            <Visibility fontSize="small" sx={{ mr: 1 }} />
-            Copy Invitation Link
-          </MenuItem>,
-          <Divider key="divider1" />,
-          <MenuItem key="cancel" onClick={() => selectedInvitation && handleCancelInvitation(selectedInvitation)} sx={{ color: "warning.main" }}>
-            <Pause fontSize="small" sx={{ mr: 1 }} />
-            Cancel Invitation
-          </MenuItem>,
-        ]}
-
-        {selectedInvitation?.status === "Accepted" && [
-          <MenuItem key="view" onClick={handleInvitationMenuClose}>
-            <Visibility fontSize="small" sx={{ mr: 1 }} />
-            View Onboarding Status
-          </MenuItem>,
-          <Divider key="divider2" />,
-          <MenuItem key="cancel" onClick={() => selectedInvitation && handleCancelInvitation(selectedInvitation)} sx={{ color: "warning.main" }}>
-            <Pause fontSize="small" sx={{ mr: 1 }} />
-            Cancel Invitation
-          </MenuItem>,
-        ]}
-
-        {selectedInvitation?.status === "Cancelled" && [
-          <MenuItem key="revoke" onClick={() => selectedInvitation && handleRevokeCancellation(selectedInvitation)} sx={{ color: "success.main" }}>
-            <PlayArrow fontSize="small" sx={{ mr: 1 }} />
-            Revoke Cancellation
-          </MenuItem>,
-          <Divider key="divider-revoke" />,
-          <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)} sx={{ color: "primary.main" }}>
-            <Email fontSize="small" sx={{ mr: 1 }} />
-            Resend Invitation
-          </MenuItem>,
-          <MenuItem key="copy" onClick={handleInvitationMenuClose}>
-            <Visibility fontSize="small" sx={{ mr: 1 }} />
-            Copy Invitation Link
-          </MenuItem>,
-          <Divider key="divider3" />,
-          <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
-            <Delete fontSize="small" sx={{ mr: 1 }} />
-            Delete Invitation
-          </MenuItem>,
-        ]}
-
-        {selectedInvitation?.status === "Expired" && [
-          <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)} sx={{ color: "primary.main" }}>
-            <Email fontSize="small" sx={{ mr: 1 }} />
-            Resend Invitation
-          </MenuItem>,
-          <MenuItem key="copy" onClick={handleInvitationMenuClose}>
-            <Visibility fontSize="small" sx={{ mr: 1 }} />
-            Copy Invitation Link
-          </MenuItem>,
-          <Divider key="divider4" />,
-          <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
-            <Delete fontSize="small" sx={{ mr: 1 }} />
-            Delete Invitation
-          </MenuItem>,
-        ]}
-      </Menu>
-
-      {/* Resend Invitation Dialog */}
-      <Dialog
-        open={openResendDialog}
-        onClose={() => {
-          setOpenResendDialog(false);
-          setResendInvitation(null);
-        }}
-        maxWidth="sm"
-        fullWidth
-      >
-        <DialogTitle>Resend Vendor Invitation</DialogTitle>
-        <DialogContent>
-          <Typography gutterBottom>
-            Set a new expiry date and time for this invitation to <strong>{resendInvitation?.vendor_name}</strong>.
-          </Typography>
-
-          <Grid container spacing={2} sx={{ mt: 1 }}>
-            <Grid size={{ xs: 12, md: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Expires In</InputLabel>
-                <Select value={resendExpiryOption} onChange={(e) => setResendExpiryOption(e.target.value)} label="Expires In">
-                  <MenuItem value="1">1 Day</MenuItem>
-                  <MenuItem value="3">3 Days</MenuItem>
-                  <MenuItem value="7">7 Days</MenuItem>
-                  <MenuItem value="14">14 Days</MenuItem>
-                  <MenuItem value="30">30 Days</MenuItem>
-                  <MenuItem value="custom">Custom Date & Time</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-
-            {resendExpiryOption === "custom" && (
-              <Grid size={{ xs: 12, md: 6 }}>
+              <Grid size={{ xs: 12 }}>
                 <TextField
+                  label="Contact Person Name"
+                  value={inviteForm.contact_person_name}
+                  onChange={(e) => setInviteForm({ ...inviteForm, contact_person_name: e.target.value })}
                   fullWidth
-                  label="Custom Expiry Date & Time"
-                  type="datetime-local"
-                  value={resendCustomExpiry}
-                  onChange={(e) => setResendCustomExpiry(e.target.value)}
-                  InputLabelProps={{ shrink: true }}
+                  required
+                  helperText="Name of the person responsible for this vendor relationship"
                 />
               </Grid>
-            )}
-          </Grid>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setOpenResendDialog(false);
-              setResendInvitation(null);
-            }}
-          >
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleConfirmResendInvitation}>
-            Resend Invitation
-          </Button>
-        </DialogActions>
-      </Dialog>
 
-      <ModernSnackbar open={snackbar.open} message={snackbar.message} severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })} />
-    </Box>
+              <Grid size={{ xs: 12 }}>
+                <TextField
+                  label="Vendor Email"
+                  type="email"
+                  value={inviteForm.vendor_email}
+                  onChange={(e) => setInviteForm({ ...inviteForm, vendor_email: e.target.value })}
+                  fullWidth
+                  required
+                  helperText="Invitation will be sent to this email address"
+                />
+              </Grid>
+
+              {/* Access Configuration */}
+              <Grid size={{ xs: 12 }}>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Access Configuration
+                </Typography>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Contact Access Level</InputLabel>
+                  <Select value={inviteForm.contact_access_level} onChange={(e) => setInviteForm({ ...inviteForm, contact_access_level: e.target.value })}>
+                    <MenuItem value="Basic">Basic - Limited contact information</MenuItem>
+                    <MenuItem value="Full">Full - Complete contact access</MenuItem>
+                    <MenuItem value="Restricted">Restricted - Minimal contact details</MenuItem>
+                    <MenuItem value="None">None - No direct contact access</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {/* Expiry Date */}
+              <Grid size={{ xs: 12 }}>
+                <Divider sx={{ my: 2 }} />
+                <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>
+                  Invitation Expiry
+                </Typography>
+              </Grid>
+
+              <Grid size={{ xs: 12, sm: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Invitation Expires In</InputLabel>
+                  <Select value={inviteForm.expiry_option} onChange={(e) => setInviteForm({ ...inviteForm, expiry_option: e.target.value as "1" | "3" | "7" | "14" | "30" | "custom" })}>
+                    <MenuItem value="1">1 Day</MenuItem>
+                    <MenuItem value="3">3 Days</MenuItem>
+                    <MenuItem value="7">7 Days</MenuItem>
+                    <MenuItem value="14">14 Days</MenuItem>
+                    <MenuItem value="30">30 Days</MenuItem>
+                    <MenuItem value="custom">Custom Date</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {inviteForm.expiry_option === "custom" && (
+                <Grid size={{ xs: 12, sm: 6 }}>
+                  <TextField
+                    label="Custom Expiry Date"
+                    type="datetime-local"
+                    value={inviteForm.custom_expiry_date}
+                    onChange={(e) => setInviteForm({ ...inviteForm, custom_expiry_date: e.target.value })}
+                    fullWidth
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+              )}
+            </Grid>
+          </DialogContent>
+          <DialogActions sx={{ p: 3, pt: 0 }}>
+            <Button onClick={() => setInviteDialogOpen(false)}>Cancel</Button>
+            <Button variant="contained" onClick={handleInviteVendor} disabled={!inviteForm.vendor_name || !inviteForm.vendor_code || !inviteForm.vendor_email}>
+              Send Invitation
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {/* Vendor Actions Menu */}
+        <Menu anchorEl={vendorMenuAnchor} open={Boolean(vendorMenuAnchor)} onClose={handleVendorMenuClose}>
+          <MenuItem onClick={handleVendorMenuClose}>
+            <Visibility sx={{ mr: 1 }} />
+            View Details
+          </MenuItem>
+          <MenuItem onClick={handleVendorMenuClose}>
+            <Edit sx={{ mr: 1 }} />
+            Edit Relationship
+          </MenuItem>
+          <Divider />
+          <MenuItem onClick={handleVendorMenuClose}>
+            <Assessment sx={{ mr: 1 }} />
+            Performance Report
+          </MenuItem>
+          <MenuItem onClick={handleVendorMenuClose}>
+            <Assignment sx={{ mr: 1 }} />
+            Contract Details
+          </MenuItem>
+          <Divider />
+          {selectedVendor?.relationship_status === "Active" ? (
+            <MenuItem onClick={handleVendorMenuClose} sx={{ color: "warning.main" }}>
+              <Pause sx={{ mr: 1 }} />
+              Suspend Vendor
+            </MenuItem>
+          ) : selectedVendor?.relationship_status === "Suspended" ? (
+            <MenuItem onClick={handleVendorMenuClose} sx={{ color: "success.main" }}>
+              <PlayArrow sx={{ mr: 1 }} />
+              Reactivate Vendor
+            </MenuItem>
+          ) : selectedVendor?.relationship_status === "Pending_Approval" ? (
+            <MenuItem onClick={handleVendorMenuClose} sx={{ color: "success.main" }}>
+              <CheckCircleOutline sx={{ mr: 1 }} />
+              Approve Vendor
+            </MenuItem>
+          ) : null}
+          <MenuItem onClick={handleVendorMenuClose} sx={{ color: "error.main" }}>
+            <Delete sx={{ mr: 1 }} />
+            Terminate Relationship
+          </MenuItem>
+        </Menu>
+
+        {/* Vendor Invitation Actions Menu */}
+        <Menu anchorEl={invitationMenuAnchor} open={Boolean(invitationMenuAnchor)} onClose={handleInvitationMenuClose}>
+          {/* Show different options based on invitation status */}
+          {selectedInvitation?.status === "Pending" && [
+            <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)}>
+              <Email fontSize="small" sx={{ mr: 1 }} />
+              Resend Invitation
+            </MenuItem>,
+            <MenuItem key="copy" onClick={handleInvitationMenuClose}>
+              <Visibility fontSize="small" sx={{ mr: 1 }} />
+              Copy Invitation Link
+            </MenuItem>,
+            <Divider key="divider1" />,
+            <MenuItem key="cancel" onClick={() => selectedInvitation && handleCancelInvitation(selectedInvitation)} sx={{ color: "warning.main" }}>
+              <Pause fontSize="small" sx={{ mr: 1 }} />
+              Cancel Invitation
+            </MenuItem>,
+            <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
+              <Delete fontSize="small" sx={{ mr: 1 }} />
+              Delete Invitation
+            </MenuItem>,
+          ]}
+
+          {selectedInvitation?.status === "Accepted" && [
+            <MenuItem key="view" onClick={handleInvitationMenuClose}>
+              <Visibility fontSize="small" sx={{ mr: 1 }} />
+              View Onboarding Status
+            </MenuItem>,
+            <Divider key="divider2" />,
+            <MenuItem key="cancel" onClick={() => selectedInvitation && handleCancelInvitation(selectedInvitation)} sx={{ color: "warning.main" }}>
+              <Pause fontSize="small" sx={{ mr: 1 }} />
+              Cancel Invitation
+            </MenuItem>,
+            <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
+              <Delete fontSize="small" sx={{ mr: 1 }} />
+              Delete Invitation
+            </MenuItem>,
+          ]}
+
+          {selectedInvitation?.status === "Cancelled" && [
+            <MenuItem key="revoke" onClick={() => selectedInvitation && handleRevokeCancellation(selectedInvitation)} sx={{ color: "success.main" }}>
+              <PlayArrow fontSize="small" sx={{ mr: 1 }} />
+              Revoke Cancellation
+            </MenuItem>,
+            <Divider key="divider-revoke" />,
+            <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)} sx={{ color: "primary.main" }}>
+              <Email fontSize="small" sx={{ mr: 1 }} />
+              Resend Invitation
+            </MenuItem>,
+            <MenuItem key="copy" onClick={handleInvitationMenuClose}>
+              <Visibility fontSize="small" sx={{ mr: 1 }} />
+              Copy Invitation Link
+            </MenuItem>,
+            <Divider key="divider3" />,
+            <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
+              <Delete fontSize="small" sx={{ mr: 1 }} />
+              Delete Invitation
+            </MenuItem>,
+          ]}
+
+          {selectedInvitation?.status === "Expired" && [
+            <MenuItem key="resend" onClick={() => selectedInvitation && handleResendInvitation(selectedInvitation)} sx={{ color: "primary.main" }}>
+              <Email fontSize="small" sx={{ mr: 1 }} />
+              Resend Invitation
+            </MenuItem>,
+            <MenuItem key="copy" onClick={handleInvitationMenuClose}>
+              <Visibility fontSize="small" sx={{ mr: 1 }} />
+              Copy Invitation Link
+            </MenuItem>,
+            <Divider key="divider4" />,
+            <MenuItem key="delete" onClick={() => selectedInvitation && handleDeleteInvitation(selectedInvitation)} sx={{ color: "error.main" }}>
+              <Delete fontSize="small" sx={{ mr: 1 }} />
+              Delete Invitation
+            </MenuItem>,
+          ]}
+        </Menu>
+
+        {/* Resend Invitation Dialog */}
+        <Dialog
+          open={openResendDialog}
+          onClose={() => {
+            setOpenResendDialog(false);
+            setResendInvitation(null);
+          }}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Resend Vendor Invitation</DialogTitle>
+          <DialogContent>
+            <Typography gutterBottom>
+              Set a new expiry date and time for this invitation to <strong>{resendInvitation?.vendor_name}</strong>.
+            </Typography>
+
+            <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid size={{ xs: 12, md: 6 }}>
+                <FormControl fullWidth>
+                  <InputLabel>Expires In</InputLabel>
+                  <Select value={resendExpiryOption} onChange={(e) => setResendExpiryOption(e.target.value)} label="Expires In">
+                    <MenuItem value="1">1 Day</MenuItem>
+                    <MenuItem value="3">3 Days</MenuItem>
+                    <MenuItem value="7">7 Days</MenuItem>
+                    <MenuItem value="14">14 Days</MenuItem>
+                    <MenuItem value="30">30 Days</MenuItem>
+                    <MenuItem value="custom">Custom Date & Time</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+
+              {resendExpiryOption === "custom" && (
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Custom Expiry Date & Time"
+                    type="datetime-local"
+                    value={resendCustomExpiry}
+                    onChange={(e) => setResendCustomExpiry(e.target.value)}
+                    InputLabelProps={{ shrink: true }}
+                  />
+                </Grid>
+              )}
+            </Grid>
+          </DialogContent>
+          <DialogActions>
+            <Button
+              onClick={() => {
+                setOpenResendDialog(false);
+                setResendInvitation(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button variant="contained" onClick={handleConfirmResendInvitation}>
+              Resend Invitation
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        <ModernSnackbar open={snackbar.open} message={snackbar.message} severity={snackbar.severity} onClose={() => setSnackbar({ ...snackbar, open: false })} />
+      </Box>
+    </FeatureGate>
   );
 };
 
