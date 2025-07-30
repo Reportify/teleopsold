@@ -28,6 +28,24 @@ RESOURCE_TYPE_CHOICES = [
     (key, value) for key, value in RESOURCE_TYPES.items()
 ]
 
+# Permission Level to Actions Mapping
+PERMISSION_ACTIONS = {
+    "view_only": ["read"],
+    "creator_only": ["read", "create"],
+    "contributor": ["read", "create", "update"],
+    "full_access": ["read", "create", "update", "delete"],
+    "custom": [],  # Custom permissions can define their own actions
+}
+
+# Business Template to Actions Mapping (alternative names)
+BUSINESS_TEMPLATE_ACTIONS = {
+    "view_only": ["read"],
+    "creator_only": ["read", "create"],
+    "contributor": ["read", "create", "update"],
+    "full_access": ["read", "create", "update", "delete"],
+    "custom": [],
+}
+
 # Frontend format with additional metadata
 RESOURCE_TYPES_FRONTEND = [
     {'value': 'project', 'label': 'Project Management', 'icon': '📋', 'description': 'Project creation, tracking, and management'},

@@ -104,7 +104,12 @@ export const useRBAC = (): UseRBACReturn => {
     async (params?: any): Promise<Permission[]> => {
       try {
         updateState({ loading: true, error: null });
-        const response = await rbacAPI.getPermissions(params);
+        // Ensure we fetch all permissions by setting a large page_size
+        const queryParams = {
+          ...params,
+          page_size: 1000, // Set large page size to get all permissions
+        };
+        const response = await rbacAPI.getPermissions(queryParams);
         const permissions = response.results || response;
         const totalPermissions = response.count || permissions.length;
         updateState({

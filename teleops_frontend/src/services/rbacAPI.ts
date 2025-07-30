@@ -279,7 +279,12 @@ class RBACAPIService {
     page?: number;
     page_size?: number;
   }): Promise<{ results: Permission[]; count: number; next?: string; previous?: string }> {
-    const response = await api.get(`${this.baseURL}/permissions/`, { params });
+    // Ensure we fetch all permissions by setting a large page_size if not specified
+    const queryParams = {
+      page_size: 1000, // Default to get all permissions
+      ...params,
+    };
+    const response = await api.get(`${this.baseURL}/permissions/`, { params: queryParams });
     return response.data;
   }
 
@@ -697,8 +702,24 @@ export const deletePermissionCategory = async (id: number) => {
 };
 
 // Permissions
-export const getPermissions = async () => {
-  const response = await api.get("/tenants/rbac/permissions/");
+export const getPermissions = async (params?: any) => {
+  // Ensure we fetch all permissions by setting a large page_size if not specified
+  const queryParams = {
+    page_size: 1000, // Default to get all permissions
+    ...params,
+  };
+
+  const searchParams = new URLSearchParams();
+  Object.entries(queryParams).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      searchParams.append(key, String(value));
+    }
+  });
+
+  const queryString = searchParams.toString();
+  const url = queryString ? `/tenants/rbac/permissions/?${queryString}` : "/tenants/rbac/permissions/";
+
+  const response = await api.get(url);
   return response.data;
 };
 

@@ -6,12 +6,21 @@
 import React, { useCallback, useMemo } from "react";
 import { useAuth } from "../contexts/AuthContext";
 
+// Permission Level to Actions Mapping
+const PERMISSION_ACTIONS = {
+  view_only: ["read"],
+  creator_only: ["read", "create"],
+  contributor: ["read", "create", "update"],
+  full_access: ["read", "create", "update", "delete"],
+  custom: [] as string[],
+};
+
 // Feature definitions that map to backend registry
 interface FeatureDefinition {
   featureId: string;
   featureName: string;
   resourceType: string;
-  requiredPermissions: string[];
+  requiredActions: string[];
   description: string;
 }
 
@@ -22,28 +31,28 @@ const FRONTEND_FEATURES: Record<string, FeatureDefinition> = {
     featureId: "deviation_view",
     featureName: "View Deviations",
     resourceType: "deviation",
-    requiredPermissions: ["deviation.view"],
+    requiredActions: ["read"],
     description: "View deviation records and reports",
   },
   deviation_edit: {
     featureId: "deviation_edit",
     featureName: "Edit Deviations",
     resourceType: "deviation",
-    requiredPermissions: ["deviation.edit"],
+    requiredActions: ["update"],
     description: "Modify existing deviation records",
   },
   deviation_create: {
     featureId: "deviation_create",
     featureName: "Create Deviations",
     resourceType: "deviation",
-    requiredPermissions: ["deviation.create"],
+    requiredActions: ["create"],
     description: "Create new deviation records",
   },
   deviation_approve: {
     featureId: "deviation_approve",
     featureName: "Approve Deviations",
     resourceType: "deviation",
-    requiredPermissions: ["deviation.approve"],
+    requiredActions: ["update"],
     description: "Approve or reject deviation requests",
   },
 
@@ -52,7 +61,7 @@ const FRONTEND_FEATURES: Record<string, FeatureDefinition> = {
     featureId: "project_view",
     featureName: "View Projects",
     resourceType: "project",
-    requiredPermissions: ["project.view", "project_management.view_projects"],
+    requiredActions: ["read"],
     description: "View project information and status",
   },
 
@@ -61,17 +70,163 @@ const FRONTEND_FEATURES: Record<string, FeatureDefinition> = {
     featureId: "site_view",
     featureName: "View Sites",
     resourceType: "site",
-    requiredPermissions: ["site.view", "site_management.view_sites"],
+    requiredActions: ["read"],
     description: "View site information and locations",
+  },
+
+  // User Management
+  user_view: {
+    featureId: "user_view",
+    featureName: "View Users",
+    resourceType: "user",
+    requiredActions: ["read"],
+    description: "View user profiles and information",
+  },
+  user_create: {
+    featureId: "user_create",
+    featureName: "Create Users",
+    resourceType: "user",
+    requiredActions: ["create"],
+    description: "Add new users to the system",
+  },
+  user_edit: {
+    featureId: "user_edit",
+    featureName: "Edit Users",
+    resourceType: "user",
+    requiredActions: ["update"],
+    description: "Modify user profiles and settings",
+  },
+  user_deactivate: {
+    featureId: "user_deactivate",
+    featureName: "Deactivate Users",
+    resourceType: "user",
+    requiredActions: ["delete"],
+    description: "Deactivate or suspend user accounts",
+  },
+
+  // Vendor Management
+  vendor_view: {
+    featureId: "vendor_view",
+    featureName: "View Vendors",
+    resourceType: "vendor",
+    requiredActions: ["read"],
+    description: "View vendor information and relationships",
+  },
+  vendor_create: {
+    featureId: "vendor_create",
+    featureName: "Create Vendors",
+    resourceType: "vendor",
+    requiredActions: ["create"],
+    description: "Add new vendors and establish relationships",
+  },
+  vendor_edit: {
+    featureId: "vendor_edit",
+    featureName: "Edit Vendors",
+    resourceType: "vendor",
+    requiredActions: ["update"],
+    description: "Modify vendor information and contracts",
+  },
+  vendor_delete: {
+    featureId: "vendor_delete",
+    featureName: "Delete Vendors",
+    resourceType: "vendor",
+    requiredActions: ["delete"],
+    description: "Remove vendors from the system",
+  },
+  vendor_oversight: {
+    featureId: "vendor_oversight",
+    featureName: "Vendor Oversight",
+    resourceType: "vendor",
+    requiredActions: ["read"],
+    description: "Monitor vendor performance and compliance",
+  },
+
+  // Task Management
+  task_view: {
+    featureId: "task_view",
+    featureName: "View Tasks",
+    resourceType: "task",
+    requiredActions: ["read"],
+    description: "View task assignments and progress",
+  },
+  task_create: {
+    featureId: "task_create",
+    featureName: "Create Tasks",
+    resourceType: "task",
+    requiredActions: ["create"],
+    description: "Create new tasks and assignments",
+  },
+  task_edit: {
+    featureId: "task_edit",
+    featureName: "Edit Tasks",
+    resourceType: "task",
+    requiredActions: ["update"],
+    description: "Assign and modify task details",
   },
 
   // RBAC Management
   rbac_permissions_view: {
     featureId: "rbac_permissions_view",
     featureName: "View RBAC Permissions",
-    resourceType: "system",
-    requiredPermissions: ["rbac_management.view_permissions"],
+    resourceType: "rbac",
+    requiredActions: ["read"],
     description: "View permission system dashboard",
+  },
+  rbac_permissions_create: {
+    featureId: "rbac_permissions_create",
+    featureName: "Create RBAC Permissions",
+    resourceType: "rbac",
+    requiredActions: ["create"],
+    description: "Create new permissions in the system",
+  },
+  rbac_permissions_edit: {
+    featureId: "rbac_permissions_edit",
+    featureName: "Edit RBAC Permissions",
+    resourceType: "rbac",
+    requiredActions: ["update"],
+    description: "Edit existing permissions",
+  },
+  rbac_permissions_delete: {
+    featureId: "rbac_permissions_delete",
+    featureName: "Delete RBAC Permissions",
+    resourceType: "rbac",
+    requiredActions: ["delete"],
+    description: "Delete permissions from the system",
+  },
+  rbac_permissions_grant: {
+    featureId: "rbac_permissions_grant",
+    featureName: "Grant Permissions",
+    resourceType: "rbac",
+    requiredActions: ["update"],
+    description: "Grant permissions to users, groups, or designations",
+  },
+  rbac_permissions_revoke: {
+    featureId: "rbac_permissions_revoke",
+    featureName: "Revoke Permissions",
+    resourceType: "rbac",
+    requiredActions: ["update"],
+    description: "Revoke permissions from users, groups, or designations",
+  },
+  rbac_audit_trail: {
+    featureId: "rbac_audit_trail",
+    featureName: "View Audit Trail",
+    resourceType: "rbac",
+    requiredActions: ["read"],
+    description: "View audit logs for permission changes",
+  },
+  rbac_groups_manage: {
+    featureId: "rbac_groups_manage",
+    featureName: "Manage Permission Groups",
+    resourceType: "rbac",
+    requiredActions: ["update"],
+    description: "Create and manage permission groups",
+  },
+  rbac_designations_manage: {
+    featureId: "rbac_designations_manage",
+    featureName: "Manage Designation Permissions",
+    resourceType: "rbac",
+    requiredActions: ["update"],
+    description: "Manage permissions assigned to designations",
   },
 };
 
@@ -111,7 +266,48 @@ const COMPONENT_FEATURE_MAP: Record<string, string[]> = {
 };
 
 export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
-  const { hasPermission: authHasPermission } = useAuth();
+  const { hasPermission: authHasPermission, getUserPermissions } = useAuth();
+
+  // Helper function to determine business template from permission code
+  const getBusinessTemplateFromCode = useCallback((permissionCode: string): string => {
+    // Map permission codes to business templates based on action patterns
+    if (permissionCode.endsWith(".read")) return "view_only";
+    if (permissionCode.endsWith(".read_create")) return "creator_only";
+    if (permissionCode.endsWith(".read_create_update")) return "contributor";
+    if (permissionCode.endsWith(".read_create_update_delete")) return "full_access";
+
+    // Legacy patterns
+    if (permissionCode.includes(".view") && !permissionCode.includes(".edit") && !permissionCode.includes(".create") && !permissionCode.includes(".delete")) return "view_only";
+    if (permissionCode.includes(".create") && !permissionCode.includes(".edit") && !permissionCode.includes(".delete")) return "creator_only";
+    if (permissionCode.includes(".edit") && !permissionCode.includes(".delete")) return "contributor";
+    if (permissionCode.includes(".delete") || permissionCode.includes(".manage")) return "full_access";
+
+    // Default to custom for unknown patterns
+    return "custom";
+  }, []);
+
+  // Helper function to check if user has required actions for a resource type
+  const hasResourceActions = useCallback(
+    (resourceType: string, requiredActions: string[]): boolean => {
+      const userPermissions = getUserPermissions();
+      if (!userPermissions || userPermissions.length === 0) return false;
+
+      // Find permissions for this resource type and check their business templates
+      const resourcePermissions = userPermissions.filter((permission: string) => {
+        return permission.toLowerCase().includes(resourceType.toLowerCase());
+      });
+
+      // Check if any of the user's permissions for this resource type provide the required actions
+      return resourcePermissions.some((permissionCode: string) => {
+        const businessTemplate = getBusinessTemplateFromCode(permissionCode);
+        const availableActions = PERMISSION_ACTIONS[businessTemplate as keyof typeof PERMISSION_ACTIONS] || [];
+
+        // Check if all required actions are available in this permission's business template
+        return requiredActions.every((action) => availableActions.includes(action));
+      });
+    },
+    [getUserPermissions, getBusinessTemplateFromCode]
+  );
 
   const hasFeatureAccess = useCallback(
     (featureId: string): boolean => {
@@ -121,10 +317,10 @@ export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
         return false;
       }
 
-      // User needs ANY of the required permissions
-      return feature.requiredPermissions.some((permission) => authHasPermission(permission));
+      // Check if user has required actions for this resource type
+      return hasResourceActions(feature.resourceType, feature.requiredActions);
     },
-    [authHasPermission]
+    [hasResourceActions]
   );
 
   const getAccessibleFeatures = useCallback((): FeatureDefinition[] => {
@@ -133,18 +329,15 @@ export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
 
   const hasResourcePermission = useCallback(
     (resourceType: string, action?: string): boolean => {
-      const relevantFeatures = Object.values(FRONTEND_FEATURES).filter((feature) => feature.resourceType === resourceType);
-
       if (action) {
-        // Filter by action if specified (e.g., 'view', 'edit', 'create')
-        const actionFeatures = relevantFeatures.filter((feature) => feature.requiredPermissions.some((perm) => perm.endsWith(`.${action}`)));
-        return actionFeatures.some((feature) => hasFeatureAccess(feature.featureId));
+        // Check for specific action
+        return hasResourceActions(resourceType, [action]);
       }
 
-      // Check if user has ANY permission for this resource type
-      return relevantFeatures.some((feature) => hasFeatureAccess(feature.featureId));
+      // Check if user has ANY permission for this resource type (default to read)
+      return hasResourceActions(resourceType, ["read"]);
     },
-    [hasFeatureAccess]
+    [hasResourceActions]
   );
 
   const getResourcePermissions = useCallback(
@@ -153,7 +346,7 @@ export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
 
       const permissions = new Set<string>();
       relevantFeatures.forEach((feature) => {
-        feature.requiredPermissions.forEach((perm) => permissions.add(perm));
+        feature.requiredActions.forEach((action) => permissions.add(action));
       });
 
       return Array.from(permissions);
@@ -183,7 +376,7 @@ export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
       featureIds.forEach((featureId) => {
         const feature = FRONTEND_FEATURES[featureId];
         if (feature && hasFeatureAccess(featureId)) {
-          feature.requiredPermissions.forEach((perm) => permissions.add(perm));
+          feature.requiredActions.forEach((action) => permissions.add(action));
         }
       });
 
@@ -193,7 +386,7 @@ export const useFeaturePermissions = (): UseFeaturePermissionsReturn => {
   );
 
   const getPermissionInfo = useCallback((permissionCode: string) => {
-    const relatedFeatures = Object.values(FRONTEND_FEATURES).filter((feature) => feature.requiredPermissions.includes(permissionCode));
+    const relatedFeatures = Object.values(FRONTEND_FEATURES).filter((feature) => feature.requiredActions.includes(permissionCode));
 
     return {
       isMapped: relatedFeatures.length > 0,

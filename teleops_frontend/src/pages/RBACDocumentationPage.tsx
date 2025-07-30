@@ -921,7 +921,7 @@ console.log('Feature Registry:', window.featureRegistry);`}
 
     K --> L
     L --> M
-    
+
     N --> O
     O --> P
 

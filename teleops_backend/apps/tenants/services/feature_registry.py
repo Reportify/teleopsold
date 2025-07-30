@@ -6,6 +6,7 @@ Maps permissions to actual application functionality
 from typing import Dict, List, Set
 from dataclasses import dataclass
 from django.conf import settings
+from apps.tenants.constants import BUSINESS_TEMPLATE_ACTIONS
 
 @dataclass
 class FeatureDefinition:
@@ -15,7 +16,7 @@ class FeatureDefinition:
     resource_type: str
     component_path: str  # Frontend component path
     api_endpoints: List[str]  # Backend API endpoints
-    required_permissions: List[str]  # Permission codes needed
+    required_actions: List[str]  # Actions needed (read, create, update, delete)
     description: str
 
 @dataclass 
@@ -49,7 +50,7 @@ class FeatureRegistry:
                 "/api/v1/deviations/",
                 "/api/v1/deviations/{id}/",
             ],
-            required_permissions=["deviation.view"],
+            required_actions=["read"],
             description="View deviation records and reports"
         ))
         
@@ -62,7 +63,7 @@ class FeatureRegistry:
                 "/api/v1/deviations/{id}/",
                 "/api/v1/deviations/{id}/update/",
             ],
-            required_permissions=["deviation.edit"],
+            required_actions=["update"],
             description="Modify existing deviation records"
         ))
         
@@ -75,7 +76,7 @@ class FeatureRegistry:
                 "/api/v1/deviations/",
                 "/api/v1/deviations/create/",
             ],
-            required_permissions=["deviation.create"],
+            required_actions=["create"],
             description="Create new deviation records"
         ))
         
@@ -88,7 +89,7 @@ class FeatureRegistry:
                 "/api/v1/deviations/{id}/approve/",
                 "/api/v1/deviations/{id}/reject/",
             ],
-            required_permissions=["deviation.approve"],
+            required_actions=["update"],
             description="Approve or reject deviation requests"
         ))
         
@@ -102,7 +103,7 @@ class FeatureRegistry:
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
             api_endpoints=["/api/v1/vendor-operations/", "/api/v1/circle-vendor-relationships/"],
-            required_permissions=["vendor_management.view_vendors"],
+            required_actions=["read"],
             description="View vendor information and relationships"
         ))
         
@@ -112,7 +113,7 @@ class FeatureRegistry:
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
             api_endpoints=["/api/v1/vendor-operations/{id}/", "/api/v1/circle-vendor-relationships/{id}/"],
-            required_permissions=["vendor.edit", "vendor_management.edit_vendors"],
+            required_actions=["update"],
             description="Modify vendor information and contracts"
         ))
         
@@ -122,8 +123,18 @@ class FeatureRegistry:
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
             api_endpoints=["/api/v1/vendor-operations/", "/api/v1/circle-vendor-relationships/"],
-            required_permissions=["vendor.create", "vendor_management.create_vendors"],
+            required_actions=["create"],
             description="Add new vendors and establish relationships"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="vendor_delete",
+            feature_name="Delete Vendors",
+            resource_type="vendor",
+            component_path="pages/VendorOperationsManagementPage",
+            api_endpoints=["/api/v1/vendor-operations/{id}/delete/"],
+            required_actions=["delete"],
+            description="Remove vendors from the system"
         ))
         
         self.register_feature(FeatureDefinition(
@@ -132,7 +143,7 @@ class FeatureRegistry:
             resource_type="vendor",
             component_path="pages/VendorOversightPage",
             api_endpoints=["/api/v1/vendor-operations/oversight/", "/api/v1/vendor-operations/analytics/"],
-            required_permissions=["vendor.oversight", "vendor_management.oversight"],
+            required_actions=["read"],
             description="Monitor vendor performance and compliance"
         ))
 
@@ -145,7 +156,7 @@ class FeatureRegistry:
             resource_type="user",
             component_path="pages/CircleUserManagementPage",
             api_endpoints=["/api/v1/tenant/users/", "/api/v1/tenant/profile/"],
-            required_permissions=["user.view", "user_management.view_users"],
+            required_actions=["read"],
             description="View user profiles and information"
         ))
         
@@ -155,7 +166,7 @@ class FeatureRegistry:
             resource_type="user",
             component_path="pages/CircleUserManagementPage",
             api_endpoints=["/api/v1/tenant/users/{id}/", "/api/v1/tenant/profile/"],
-            required_permissions=["user.edit", "user_management.edit_users"],
+            required_actions=["update"],
             description="Modify user profiles and settings"
         ))
         
@@ -165,7 +176,7 @@ class FeatureRegistry:
             resource_type="user",
             component_path="pages/CircleUserManagementPage",
             api_endpoints=["/api/v1/tenant/users/", "/api/v1/auth/register/"],
-            required_permissions=["user.create", "user_management.create_users"],
+            required_actions=["create"],
             description="Add new users to the system"
         ))
         
@@ -175,7 +186,7 @@ class FeatureRegistry:
             resource_type="user",
             component_path="pages/CircleUserManagementPage",
             api_endpoints=["/api/v1/tenant/users/{id}/deactivate/"],
-            required_permissions=["user.deactivate", "user_management.deactivate_users"],
+            required_actions=["delete"],
             description="Deactivate or suspend user accounts"
         ))
 
@@ -188,7 +199,7 @@ class FeatureRegistry:
             resource_type="site",
             component_path="pages/SitesPage",
             api_endpoints=["/api/v1/sites/"],
-            required_permissions=["site_management.view_sites"],
+            required_actions=["read"],
             description="View site information and locations"
         ))
         
@@ -198,7 +209,7 @@ class FeatureRegistry:
             resource_type="site",
             component_path="pages/SitesPage",
             api_endpoints=["/api/v1/sites/{id}/"],
-            required_permissions=["site_management.edit_sites"],
+            required_actions=["update"],
             description="Modify site details and configurations"
         ))
         
@@ -208,7 +219,7 @@ class FeatureRegistry:
             resource_type="site",
             component_path="pages/SitesPage",
             api_endpoints=["/api/v1/sites/"],
-            required_permissions=["site_management.create_sites"],
+            required_actions=["create"],
             description="Add new sites to the system"
         ))
         
@@ -218,7 +229,7 @@ class FeatureRegistry:
             resource_type="site",
             component_path="pages/SitesPage",
             api_endpoints=["/api/v1/sites/bulk-upload/"],
-            required_permissions=["site_management.bulk_operations", "site_management.bulk_upload_sites"],
+            required_actions=["create"],
             description="Upload multiple sites via bulk operations"
         ))
 
@@ -231,7 +242,7 @@ class FeatureRegistry:
             resource_type="project",
             component_path="pages/ProjectsPage",
             api_endpoints=["/api/v1/projects/"],
-            required_permissions=["project_management.view_projects"],
+            required_actions=["read"],
             description="View project information and status"
         ))
         
@@ -241,7 +252,7 @@ class FeatureRegistry:
             resource_type="project",
             component_path="pages/ProjectsPage",
             api_endpoints=["/api/v1/projects/{id}/"],
-            required_permissions=["project_management.edit_projects", "project_management.archive_projects"],
+            required_actions=["update"],
             description="Modify project details and configurations"
         ))
         
@@ -251,7 +262,7 @@ class FeatureRegistry:
             resource_type="project",
             component_path="pages/ProjectsPage",
             api_endpoints=["/api/v1/projects/"],
-            required_permissions=["project_management.create_projects"],
+            required_actions=["create"],
             description="Create new projects and initiatives"
         ))
         
@@ -261,7 +272,7 @@ class FeatureRegistry:
             resource_type="project",
             component_path="pages/ProjectsPage",
             api_endpoints=["/api/v1/team-members/"],
-            required_permissions=["project_management.manage_teams"],
+            required_actions=["update"],
             description="Add and manage project team members"
         ))
 
@@ -274,7 +285,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/tasks/"],
-            required_permissions=["task_management.view_tasks"],
+            required_actions=["read"],
             description="View task lists and details"
         ))
         
@@ -284,7 +295,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/tasks/{id}/"],
-            required_permissions=["task.edit", "task_management.edit_tasks", "task_management.update_status"],
+            required_actions=["update"],
             description="Modify task details and status"
         ))
         
@@ -294,7 +305,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/tasks/"],
-            required_permissions=["task.create", "task_management.create_tasks"],
+            required_actions=["create"],
             description="Create new tasks and assignments"
         ))
         
@@ -304,7 +315,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/tasks/{id}/assign/"],
-            required_permissions=["task.assign", "task_management.assign_tasks"],
+            required_actions=["update"],
             description="Assign tasks to team members"
         ))
         
@@ -314,7 +325,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/task-comments/"],
-            required_permissions=["task.comment", "task_management.comment"],
+            required_actions=["create"],
             description="Add comments and updates to tasks"
         ))
         
@@ -324,7 +335,7 @@ class FeatureRegistry:
             resource_type="task",
             component_path="pages/TasksPage",
             api_endpoints=["/api/v1/task-templates/"],
-            required_permissions=["task.manage_templates", "task_management.manage_templates"],
+            required_actions=["update"],
             description="Create and manage task templates"
         ))
 
@@ -337,7 +348,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/ComprehensivePermissionDashboard",
             api_endpoints=["/api/v1/tenants/rbac/groups/comprehensive_dashboard/"],
-            required_permissions=["rbac_management.view_permissions"],
+            required_actions=["read"],
             description="View permission system dashboard"
         ))
         
@@ -347,7 +358,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/PermissionRegistryPage",
             api_endpoints=["/api/v1/tenants/rbac/permissions/"],
-            required_permissions=["rbac_management.create_permissions"],
+            required_actions=["create"],
             description="Create new permissions in the system"
         ))
         
@@ -357,7 +368,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/PermissionRegistryPage",
             api_endpoints=["/api/v1/tenants/rbac/permissions/"],
-            required_permissions=["rbac_management.edit_permissions", "rbac_management.manage_permissions"],
+            required_actions=["update"],
             description="Edit existing permissions"
         ))
         
@@ -367,7 +378,7 @@ class FeatureRegistry:
             resource_type="rbac", 
             component_path="pages/PermissionRegistryPage",
             api_endpoints=["/api/v1/tenants/rbac/permissions/"],
-            required_permissions=["rbac_management.delete_permissions"],
+            required_actions=["delete"],
             description="Delete permissions from the system"
         ))
         
@@ -377,7 +388,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/ComprehensivePermissionDashboard", 
             api_endpoints=["/api/v1/tenants/rbac/groups/bulk_grant/"],
-            required_permissions=["rbac_management.grant_permissions"],
+            required_actions=["update"],
             description="Grant permissions to users, groups, or designations"
         ))
         
@@ -387,7 +398,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/ComprehensivePermissionDashboard",
             api_endpoints=["/api/v1/tenants/rbac/groups/bulk_revoke/"],
-            required_permissions=["rbac_management.revoke_permissions"],
+            required_actions=["update"],
             description="Revoke permissions from users, groups, or designations"
         ))
         
@@ -397,7 +408,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/ComprehensivePermissionDashboard",
             api_endpoints=["/api/v1/tenants/rbac/audit/"],
-            required_permissions=["rbac_management.view_audit_trail"],
+            required_actions=["read"],
             description="View audit logs for permission changes"
         ))
         
@@ -407,7 +418,7 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/PermissionGroupsPage",
             api_endpoints=["/api/v1/tenants/rbac/groups/"],
-            required_permissions=["rbac_management.manage_groups"],
+            required_actions=["update"],
             description="Create and manage permission groups"
         ))
         
@@ -417,29 +428,75 @@ class FeatureRegistry:
             resource_type="rbac",
             component_path="pages/DesignationPermissionPage",
             api_endpoints=["/api/v1/tenants/rbac/designations/"],
-            required_permissions=["rbac_management.manage_designations"],
+            required_actions=["update"],
             description="Manage permissions assigned to designations"
         ))
     
     def register_feature(self, feature: FeatureDefinition):
         """Register a new feature"""
         self._features[feature.feature_id] = feature
+    
+    def get_features_for_resource_type(self, resource_type: str) -> List[FeatureDefinition]:
+        """Get all features for a specific resource type"""
+        return [feature for feature in self._features.values() if feature.resource_type == resource_type]
+    
+    def user_has_resource_access(self, user_permissions: Dict, resource_type: str, required_actions: List[str] = None) -> bool:
+        """
+        Check if user has access to a resource type with specific actions
         
-        # Create permission mappings
-        for permission_code in feature.required_permissions:
-            if permission_code not in self._permission_mappings:
-                # Extract action from permission code (e.g., "deviation.edit" -> "edit")
-                action = permission_code.split('.')[-1] if '.' in permission_code else 'unknown'
+        Args:
+            user_permissions: Dict of user's permissions from RBAC service
+            resource_type: The resource type to check (e.g., 'vendor', 'user', etc.)
+            required_actions: List of actions needed (e.g., ['read', 'create'])
+        
+        Returns:
+            bool: True if user has access, False otherwise
+        """
+        if required_actions is None:
+            required_actions = ["read"]  # Default to read access
+            
+        # Get all permissions for this resource type
+        from apps.tenants.models import PermissionRegistry
+        resource_permissions = PermissionRegistry.objects.filter(
+            resource_type=resource_type,
+            is_active=True
+        )
+        
+        # Check if user has any permission with required actions
+        for perm in resource_permissions:
+            perm_code = perm.permission_code
+            if perm_code in user_permissions:
+                # Get actions for this permission's business template
+                user_actions = BUSINESS_TEMPLATE_ACTIONS.get(perm.business_template, [])
                 
-                self._permission_mappings[permission_code] = PermissionMapping(
-                    permission_code=permission_code,
-                    resource_type=feature.resource_type,
-                    action_type=action,
-                    feature_ids=[feature.feature_id]
-                )
-            else:
-                # Add feature to existing mapping
-                self._permission_mappings[permission_code].feature_ids.append(feature.feature_id)
+                # Check if user's actions cover all required actions
+                if all(action in user_actions for action in required_actions):
+                    return True
+        
+        return False
+    
+    def get_features_user_can_access(self, user_permissions: Dict, resource_type: str = None) -> List[FeatureDefinition]:
+        """
+        Get all features a user can access based on their permissions
+        
+        Args:
+            user_permissions: Dict of user's permissions from RBAC service
+            resource_type: Optional filter by resource type
+        
+        Returns:
+            List of features the user can access
+        """
+        accessible_features = []
+        
+        features_to_check = self._features.values()
+        if resource_type:
+            features_to_check = self.get_features_for_resource_type(resource_type)
+        
+        for feature in features_to_check:
+            if self.user_has_resource_access(user_permissions, feature.resource_type, feature.required_actions):
+                accessible_features.append(feature)
+        
+        return accessible_features
     
     def get_features_for_permission(self, permission_code: str) -> List[FeatureDefinition]:
         """Get all features controlled by a permission"""

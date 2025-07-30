@@ -41,6 +41,7 @@ import {
 } from "@mui/material";
 import { Add, Edit, Delete, MoreVert, Search, FilterList, Refresh, Security, Warning, CheckCircle, Info, ArrowBack, Category } from "@mui/icons-material";
 import { useRBAC } from "../hooks/useRBAC";
+import { FeatureGate } from "../hooks/useFeaturePermissions";
 import { Permission, getPermissionCategories, rbacAPI } from "../services/rbacAPI";
 import { ModernSnackbar, AppBreadcrumbs } from "../components";
 import type { BreadcrumbItem } from "../components";
@@ -49,7 +50,8 @@ import ResourceTypeSelector from "../components/ResourceTypeSelector";
 interface PermissionFormData {
   permission_name: string;
   permission_code: string;
-  permission_category: string;
+  permission_category: string; // Selected category from dropdown (e.g., "Finance", "HR")
+  resource_name: string; // Local field for auto-generation (e.g., "Invoice", "Users") - not sent to backend
   description: string;
   permission_type: "action" | "access" | "data" | "administrative" | "system";
   business_template: "view_only" | "contributor" | "creator_only" | "full_access" | "custom";
@@ -66,6 +68,7 @@ const defaultFormData: PermissionFormData = {
   permission_name: "",
   permission_code: "",
   permission_category: "",
+  resource_name: "",
   description: "",
   permission_type: "action",
   business_template: "custom",
@@ -271,7 +274,7 @@ const PermissionRegistryPage: React.FC = () => {
 
   const handlePermissionNameChange = (name: string) => {
     setFormData((prev) => {
-      const newCode = !editingPermission && !prev.permission_code ? generatePermissionCode(name, prev.permission_category) : prev.permission_code;
+      const newCode = !editingPermission && !prev.permission_code ? generatePermissionCode(name, prev.resource_name) : prev.permission_code;
 
       return {
         ...prev,
@@ -281,33 +284,40 @@ const PermissionRegistryPage: React.FC = () => {
     });
   };
 
-  const handleCategoryChange = (category: string) => {
+  const handleResourceNameChange = (resourceName: string) => {
     setFormData((prev) => {
-      const newCode = !editingPermission && prev.permission_name ? generatePermissionCode(prev.permission_name, category) : prev.permission_code;
+      const newCode = !editingPermission && prev.permission_name ? generatePermissionCode(prev.permission_name, resourceName) : prev.permission_code;
 
       return {
         ...prev,
-        permission_category: category,
+        resource_name: resourceName,
         permission_code: newCode,
       };
     });
+  };
+
+  const handleCategoryChange = (category: string) => {
+    setFormData((prev) => ({
+      ...prev,
+      permission_category: category,
+    }));
   };
 
   const handleTemplateChange = (templateId: string) => {
     setSelectedTemplate(templateId);
     const template = permissionTemplates.find((t) => t.id === templateId);
     if (template) {
-      const resourceName = formData.permission_category.toLowerCase().replace(/\s+/g, "_") || "resource";
+      const resourceName = formData.resource_name.toLowerCase().replace(/\s+/g, "_") || "resource";
       const actionSuffix = template.permissions.join("_");
 
       setFormData((prev) => ({
         ...prev,
-        permission_name: `${template.name} - ${formData.permission_category || "Resource"}`,
+        permission_name: `${template.name} - ${formData.resource_name || "Resource"}`,
         permission_code: `${resourceName}.${actionSuffix}`,
         permission_type: template.permission_type,
         business_template: template.id as "view_only" | "contributor" | "creator_only" | "full_access",
         risk_level: template.risk_level,
-        description: `${template.description} for ${formData.permission_category || "this resource"}`,
+        description: `${template.description} for ${formData.resource_name || "this resource"}`,
       }));
     }
   };
@@ -319,6 +329,7 @@ const PermissionRegistryPage: React.FC = () => {
         permission_name: permission.permission_name,
         permission_code: permission.permission_code,
         permission_category: permission.permission_category,
+        resource_name: "", // Not needed for editing - this is just for auto-generation
         description: permission.description || "",
         permission_type: permission.permission_type,
         business_template: permission.business_template || "custom",
@@ -376,7 +387,7 @@ const PermissionRegistryPage: React.FC = () => {
     }
 
     if (!formData.permission_category.trim()) {
-      errors.permission_category = "Category is required";
+      errors.permission_category = "Permission category is required";
     }
 
     if (!formData.resource_type.trim()) {
@@ -398,15 +409,18 @@ const PermissionRegistryPage: React.FC = () => {
     }
 
     try {
+      // Exclude resource_name from API payload - it's only for frontend auto-generation
+      const { resource_name, ...apiData } = formData;
+
       if (editingPermission) {
-        await updatePermission(editingPermission.id, formData);
+        await updatePermission(editingPermission.id, apiData);
         setSnackbar({
           open: true,
           message: "Permission updated successfully",
           severity: "success",
         });
       } else {
-        await createPermission(formData);
+        await createPermission(apiData);
         setSnackbar({
           open: true,
           message: "Permission created successfully",
@@ -610,9 +624,11 @@ const PermissionRegistryPage: React.FC = () => {
             <Button variant="outlined" startIcon={<Category />} onClick={() => (window.location.href = "/rbac/categories")}>
               Manage Categories
             </Button>
-            <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
-              Create Permission
-            </Button>
+            <FeatureGate featureId="rbac_permissions_create">
+              <Button variant="contained" startIcon={<Add />} onClick={() => handleOpenDialog()}>
+                Create Permission
+              </Button>
+            </FeatureGate>
           </Stack>
         </Box>
       </Box>
@@ -837,19 +853,23 @@ const PermissionRegistryPage: React.FC = () => {
 
       {/* Actions Menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
-        <MenuItem
-          onClick={() => {
-            handleOpenDialog(selectedPermission!);
-            handleMenuClose();
-          }}
-        >
-          <Edit sx={{ mr: 1 }} fontSize="small" />
-          Edit Permission
-        </MenuItem>
-        <MenuItem onClick={() => selectedPermission && handleDelete(selectedPermission)}>
-          <Delete sx={{ mr: 1 }} fontSize="small" />
-          Delete Permission
-        </MenuItem>
+        <FeatureGate featureId="rbac_permissions_edit">
+          <MenuItem
+            onClick={() => {
+              handleOpenDialog(selectedPermission!);
+              handleMenuClose();
+            }}
+          >
+            <Edit sx={{ mr: 1 }} fontSize="small" />
+            Edit Permission
+          </MenuItem>
+        </FeatureGate>
+        <FeatureGate featureId="rbac_permissions_delete">
+          <MenuItem onClick={() => selectedPermission && handleDelete(selectedPermission)}>
+            <Delete sx={{ mr: 1 }} fontSize="small" />
+            Delete Permission
+          </MenuItem>
+        </FeatureGate>
       </Menu>
 
       {/* Create/Edit Dialog - Enhanced with Stepper */}
@@ -914,60 +934,74 @@ const PermissionRegistryPage: React.FC = () => {
                   </Box>
                 </Grid>
 
-                {/* Row 1: Resource/Feature Name and Permission Level */}
+                {/* Row 1: Resource/Feature Name and Permission Category */}
                 <Grid size={{ xs: 12, md: 6 }}>
                   {!useBusinessTemplates ? (
-                    <Autocomplete
-                      freeSolo
-                      options={Array.isArray(allCategories) ? allCategories.map((cat) => cat.category_name) : []}
-                      value={formData.permission_category}
-                      onChange={(e, value) => handleCategoryChange(value || "")}
-                      renderOption={(props, option) => {
-                        const cat = Array.isArray(allCategories) ? allCategories.find((c) => c.category_name === option) : undefined;
-                        return (
-                          <li {...props} key={option}>
-                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                              <span>{option}</span>
-                              {cat && <Chip label={cat.is_system_category ? "System" : "Custom"} size="small" color={cat.is_system_category ? "primary" : "default"} variant="outlined" />}
-                            </Box>
-                          </li>
-                        );
+                    <TextField
+                      fullWidth
+                      label="Resource/Feature Name"
+                      value={formData.resource_name}
+                      onChange={(e) => handleResourceNameChange(e.target.value)}
+                      error={!!formErrors.resource_name}
+                      helperText={formErrors.resource_name || "What feature/resource does this control? (e.g., 'Invoice', 'Projects', 'Users') - Used for auto-generation only"}
+                      placeholder="Enter the resource/feature name"
+                      InputProps={{
+                        endAdornment: formData.resource_name && <CheckCircle color="success" fontSize="small" />,
                       }}
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          label="Resource/Feature Name"
-                          error={!!formErrors.permission_category}
-                          helperText={formErrors.permission_category || "What feature/resource does this control? (e.g., 'CAM Records', 'Projects')"}
-                          required
-                          placeholder="Select or create a category"
-                          InputProps={{
-                            ...params.InputProps,
-                            endAdornment: (
-                              <>
-                                {params.InputProps.endAdornment}
-                                {formData.permission_category && <CheckCircle color="success" fontSize="small" sx={{ mr: 1 }} />}
-                              </>
-                            ),
-                          }}
-                        />
-                      )}
                     />
                   ) : (
                     <TextField
                       fullWidth
                       label="Resource/Feature Name"
-                      value={formData.permission_category}
-                      onChange={(e) => handleCategoryChange(e.target.value)}
-                      error={!!formErrors.permission_category}
-                      helperText={formErrors.permission_category || "What feature/resource does this control? (e.g., 'CAM Records', 'Projects')"}
-                      required
-                      placeholder="Enter the feature or resource name"
+                      value={formData.resource_name}
+                      onChange={(e) => handleResourceNameChange(e.target.value)}
+                      error={!!formErrors.resource_name}
+                      helperText={formErrors.resource_name || "What feature/resource does this control? (e.g., 'Invoice', 'Projects', 'Users') - Used for auto-generation only"}
+                      placeholder="Enter the resource/feature name"
                       InputProps={{
-                        endAdornment: formData.permission_category && <CheckCircle color="success" fontSize="small" />,
+                        endAdornment: formData.resource_name && <CheckCircle color="success" fontSize="small" />,
                       }}
                     />
                   )}
+                </Grid>
+
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Autocomplete
+                    freeSolo
+                    options={Array.isArray(allCategories) ? allCategories.map((cat) => cat.category_name) : []}
+                    value={formData.permission_category}
+                    onChange={(e, value) => handleCategoryChange(value || "")}
+                    renderOption={(props, option) => {
+                      const cat = Array.isArray(allCategories) ? allCategories.find((c) => c.category_name === option) : undefined;
+                      return (
+                        <li {...props} key={option}>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <span>{option}</span>
+                            {cat && <Chip label={cat.is_system_category ? "System" : "Custom"} size="small" color={cat.is_system_category ? "primary" : "default"} variant="outlined" />}
+                          </Box>
+                        </li>
+                      );
+                    }}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        label="Permission Category"
+                        error={!!formErrors.permission_category}
+                        helperText={formErrors.permission_category || "Select high-level category (e.g., 'Finance', 'HR', 'Operations', 'Vendor Management')"}
+                        required
+                        placeholder="Select or create a category"
+                        InputProps={{
+                          ...params.InputProps,
+                          endAdornment: (
+                            <>
+                              {params.InputProps.endAdornment}
+                              {formData.permission_category && <CheckCircle color="success" fontSize="small" sx={{ mr: 1 }} />}
+                            </>
+                          ),
+                        }}
+                      />
+                    )}
+                  />
                 </Grid>
 
                 {/* Permission Level */}
@@ -1086,7 +1120,7 @@ const PermissionRegistryPage: React.FC = () => {
                     helperText={
                       formErrors.description ||
                       (useBusinessTemplates && selectedTemplate
-                        ? `Auto-generated: ${permissionTemplates.find((t) => t.id === selectedTemplate)?.description || ""} for ${formData.permission_category || "this resource"}`
+                        ? `Auto-generated: ${permissionTemplates.find((t) => t.id === selectedTemplate)?.description || ""} for ${formData.resource_name || "this resource"}`
                         : "Explain what actions this permission enables - be specific about what users can and cannot do")
                     }
                     placeholder={
@@ -1118,7 +1152,7 @@ const PermissionRegistryPage: React.FC = () => {
                     onChange={(value) => setFormData({ ...formData, resource_type: value })}
                     permissionName={formData.permission_name}
                     permissionCode={formData.permission_code}
-                    permissionCategory={formData.permission_category}
+                    permissionCategory={formData.resource_name}
                     error={formErrors.resource_type}
                     helperText="This determines which features and API endpoints your permission will control"
                     required={true}

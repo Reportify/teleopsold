@@ -159,8 +159,8 @@ class LoginView(TokenObtainPairView):
                 'circles.oversight',
                 'corporate.reporting'
             ])
-        elif user.is_circle_user:
-            # Get permissions from RBAC system for circle users
+        elif user.is_circle_user or self._has_tenant_profile(user):
+            # Get permissions from RBAC system for circle users and any tenant users
             try:
                 # Import required models first
                 from apps.tenants.models import TenantUserProfile
@@ -217,6 +217,14 @@ class LoginView(TokenObtainPairView):
             ])
         
         return permissions
+    
+    def _has_tenant_profile(self, user):
+        """Check if user has an active tenant profile"""
+        try:
+            from apps.tenants.models import TenantUserProfile
+            return TenantUserProfile.objects.filter(user=user, is_active=True).exists()
+        except:
+            return False
 
 
 class LogoutView(generics.GenericAPIView):
@@ -383,8 +391,8 @@ class VerifyTokenView(generics.GenericAPIView):
                 'circles.oversight',
                 'corporate.reporting'
             ])
-        elif user.is_circle_user:
-            # Get permissions from RBAC system for circle users
+        elif user.is_circle_user or self._has_tenant_profile(user):
+            # Get permissions from RBAC system for circle users and any tenant users
             try:
                 # Import required models first
                 from apps.tenants.models import TenantUserProfile
@@ -441,6 +449,14 @@ class VerifyTokenView(generics.GenericAPIView):
             ])
         
         return permissions
+    
+    def _has_tenant_profile(self, user):
+        """Check if user has an active tenant profile"""
+        try:
+            from apps.tenants.models import TenantUserProfile
+            return TenantUserProfile.objects.filter(user=user, is_active=True).exists()
+        except:
+            return False
 
 
 class UserProfileView(generics.RetrieveUpdateAPIView):

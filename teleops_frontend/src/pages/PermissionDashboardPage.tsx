@@ -69,6 +69,7 @@ import {
   Edit,
 } from "@mui/icons-material";
 import { useRBAC } from "../hooks/useRBAC";
+import { FeatureGate } from "../hooks/useFeaturePermissions";
 import { ModernSnackbar, AppBreadcrumbs } from "../components";
 import type { BreadcrumbItem } from "../components";
 import { getPermissionDashboard, assignPermissionToUser, revokePermissionFromUser, createUserPermissionOverride, getPermissions } from "../services/rbacAPI";
@@ -450,12 +451,16 @@ const PermissionDashboardPage: React.FC = () => {
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 2 }}>
-          <Button variant="contained" startIcon={<Add />} onClick={() => setGrantDialogOpen(true)}>
-            Grant Permission
-          </Button>
-          <Button variant="outlined" startIcon={<AdminPanelSettings />} onClick={() => setOverrideDialogOpen(true)}>
-            Create Override
-          </Button>
+          <FeatureGate featureId="rbac_permissions_grant">
+            <Button variant="contained" startIcon={<Add />} onClick={() => setGrantDialogOpen(true)}>
+              Grant Permission
+            </Button>
+          </FeatureGate>
+          <FeatureGate featureId="rbac_permissions_grant">
+            <Button variant="outlined" startIcon={<AdminPanelSettings />} onClick={() => setOverrideDialogOpen(true)}>
+              Create Override
+            </Button>
+          </FeatureGate>
           <Button variant="outlined" startIcon={<Refresh />} onClick={loadDashboardData}>
             Refresh
           </Button>
@@ -657,11 +662,13 @@ const PermissionDashboardPage: React.FC = () => {
                       <TableCell>
                         <Box sx={{ display: "flex", gap: 1 }}>
                           {permission.source_type === "override" && (
-                            <Tooltip title="Revoke Permission">
-                              <IconButton size="small" color="error" onClick={() => openRevokeDialog(permission)}>
-                                <Remove />
-                              </IconButton>
-                            </Tooltip>
+                            <FeatureGate featureId="rbac_permissions_revoke">
+                              <Tooltip title="Revoke Permission">
+                                <IconButton size="small" color="error" onClick={() => openRevokeDialog(permission)}>
+                                  <Remove />
+                                </IconButton>
+                              </Tooltip>
+                            </FeatureGate>
                           )}
                           <Tooltip title="Create Override">
                             <IconButton
@@ -794,11 +801,13 @@ const PermissionDashboardPage: React.FC = () => {
                         <Box sx={{ display: "flex", gap: 1 }}>
                           <Chip label={permission.risk_level} size="small" color={getRiskLevelColor(permission.risk_level) as any} />
                           {permission.is_temporary && <Chip label="Temporary" size="small" color="warning" />}
-                          <Tooltip title="Revoke Override">
-                            <IconButton size="small" color="error" onClick={() => openRevokeDialog(permission)}>
-                              <Remove />
-                            </IconButton>
-                          </Tooltip>
+                          <FeatureGate featureId="rbac_permissions_revoke">
+                            <Tooltip title="Revoke Override">
+                              <IconButton size="small" color="error" onClick={() => openRevokeDialog(permission)}>
+                                <Remove />
+                              </IconButton>
+                            </Tooltip>
+                          </FeatureGate>
                         </Box>
                       </Box>
                     </Box>

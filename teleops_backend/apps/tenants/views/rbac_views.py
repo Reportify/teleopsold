@@ -57,7 +57,7 @@ class PermissionCategoryViewSet(viewsets.ModelViewSet):
     API endpoints for managing permission categories.
     """
     serializer_class = PermissionCategorySerializer
-    permission_classes = [IsTenantAdmin]
+    permission_classes = [HasRBACPermission]
     
     def get_queryset(self):
         """Get permission categories for current tenant."""
@@ -377,9 +377,9 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
                             if source.startswith('user_override_'):
                                 # User has permission via override - remove/deactivate the override
                                 UserPermissionOverride.objects.filter(
-                                    user_profile=user_profile,
-                                    permission=permission,
-                                    is_active=True
+                                        user_profile=user_profile,
+                                        permission=permission,
+                                        is_active=True
                                 ).update(is_active=False)
                                 
                             elif source.startswith('designation_') or source.startswith('group_'):
@@ -2474,14 +2474,14 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
         try:
             # Get all active users in tenant
             users = TenantUserProfile.objects.filter(
-            tenant=tenant, 
-            is_active=True
+                tenant=tenant, 
+                is_active=True
             ).select_related('user')
         
             # Get all permissions in tenant  
             permissions = PermissionRegistry.objects.filter(
-            tenant=tenant,
-            is_active=True
+                tenant=tenant,
+                is_active=True
             )
         
             # Calculate user permissions using reliable method
@@ -2633,9 +2633,9 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
                         {'error': f'User {user_id} not found'}, 
                         status=status.HTTP_404_NOT_FOUND
                     )
-            else:
-                # All users analysis
-                users = TenantUserProfile.objects.filter(
+                else:
+                    # All users analysis
+                    users = TenantUserProfile.objects.filter(
                     tenant=tenant,
                     is_active=True
                 ).select_related('user')
