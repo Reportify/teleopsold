@@ -131,7 +131,7 @@ class IsTenantMember(BasePermission):
 
 
 class CanViewRBACDashboard(BasePermission):
-    """Permission for viewing RBAC dashboard - checks for rbac_management.view_permissions or admin access"""
+    """Permission for viewing RBAC dashboard - checks for rbac.read or admin access"""
     
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
@@ -158,7 +158,7 @@ class CanViewRBACDashboard(BasePermission):
                 rbac_service = get_rbac_service(tenant)
                 has_view_permission, _ = rbac_service.check_permission(
                     user_profile=profile,
-                    permission_code='rbac_management.view_permissions'
+                    permission_code='rbac.read'
                 )
                 
                 if has_view_permission:

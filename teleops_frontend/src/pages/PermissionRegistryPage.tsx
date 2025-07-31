@@ -255,26 +255,34 @@ const PermissionRegistryPage: React.FC = () => {
   const types = Array.from(new Set(permissions.map((p) => p.permission_type)));
   const riskLevels = Array.from(new Set(permissions.map((p) => p.risk_level)));
 
-  // Helper function to generate permission code from name
-  const generatePermissionCode = (name: string, category: string): string => {
-    const cleanName = name
+  // Helper function to generate permission code from resource name and business template
+  const generatePermissionCode = (resourceName: string, businessTemplate: string): string => {
+    const cleanResource = resourceName
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, "")
       .replace(/\s+/g, "_")
       .replace(/_+/g, "_")
       .replace(/^_|_$/g, "");
 
-    const cleanCategory = category
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, "")
-      .replace(/\s+/g, "_");
+    // Map business template to action suffix
+    const templateToActions: Record<string, string> = {
+      view_only: "read",
+      creator_only: "read_create",
+      contributor: "read_create_update",
+      full_access: "read_create_update_delete",
+      custom: "custom",
+    };
 
-    return cleanCategory ? `${cleanCategory}.${cleanName}` : cleanName;
+    const actionSuffix = templateToActions[businessTemplate] || "custom";
+
+    return `${cleanResource}.${actionSuffix}`;
   };
 
   const handlePermissionNameChange = (name: string) => {
     setFormData((prev) => {
-      const newCode = !editingPermission && !prev.permission_code ? generatePermissionCode(name, prev.resource_name) : prev.permission_code;
+      // Auto-generate code based on resource name and business template
+      const newCode =
+        !editingPermission && !prev.permission_code && prev.resource_name && prev.business_template ? generatePermissionCode(prev.resource_name, prev.business_template) : prev.permission_code;
 
       return {
         ...prev,
@@ -286,7 +294,8 @@ const PermissionRegistryPage: React.FC = () => {
 
   const handleResourceNameChange = (resourceName: string) => {
     setFormData((prev) => {
-      const newCode = !editingPermission && prev.permission_name ? generatePermissionCode(prev.permission_name, resourceName) : prev.permission_code;
+      // Auto-generate code based on resource name and business template
+      const newCode = !editingPermission && prev.business_template ? generatePermissionCode(resourceName, prev.business_template) : prev.permission_code;
 
       return {
         ...prev,
@@ -307,16 +316,22 @@ const PermissionRegistryPage: React.FC = () => {
     setSelectedTemplate(templateId);
     const template = permissionTemplates.find((t) => t.id === templateId);
     if (template) {
-      const resourceName = formData.resource_name.toLowerCase().replace(/\s+/g, "_") || "resource";
-      const actionSuffix = template.permissions.join("_");
+      const resourceName = formData.resource_name || "resource";
+
+      // Use the new consistent permission code generation
+      const newPermissionCode = !editingPermission ? generatePermissionCode(resourceName, templateId) : formData.permission_code;
 
       setFormData((prev) => ({
         ...prev,
         permission_name: `${template.name} - ${formData.resource_name || "Resource"}`,
-        permission_code: `${resourceName}.${actionSuffix}`,
+        permission_code: newPermissionCode,
         permission_type: template.permission_type,
         business_template: template.id as "view_only" | "contributor" | "creator_only" | "full_access",
         risk_level: template.risk_level,
+        resource_type: resourceName
+          .toLowerCase()
+          .replace(/[^a-z0-9\s]/g, "")
+          .replace(/\s+/g, "_"),
         description: `${template.description} for ${formData.resource_name || "this resource"}`,
       }));
     }

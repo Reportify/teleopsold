@@ -142,20 +142,6 @@ api.interceptors.request.use(
       config.headers.set("X-Tenant-ID", tenantContext.currentTenant.id);
     }
 
-    // Debug logging
-    if (process.env.NODE_ENV === "development") {
-      console.log("API Request:", {
-        method: config.method?.toUpperCase(),
-        url: config.url,
-        headers: {
-          Authorization: config.headers.Authorization ? "Bearer [TOKEN]" : "None",
-          "X-Tenant-ID": config.headers["X-Tenant-ID"] || "None",
-        },
-        isAuthEndpoint,
-        tenantContext: tenantContext?.currentTenant?.id || "None",
-      });
-    }
-
     return config;
   },
   (error) => {
@@ -171,12 +157,6 @@ api.interceptors.response.use(
   },
   async (error) => {
     const originalRequest = error.config;
-
-    console.log("API Interceptor - Error caught:", {
-      status: error.response?.status,
-      data: error.response?.data,
-      url: error.config?.url,
-    });
 
     // Debug logging for errors
     if (process.env.NODE_ENV === "development") {
@@ -204,11 +184,6 @@ api.interceptors.response.use(
       }
 
       // Call global handlers if available
-      console.log("Global handlers status:", {
-        hasNotificationHandler: !!globalNotificationHandler,
-        hasThrottleHandler: !!globalThrottleHandler,
-        waitSeconds,
-      });
 
       if (globalNotificationHandler) {
         globalNotificationHandler(waitMsg, "warning");
@@ -360,12 +335,6 @@ export const errorHandler = {
 if (process.env.NODE_ENV === "development") {
   api.interceptors.request.use(
     (config) => {
-      console.log("API Request:", {
-        method: config.method?.toUpperCase(),
-        url: config.url,
-        data: config.data,
-        headers: config.headers,
-      });
       return config;
     },
     (error) => {
@@ -376,11 +345,6 @@ if (process.env.NODE_ENV === "development") {
 
   api.interceptors.response.use(
     (response) => {
-      console.log("API Response:", {
-        status: response.status,
-        url: response.config.url,
-        data: response.data,
-      });
       return response;
     },
     (error) => {

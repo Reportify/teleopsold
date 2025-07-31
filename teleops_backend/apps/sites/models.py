@@ -29,38 +29,28 @@ class Site(models.Model):
     site_id = models.CharField(max_length=100, help_text="Business identifier, unique within tenant")
     global_id = models.CharField(max_length=100, help_text="Globally unique identifier within tenant")
     site_name = models.CharField(max_length=255, help_text="Human-readable site name")
-    town = models.CharField(max_length=100, help_text="City/town location")
-    cluster = models.CharField(max_length=100, help_text="Operational grouping/region")
+    town = models.CharField(max_length=100, help_text="Town/city location")
+    cluster = models.CharField(max_length=100, help_text="Zone/operational cluster")
     latitude = models.DecimalField(max_digits=9, decimal_places=6, help_text="Geographic coordinate")
     longitude = models.DecimalField(max_digits=9, decimal_places=6, help_text="Geographic coordinate")
     
-    # Optional Location Fields
-    state = models.CharField(max_length=100, blank=True)
-    country = models.CharField(max_length=100, default='India')
-    district = models.CharField(max_length=100, blank=True)
-    postal_code = models.CharField(max_length=20, blank=True)
-    elevation = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, help_text="Elevation in meters")
-    
-    # Optional Site Details
-    site_type = models.CharField(max_length=20, choices=SITE_TYPE, default='tower')
-    status = models.CharField(max_length=20, choices=SITE_STATUS, default='active')
-    access_instructions = models.TextField(blank=True, help_text="Instructions for accessing the site")
-    safety_requirements = models.TextField(blank=True, help_text="Safety requirements and precautions")
+    # Optional Site Fields
+    address = models.TextField(blank=True, help_text="Site address")
+    site_type = models.CharField(max_length=20, choices=SITE_TYPE, default='tower', help_text="Type of site")
     contact_person = models.CharField(max_length=255, blank=True, help_text="On-site contact person")
     contact_phone = models.CharField(max_length=20, blank=True, help_text="Contact phone number")
-    landmark_description = models.TextField(blank=True, help_text="Nearby landmarks for navigation")
     
-    # Legacy fields (for backward compatibility)
-    name = models.CharField(max_length=255, blank=True)  # Deprecated: use site_name instead
-    address = models.TextField(blank=True)  # Deprecated: derived from other fields
-    city = models.CharField(max_length=100, blank=True)  # Deprecated: use town instead
-    description = models.TextField(blank=True)  # Deprecated: use landmark_description instead
-    site_code = models.CharField(max_length=50, blank=True)  # Auto-generated from site_id
-    contact_email = models.EmailField(blank=True)  # Optional additional contact
+    # System fields
+    status = models.CharField(max_length=20, choices=SITE_STATUS, default='active')
     
-    # Contact information
-    contact_person = models.CharField(max_length=255, blank=True)
-    contact_phone = models.CharField(max_length=20, blank=True)
+    # Legacy fields (keep for backward compatibility with existing database)
+    name = models.CharField(max_length=255, blank=True, help_text="Legacy: use site_name instead")
+    city = models.CharField(max_length=100, blank=True, help_text="Legacy: use town instead")
+    site_code = models.CharField(max_length=50, blank=True, help_text="Legacy site code")
+    state = models.CharField(max_length=100, blank=True)
+    country = models.CharField(max_length=100, default='India')
+    postal_code = models.CharField(max_length=20, blank=True)
+    description = models.TextField(blank=True)
     contact_email = models.EmailField(blank=True)
     
     # Soft delete support
@@ -99,8 +89,7 @@ class Site(models.Model):
             models.Index(fields=['tenant', 'status', 'deleted_at']),
             models.Index(fields=['site_type', 'status']),
             models.Index(fields=['latitude', 'longitude']),
-            models.Index(fields=['town', 'state']),
-            models.Index(fields=['cluster']),
+            models.Index(fields=['town', 'cluster']),
             models.Index(fields=['site_id']),
             models.Index(fields=['global_id']),
             models.Index(fields=['deleted_at']),
@@ -114,10 +103,10 @@ class Site(models.Model):
         """Generate full address from location components"""
         address_parts = []
         
+        if self.address:
+            address_parts.append(self.address)
         if self.town:
             address_parts.append(self.town)
-        if self.district:
-            address_parts.append(self.district)
         if self.state:
             address_parts.append(self.state)
         if self.postal_code:

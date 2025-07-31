@@ -49,11 +49,11 @@ class PermissionEnforcementMiddleware:
         except:
             return None
         
-        # Find permissions required for this endpoint
-        required_permissions = self._get_required_permissions_for_endpoint(endpoint_pattern)
+        # Find features required for this endpoint
+        required_features = self._get_required_permissions_for_endpoint(endpoint_pattern)
         
-        if not required_permissions:
-            # No mapped permissions for this endpoint
+        if not required_features:
+            # No mapped features for this endpoint
             return None
         
         # Check if user has required permissions
@@ -65,23 +65,28 @@ class PermissionEnforcementMiddleware:
             effective_perms = rbac_service.get_user_effective_permissions(user_profile)
             user_permission_codes = set(effective_perms.get('permissions', {}).keys())
             
-            # Check if user has ANY of the required permissions
-            has_permission = any(
-                perm_code in user_permission_codes 
-                for perm_code in required_permissions
-            )
+            # Check if user has permission for ANY of the required features
+            has_permission = False
+            for feature in required_features:
+                # Check if user has permission for this feature's resource and actions
+                has_permission = self._check_feature_permission(
+                    user_permission_codes, feature.resource_type, feature.required_actions
+                )
+                if has_permission:
+                    break
             
             if not has_permission:
+                feature_names = [f.feature_name for f in required_features]
                 logger.warning(
                     f"User {request.user.id} denied access to {endpoint_pattern}. "
-                    f"Required: {required_permissions}, Has: {list(user_permission_codes)}"
+                    f"Required features: {feature_names}, Has permissions: {list(user_permission_codes)}"
                 )
                 
                 return JsonResponse({
                     'error': {
                         'code': 'PERMISSION_DENIED',
                         'message': 'You do not have permission to access this resource',
-                        'required_permissions': required_permissions
+                        'required_features': feature_names
                     }
                 }, status=403)
         
@@ -92,17 +97,38 @@ class PermissionEnforcementMiddleware:
         
         return None
     
+    def _check_feature_permission(self, user_permission_codes, resource_type, required_actions):
+        """Check if user has the required actions for a resource type"""
+        # Check for specific action permissions (exact match)
+        for action in required_actions:
+            permission_code = f"{resource_type}.{action}"
+            if permission_code in user_permission_codes:
+                return True
+        
+        # Check for compound permissions (e.g., site.read_create for create action)
+        for code in user_permission_codes:
+            if code.startswith(f"{resource_type}."):
+                # Extract actions from permission code
+                if '.' in code:
+                    actions_part = code.split('.', 1)[1]  # Get part after 'resource.'
+                    user_actions = actions_part.split('_')
+                    # Check if all required actions are covered
+                    if all(action in user_actions for action in required_actions):
+                        return True
+        
+        return False
+    
     def _get_required_permissions_for_endpoint(self, endpoint_pattern):
         """Get required permissions for an API endpoint"""
-        required_permissions = set()
+        required_features = []
         
         # Check all registered features
         for feature in self.feature_registry._features.values():
             for api_endpoint in feature.api_endpoints:
                 if self._endpoint_matches_pattern(endpoint_pattern, api_endpoint):
-                    required_permissions.update(feature.required_permissions)
+                    required_features.append(feature)
         
-        return list(required_permissions)
+        return required_features
     
     def _endpoint_matches_pattern(self, actual_endpoint, pattern):
         """Check if an endpoint matches a pattern (supports {id} placeholders)"""
@@ -144,11 +170,13 @@ class PermissionValidationUtils:
         
         try:
             effective_perms = rbac_service.get_user_effective_permissions(user.tenant_user_profile)
-            user_permissions = set(effective_perms.get('permissions', {}).keys())
+            user_permission_codes = set(effective_perms.get('permissions', {}).keys())
             
-            return any(
-                perm_code in user_permissions 
-                for perm_code in feature.required_permissions
+            # Use the feature registry's method for checking resource access
+            return feature_registry.user_has_resource_access(
+                effective_perms.get('permissions', {}), 
+                feature.resource_type, 
+                feature.required_actions
             )
         except:
             return False

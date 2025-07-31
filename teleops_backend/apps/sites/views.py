@@ -13,6 +13,7 @@ import json
 from .models import Site
 from .serializers import SiteSerializer, SiteCreateSerializer, SiteBulkCreateSerializer
 from core.permissions.tenant_permissions import IsTenantAdmin, IsTenantMember
+from apps.tenants.services.rbac_service import TenantRBACService
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,47 @@ class CircleSiteManagementView(APIView):
     """
     permission_classes = [IsAuthenticated, IsTenantMember]
     
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
     def get(self, request):
         """Get all sites for the current circle tenant"""
         try:
+            # Check read permission
+            if not self._check_permission(request.user, "read"):
+                return Response(
+                    {"detail": "You don't have permission to view sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -56,14 +95,19 @@ class CircleSiteManagementView(APIView):
             # Geographic distribution
             cities = {}
             states = {}
+            clusters = {}
             for site in sites:
-                # City distribution
-                city = site.city or 'Unknown'
-                cities[city] = cities.get(city, 0) + 1
+                # City/Town distribution (prioritize town, fallback to city)
+                location = site.town or site.city or 'Unknown'
+                cities[location] = cities.get(location, 0) + 1
                 
                 # State distribution  
                 state = site.state or 'Unknown'
                 states[state] = states.get(state, 0) + 1
+                
+                # Cluster/Zone distribution
+                cluster = site.cluster or 'Default Zone'
+                clusters[cluster] = clusters.get(cluster, 0) + 1
             
             # Coverage areas (based on geographic spread)
             coverage_radius = self._calculate_coverage_radius(sites)
@@ -74,36 +118,42 @@ class CircleSiteManagementView(APIView):
             for site in sites:
                 site_data = {
                     'id': site.id,
-                    'site_id': site.site_id,
-                    'global_id': site.global_id,
-                    'site_name': site.site_name,
-                    'site_code': site.site_code,
+                    # New specification fields (with fallbacks for existing data)
+                    'site_id': site.site_id or site.site_code or f"SITE_{site.id}",
+                    'global_id': site.global_id or f"GLOBAL_{site.id}",
+                    'site_name': site.site_name or site.name or "Unnamed Site",
+                    'town': site.town or site.city or "",
+                    'cluster': site.cluster or "Default Zone",
+                    
+                    # Legacy fields
+                    'site_code': site.site_code or "",
+                    'name': site.name or "",
+                    'city': site.city or "",
+                    
                     'site_type': site.site_type,
                     'status': site.status,
                     
                     # Location Information
-                    'town': site.town,
-                    'cluster': site.cluster,
-                    'state': site.state,
-                    'country': site.country,
-                    'district': site.district,
-                    'postal_code': site.postal_code,
+                    'state': site.state or "",
+                    'country': site.country or "India",
+                    'district': "",  # Field doesn't exist in current model
+                    'postal_code': site.postal_code or "",
                     'latitude': float(site.latitude) if site.latitude else None,
                     'longitude': float(site.longitude) if site.longitude else None,
-                    'elevation': float(site.elevation) if site.elevation else None,
+
                     'full_address': site.full_address,
                     
                     # Site Details
-                    'access_instructions': site.access_instructions,
-                    'safety_requirements': site.safety_requirements,
-                    'contact_person': site.contact_person,
-                    'contact_phone': site.contact_phone,
-                    'landmark_description': site.landmark_description,
+                    'address': site.address or "",
+
+                    'contact_person': site.contact_person or "",
+                    'contact_phone': site.contact_phone or "",
+                    'contact_email': site.contact_email or "",
+
                     
                     # Operational Information
                     'has_coordinates': site.latitude is not None and site.longitude is not None,
-                    'coordinate_quality': self._assess_coordinate_quality(site),
-                    'accessibility_rating': self._calculate_accessibility_rating(site),
+
                     
                     # Metadata
                     'created_at': site.created_at,
@@ -126,6 +176,7 @@ class CircleSiteManagementView(APIView):
                     'site_types': site_types,
                     'cities': dict(sorted(cities.items(), key=lambda x: x[1], reverse=True)[:10]),  # Top 10 cities
                     'states': dict(sorted(states.items(), key=lambda x: x[1], reverse=True)),
+                    'clusters': dict(sorted(clusters.items(), key=lambda x: x[1], reverse=True)),
                 },
                 'geographic_analysis': {
                     'coverage_radius_km': coverage_radius,
@@ -153,6 +204,13 @@ class CircleSiteManagementView(APIView):
     def post(self, request):
         """Create a new site in the circle tenant"""
         try:
+            # Check create permission
+            if not self._check_permission(request.user, "create"):
+                return Response(
+                    {"detail": "You don't have permission to create sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -216,7 +274,7 @@ class CircleSiteManagementView(APIView):
                     tenant=tenant,
                     created_by=request.user,
                     
-                    # Required fields
+                    # Required specification fields
                     site_id=site_id,
                     global_id=global_id,
                     site_name=data['site_name'].strip(),
@@ -226,20 +284,21 @@ class CircleSiteManagementView(APIView):
                     longitude=longitude,
                     
                     # Optional fields
-                    state=data.get('state', '').strip(),
-                    country=data.get('country', 'India').strip(),
-                    district=data.get('district', '').strip(),
-                    postal_code=data.get('postal_code', '').strip(),
-                    elevation=float(data['elevation']) if data.get('elevation') else None,
-                    
-                    # Site details
+                    address=data.get('address', '').strip(),
                     site_type=data.get('site_type', 'tower'),
-                    status=data.get('status', 'active'),
-                    access_instructions=data.get('access_instructions', '').strip(),
-                    safety_requirements=data.get('safety_requirements', '').strip(),
                     contact_person=data.get('contact_person', '').strip(),
                     contact_phone=data.get('contact_phone', '').strip(),
-                    landmark_description=data.get('landmark_description', '').strip(),
+                    
+                    # Legacy compatibility fields (populated from spec fields)
+                    name=data['site_name'].strip(),  # Copy from site_name
+                    city=data['town'].strip(),  # Copy from town
+                    site_code=site_id,  # Copy from site_id
+                    state=data.get('state', '').strip(),
+                    country=data.get('country', 'India').strip(),
+                    postal_code=data.get('postal_code', '').strip(),
+                    description=data.get('description', '').strip(),
+                    contact_email=data.get('contact_email', '').strip(),
+                    status=data.get('status', 'active'),
                 )
                 
                 # Prepare response data
@@ -259,7 +318,7 @@ class CircleSiteManagementView(APIView):
                     'full_address': site.full_address,
                 }
                 
-                logger.info(f"Circle site created: {site_id} for tenant {tenant.organization_name}")
+                logger.info(f"Circle site created: {site.name} for tenant {tenant.organization_name}")
                 
                 return Response(
                     {
@@ -345,63 +404,7 @@ class CircleSiteManagementView(APIView):
         
         return c * r
     
-    def _assess_coordinate_quality(self, site):
-        """Assess the quality of GPS coordinates"""
-        if site.latitude is None or site.longitude is None:
-            return 'no_coordinates'
-        
-        # Basic validation
-        lat = float(site.latitude)
-        lng = float(site.longitude)
-        
-        # Check if coordinates are likely valid (not 0,0 or other obvious placeholders)
-        if lat == 0 and lng == 0:
-            return 'placeholder'
-        
-        # Check precision (more decimal places = better quality)
-        lat_precision = len(str(site.latitude).split('.')[-1]) if '.' in str(site.latitude) else 0
-        lng_precision = len(str(site.longitude).split('.')[-1]) if '.' in str(site.longitude) else 0
-        
-        avg_precision = (lat_precision + lng_precision) / 2
-        
-        if avg_precision >= 5:
-            return 'high_precision'
-        elif avg_precision >= 3:
-            return 'medium_precision'
-        else:
-            return 'low_precision'
-    
-    def _calculate_accessibility_rating(self, site):
-        """Calculate accessibility rating based on available information"""
-        score = 0
-        
-        # Contact information available
-        if site.contact_person:
-            score += 2
-        if site.contact_phone:
-            score += 2
-        
-        # Access instructions provided
-        if site.access_instructions:
-            score += 3
-        
-        # Landmark description available
-        if site.landmark_description:
-            score += 2
-        
-        # Safety requirements documented
-        if site.safety_requirements:
-            score += 1
-        
-        # Convert to rating
-        if score >= 8:
-            return 'excellent'
-        elif score >= 6:
-            return 'good'
-        elif score >= 4:
-            return 'fair'
-        else:
-            return 'poor'
+
 
 
 class CircleSiteDetailView(APIView):
@@ -411,9 +414,47 @@ class CircleSiteDetailView(APIView):
     """
     permission_classes = [IsAuthenticated, IsTenantMember]
     
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
     def get(self, request, site_id):
         """Get detailed information about a specific site"""
         try:
+            # Check read permission
+            if not self._check_permission(request.user, "read"):
+                return Response(
+                    {"detail": "You don't have permission to view site details."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -453,20 +494,16 @@ class CircleSiteDetailView(APIView):
                 'postal_code': site.postal_code,
                 'latitude': float(site.latitude) if site.latitude else None,
                 'longitude': float(site.longitude) if site.longitude else None,
-                'elevation': float(site.elevation) if site.elevation else None,
+
                 'full_address': site.full_address,
                 
                 # Site Details
-                'access_instructions': site.access_instructions,
-                'safety_requirements': site.safety_requirements,
                 'contact_person': site.contact_person,
                 'contact_phone': site.contact_phone,
-                'landmark_description': site.landmark_description,
                 
                 # Operational Information
                 'has_coordinates': site.latitude is not None and site.longitude is not None,
-                'coordinate_quality': self._assess_coordinate_quality(site),
-                'accessibility_rating': self._calculate_accessibility_rating(site),
+
                 
                 # Related Information
                 'projects_count': self._get_projects_count(site),
@@ -495,6 +532,13 @@ class CircleSiteDetailView(APIView):
     def put(self, request, site_id):
         """Update site information"""
         try:
+            # Check update permission
+            if not self._check_permission(request.user, "update"):
+                return Response(
+                    {"detail": "You don't have permission to update sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -521,22 +565,12 @@ class CircleSiteDetailView(APIView):
                 # Update mutable fields (site IDs and coordinates are immutable for data integrity)
                 mutable_fields = [
                     'site_name', 'town', 'cluster', 'state', 'country', 'district', 
-                    'postal_code', 'elevation', 'site_type', 'status',
-                    'access_instructions', 'safety_requirements', 'contact_person', 
-                    'contact_phone', 'landmark_description'
+                    'postal_code', 'site_type', 'status',
+                    'contact_person', 'contact_phone'
                 ]
                 
                 for field in mutable_fields:
                     if field in data:
-                        if field in ['elevation'] and data[field]:
-                            try:
-                                setattr(site, field, float(data[field]))
-                            except (ValueError, TypeError):
-                                return Response(
-                                    {"error": f"Invalid {field} format"}, 
-                                    status=status.HTTP_400_BAD_REQUEST
-                                )
-                        else:
                             setattr(site, field, data[field])
                 
                 site.updated_at = timezone.now()
@@ -559,6 +593,13 @@ class CircleSiteDetailView(APIView):
     def delete(self, request, site_id):
         """Soft delete site"""
         try:
+            # Check delete permission
+            if not self._check_permission(request.user, "delete"):
+                return Response(
+                    {"detail": "You don't have permission to delete sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -614,64 +655,6 @@ class CircleSiteDetailView(APIView):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    def _assess_coordinate_quality(self, site):
-        """Assess the quality of GPS coordinates"""
-        if site.latitude is None or site.longitude is None:
-            return 'no_coordinates'
-        
-        # Basic validation
-        lat = float(site.latitude)
-        lng = float(site.longitude)
-        
-        # Check if coordinates are likely valid (not 0,0 or other obvious placeholders)
-        if lat == 0 and lng == 0:
-            return 'placeholder'
-        
-        # Check precision (more decimal places = better quality)
-        lat_precision = len(str(site.latitude).split('.')[-1]) if '.' in str(site.latitude) else 0
-        lng_precision = len(str(site.longitude).split('.')[-1]) if '.' in str(site.longitude) else 0
-        
-        avg_precision = (lat_precision + lng_precision) / 2
-        
-        if avg_precision >= 5:
-            return 'high_precision'
-        elif avg_precision >= 3:
-            return 'medium_precision'
-        else:
-            return 'low_precision'
-    
-    def _calculate_accessibility_rating(self, site):
-        """Calculate accessibility rating based on available information"""
-        score = 0
-        
-        # Contact information available
-        if site.contact_person:
-            score += 2
-        if site.contact_phone:
-            score += 2
-        
-        # Access instructions provided
-        if site.access_instructions:
-            score += 3
-        
-        # Landmark description available
-        if site.landmark_description:
-            score += 2
-        
-        # Safety requirements documented
-        if site.safety_requirements:
-            score += 1
-        
-        # Convert to rating
-        if score >= 8:
-            return 'excellent'
-        elif score >= 6:
-            return 'good'
-        elif score >= 4:
-            return 'fair'
-        else:
-            return 'poor'
-    
     def _get_projects_count(self, site):
         """Get count of projects associated with this site"""
         # This would query the projects app when implemented
@@ -688,6 +671,435 @@ class CircleSiteDetailView(APIView):
         return []
 
 
+class SiteTemplateDownloadView(APIView):
+    """
+    Download Excel template for bulk site upload
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
+    def get(self, request):
+        """Download Excel template with sample data"""
+        try:
+            # Check read permission for template download
+            if not self._check_permission(request.user, "read"):
+                return Response(
+                    {"detail": "You don't have permission to download site templates."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            import pandas as pd
+            from django.http import HttpResponse
+            import io
+            
+            # Create sample data with specification columns
+            sample_data = {
+                'site_id': ['SITE001', 'SITE002', 'SITE003'],
+                'global_id': ['GLOBAL001', 'GLOBAL002', 'GLOBAL003'],
+                'site_name': ['Sample Tower Site 1', 'Sample Data Center', 'Sample BTS Site'],
+                'town': ['Mumbai', 'Delhi', 'Bangalore'],
+                'cluster': ['West Zone', 'North Zone', 'South Zone'],
+                'latitude': [19.0760, 28.7041, 12.9716],
+                'longitude': [72.8777, 77.1025, 77.5946]
+            }
+            
+            # Create DataFrame
+            df = pd.DataFrame(sample_data)
+            
+            # Create Excel file in memory
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Sites Template', index=False)
+                
+                # Add instructions sheet
+                instructions_data = {
+                    'Column': [
+                        'site_id', 'global_id', 'site_name', 'town', 'cluster', 'latitude', 'longitude', 
+                        'address', 'site_type', 'contact_person', 'contact_phone'
+                    ],
+                    'Required': [
+                        'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes', 'Yes',
+                        'No', 'No', 'No', 'No'
+                    ],
+                    'Description': [
+                        'Unique site identifier within tenant',
+                        'Globally unique identifier within tenant',
+                        'Human-readable site name',
+                        'Town/city where site is located',
+                        'Zone/operational cluster',
+                        'Geographic latitude (-90 to 90)',
+                        'Geographic longitude (-180 to 180)',
+                        'Site address (optional)',
+                        'Site type: tower, data_center, etc. (optional)',
+                        'On-site contact person (optional)',
+                        'Contact phone number (optional)'
+                    ]
+                }
+                instructions_df = pd.DataFrame(instructions_data)
+                instructions_df.to_excel(writer, sheet_name='Instructions', index=False)
+            
+            output.seek(0)
+            
+            # Create response
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = 'attachment; filename="sites_upload_template.xlsx"'
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error generating template: {str(e)}")
+            return Response(
+                {"error": "Failed to generate template"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SiteExportView(APIView):
+    """
+    Export filtered sites to Excel/CSV
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
+    def get(self, request):
+        """Export sites with optional filtering"""
+        try:
+            # Check read permission for export
+            if not self._check_permission(request.user, "read"):
+                return Response(
+                    {"detail": "You don't have permission to export sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            import pandas as pd
+            from django.http import HttpResponse
+            import io
+            
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get query parameters for filtering
+            export_format = request.GET.get('format', 'excel')  # excel or csv
+            status_filter = request.GET.get('status', 'all')
+            site_type_filter = request.GET.get('site_type', 'all')
+            cluster_filter = request.GET.get('cluster', 'all')
+            
+            # Base query
+            sites = Site.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            
+            # Apply filters
+            if status_filter != 'all':
+                sites = sites.filter(status=status_filter)
+            if site_type_filter != 'all':
+                sites = sites.filter(site_type=site_type_filter)
+            if cluster_filter != 'all':
+                sites = sites.filter(cluster=cluster_filter)
+            
+            # Convert to list of dictionaries
+            sites_data = []
+            for site in sites:
+                sites_data.append({
+                    'Site ID': site.site_id,
+                    'Global ID': site.global_id,
+                    'Site Name': site.site_name,
+                    'Town': site.town,
+                    'Cluster': site.cluster,
+                    'State': site.state,
+                    'Country': site.country,
+                    'District': site.district,
+                    'Postal Code': site.postal_code,
+                    'Latitude': float(site.latitude) if site.latitude else None,
+                    'Longitude': float(site.longitude) if site.longitude else None,
+
+                    'Site Type': site.site_type,
+                    'Status': site.status,
+
+                    'Contact Person': site.contact_person,
+                    'Contact Phone': site.contact_phone,
+
+                    'Created At': site.created_at.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Created By': site.created_by.full_name if site.created_by else None,
+                })
+            
+            # Create DataFrame
+            df = pd.DataFrame(sites_data)
+            
+            if export_format == 'csv':
+                # CSV Export
+                output = io.StringIO()
+                df.to_csv(output, index=False)
+                output.seek(0)
+                
+                response = HttpResponse(output.getvalue(), content_type='text/csv')
+                response['Content-Disposition'] = f'attachment; filename="sites_export_{tenant.circle_code}.csv"'
+                
+            else:
+                # Excel Export
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df.to_excel(writer, sheet_name='Sites Export', index=False)
+                
+                output.seek(0)
+                response = HttpResponse(
+                    output.getvalue(),
+                    content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                )
+                response['Content-Disposition'] = f'attachment; filename="sites_export_{tenant.circle_code}.xlsx"'
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error exporting sites: {str(e)}")
+            return Response(
+                {"error": "Failed to export sites"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SiteRestoreView(APIView):
+    """
+    Restore soft-deleted site
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def patch(self, request, site_id):
+        """Restore a soft-deleted site"""
+        try:
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get deleted site
+            try:
+                site = Site.objects.get(
+                    id=site_id,
+                    tenant=tenant,
+                    deleted_at__isnull=False
+                )
+            except Site.DoesNotExist:
+                return Response(
+                    {"error": "Deleted site not found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check for ID conflicts with existing sites
+            if Site.objects.filter(tenant=tenant, site_id=site.site_id, deleted_at__isnull=True).exists():
+                return Response(
+                    {"error": f"Site ID '{site.site_id}' already exists. Cannot restore."}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if Site.objects.filter(tenant=tenant, global_id=site.global_id, deleted_at__isnull=True).exists():
+                return Response(
+                    {"error": f"Global ID '{site.global_id}' already exists. Cannot restore."}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            with transaction.atomic():
+                # Restore site
+                site.deleted_at = None
+                site.updated_at = timezone.now()
+                site.save()
+                
+                logger.info(f"Circle site restored: {site.site_id} for tenant {tenant.organization_name}")
+                
+                return Response(
+                    {"message": "Site restored successfully"}, 
+                    status=status.HTTP_200_OK
+                )
+                
+        except Exception as e:
+            logger.error(f"Error restoring site: {str(e)}")
+            return Response(
+                {"error": "Failed to restore site"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SiteClustersView(APIView):
+    """
+    Get list of clusters for the tenant
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def get(self, request):
+        """Get unique clusters for the tenant"""
+        try:
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get unique clusters
+            clusters = Site.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True
+            ).values_list('cluster', flat=True).distinct().order_by('cluster')
+            
+            # Count sites per cluster
+            cluster_data = []
+            for cluster in clusters:
+                if cluster:  # Skip empty clusters
+                    site_count = Site.objects.filter(
+                        tenant=tenant,
+                        cluster=cluster,
+                        deleted_at__isnull=True
+                    ).count()
+                    
+                    cluster_data.append({
+                        'cluster': cluster,
+                        'site_count': site_count
+                    })
+            
+            return Response({
+                'clusters': cluster_data,
+                'total_clusters': len(cluster_data)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching clusters: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch clusters"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class SiteTownsView(APIView):
+    """
+    Get list of towns, optionally filtered by cluster
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def get(self, request):
+        """Get unique towns for the tenant, optionally filtered by cluster"""
+        try:
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            cluster_filter = request.GET.get('cluster')
+            
+            # Base query
+            query = Site.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            
+            # Apply cluster filter if provided
+            if cluster_filter:
+                query = query.filter(cluster=cluster_filter)
+            
+            # Get unique towns
+            towns = query.values_list('town', flat=True).distinct().order_by('town')
+            
+            # Count sites per town
+            town_data = []
+            for town in towns:
+                if town:  # Skip empty towns
+                    site_count_query = Site.objects.filter(
+                        tenant=tenant,
+                        town=town,
+                        deleted_at__isnull=True
+                    )
+                    
+                    # Apply cluster filter for count if provided
+                    if cluster_filter:
+                        site_count_query = site_count_query.filter(cluster=cluster_filter)
+                    
+                    site_count = site_count_query.count()
+                    
+                    town_data.append({
+                        'town': town,
+                        'site_count': site_count,
+                        'cluster': cluster_filter
+                    })
+            
+            return Response({
+                'towns': town_data,
+                'total_towns': len(town_data),
+                'cluster_filter': cluster_filter
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error fetching towns: {str(e)}")
+            return Response(
+                {"error": "Failed to fetch towns"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 class BulkSiteUploadView(APIView):
     """
     Bulk Site Upload for Circle Tenants
@@ -695,9 +1107,47 @@ class BulkSiteUploadView(APIView):
     """
     permission_classes = [IsAuthenticated, IsTenantMember]
     
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
     def post(self, request):
         """Upload multiple sites via Excel/CSV file"""
         try:
+            # Check create permission for bulk upload
+            if not self._check_permission(request.user, "create"):
+                return Response(
+                    {"detail": "You don't have permission to bulk upload sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
             tenant = getattr(request, 'tenant', None)
             if not tenant:
                 return Response(
@@ -786,7 +1236,7 @@ class BulkSiteUploadView(APIView):
                     if not all([site_id, global_id, site_name, town, cluster]):
                         errors.append({
                             "row": index + 2,  # +2 for 1-indexed and header row
-                            "error": "Missing required field(s)"
+                            "error": "Missing required field(s): site_id, global_id, site_name, town, cluster are all required"
                         })
                         error_count += 1
                         continue
@@ -842,7 +1292,7 @@ class BulkSiteUploadView(APIView):
                         tenant=tenant,
                         created_by=user,
                         
-                        # Required fields
+                        # Required specification fields
                         site_id=site_id,
                         global_id=global_id,
                         site_name=site_name,
@@ -852,24 +1302,26 @@ class BulkSiteUploadView(APIView):
                         longitude=longitude,
                         
                         # Optional fields from CSV/Excel
-                        state=str(row.get('state', '')).strip(),
-                        country=str(row.get('country', 'India')).strip(),
-                        district=str(row.get('district', '')).strip(),
-                        postal_code=str(row.get('postal_code', '')).strip(),
-                        elevation=float(row['elevation']) if pd.notna(row.get('elevation')) else None,
-                        
-                        # Site details
+                        address=str(row.get('address', '')).strip(),
                         site_type=str(row.get('site_type', 'tower')).strip(),
-                        access_instructions=str(row.get('access_instructions', '')).strip(),
-                        safety_requirements=str(row.get('safety_requirements', '')).strip(),
                         contact_person=str(row.get('contact_person', '')).strip(),
                         contact_phone=str(row.get('contact_phone', '')).strip(),
-                        landmark_description=str(row.get('landmark_description', '')).strip(),
+                        
+                        # Legacy compatibility fields (populated from spec fields)
+                        name=site_name,  # Copy from site_name
+                        city=town,  # Copy from town
+                        site_code=site_id,  # Copy from site_id
+                        state=str(row.get('state', '')).strip(),
+                        country=str(row.get('country', 'India')).strip(),
+                        postal_code=str(row.get('postal_code', '')).strip(),
+                        description=str(row.get('description', '')).strip(),
+                        contact_email=str(row.get('contact_email', '')).strip(),
                     )
                     
                     created_sites.append({
                         'row': index + 2,
                         'site_id': site.site_id,
+                        'global_id': site.global_id,
                         'site_name': site.site_name,
                         'id': site.id
                     })

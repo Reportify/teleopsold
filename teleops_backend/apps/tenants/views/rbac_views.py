@@ -72,7 +72,7 @@ class PermissionRegistryViewSet(viewsets.ModelViewSet):
     """
     serializer_class = PermissionRegistrySerializer
     permission_classes = [HasRBACPermission]
-    permission_required = 'rbac_management.view_permissions'
+    permission_required = 'rbac.read'
     
     def get_queryset(self):
         """Get permissions for current tenant."""
@@ -862,7 +862,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     """
     serializer_class = PermissionGroupSerializer
     permission_classes = [HasRBACPermission]
-    permission_required = 'rbac_management.view_permissions'
+    permission_required = 'rbac.read'
     
     def get_queryset(self):
         """Get permission groups for current tenant."""
@@ -1540,7 +1540,7 @@ class PermissionAuditViewSet(viewsets.ReadOnlyModelViewSet):
     """
     serializer_class = PermissionAuditTrailSerializer
     permission_classes = [HasRBACPermission]
-    permission_required = 'rbac_management.view_audit_trail'
+    permission_required = 'rbac.audit'
     
     def get_queryset(self):
         """Get audit trail for current tenant."""
@@ -2287,7 +2287,7 @@ class PermissionGroupViewSet(viewsets.ModelViewSet):
     """
     serializer_class = PermissionGroupSerializer
     permission_classes = [HasRBACPermission]
-    permission_required = 'rbac_management.view_permissions'
+    permission_required = 'rbac.read'
     
     def get_queryset(self):
         """Get permission groups for current tenant."""

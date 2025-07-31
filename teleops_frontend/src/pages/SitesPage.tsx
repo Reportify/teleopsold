@@ -1,5 +1,5 @@
 // Circle Site Management Page for Circle Tenants
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Box,
   Typography,
@@ -102,12 +102,9 @@ interface CircleSite {
   safety_requirements: string;
   contact_person: string;
   contact_phone: string;
-  landmark_description: string;
 
   // Operational Information
   has_coordinates: boolean;
-  coordinate_quality: string;
-  accessibility_rating: string;
 
   // Metadata
   created_at: string;
@@ -143,7 +140,6 @@ interface CreateSiteForm {
   safety_requirements: string;
   contact_person: string;
   contact_phone: string;
-  landmark_description: string;
 }
 
 const SitesPage: React.FC = () => {
@@ -209,34 +205,190 @@ const SitesPage: React.FC = () => {
     safety_requirements: "",
     contact_person: "",
     contact_phone: "",
-    landmark_description: "",
   });
 
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadResults, setUploadResults] = useState<any>(null);
+  const [clusters, setClusters] = useState<Array<{ cluster: string; site_count: number }>>([]);
+  const [towns, setTowns] = useState<Array<{ town: string; site_count: number }>>([]);
+  const [clusterFilter, setClusterFilter] = useState("all");
 
-  // Load circle sites
+  // Ref to track if loading is in progress
+  const loadingSitesRef = useRef(false);
+  const loadingClustersRef = useRef(false);
+  const loadingTownsRef = useRef(false);
+
+  // Load circle sites with deduplication
   const loadCircleSites = async () => {
+    if (loadingSitesRef.current) {
+      console.log("🚫 Sites already loading, skipping...");
+      return;
+    }
+
     try {
+      loadingSitesRef.current = true;
       setLoading(true);
-      const response = await api.get("/api/v1/sites/");
+      console.log("🔄 Loading sites data...");
+
+      const response = await api.get("/sites/");
 
       if (response.data) {
         setSites(response.data.sites || []);
         setStatistics(response.data.statistics || {});
         setDistributions(response.data.distributions || {});
         setGeographicAnalysis(response.data.geographic_analysis || {});
+        console.log("✅ Sites data loaded successfully:", response.data.sites?.length, "sites");
+      }
+    } catch (error: any) {
+      console.error("❌ Error loading circle sites:", error);
+      // Don't fail silently - provide user feedback
+      if (error?.response?.status === 403) {
+        console.error("Permission denied - check authentication");
+      } else if (error?.response?.status === 500) {
+        console.error("Server error - backend issue");
+      } else if (error?.code === "ECONNABORTED") {
+        console.error("Request timeout - server taking too long");
+      }
+    } finally {
+      loadingSitesRef.current = false;
+      setLoading(false);
+    }
+  };
+
+  // Load clusters for filtering
+  const loadClusters = async () => {
+    if (loadingClustersRef.current) {
+      console.log("🚫 Clusters already loading, skipping...");
+      return;
+    }
+
+    try {
+      loadingClustersRef.current = true;
+      console.log("🔄 Loading clusters data...");
+      const response = await api.get("/sites/clusters/");
+      if (response.data) {
+        setClusters(response.data.clusters || []);
+        console.log("✅ Clusters loaded:", response.data.clusters?.length, "clusters");
       }
     } catch (error) {
-      console.error("Error loading circle sites:", error);
+      console.error("❌ Error loading clusters:", error);
+    } finally {
+      loadingClustersRef.current = false;
+    }
+  };
+
+  // Load towns for filtering (optionally filtered by cluster)
+  const loadTowns = async (cluster?: string) => {
+    if (loadingTownsRef.current) {
+      console.log("🚫 Towns already loading, skipping...");
+      return;
+    }
+
+    try {
+      loadingTownsRef.current = true;
+      const url = cluster && cluster !== "all" ? `/sites/towns/?cluster=${encodeURIComponent(cluster)}` : "/sites/towns/";
+      console.log("🔄 Loading towns data...", cluster ? `for cluster: ${cluster}` : "all towns");
+      const response = await api.get(url);
+      if (response.data) {
+        setTowns(response.data.towns || []);
+        console.log("✅ Towns loaded:", response.data.towns?.length, "towns");
+      }
+    } catch (error) {
+      console.error("❌ Error loading towns:", error);
+    } finally {
+      loadingTownsRef.current = false;
+    }
+  };
+
+  // Download Excel template
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await api.get("/sites/template/", {
+        responseType: "blob",
+      });
+
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", "sites_upload_template.xlsx");
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error downloading template:", error);
+    }
+  };
+
+  // Export sites
+  const handleExportSites = async (format: "excel" | "csv") => {
+    try {
+      setLoading(true);
+
+      // Build query parameters for filtering
+      const params = new URLSearchParams();
+      params.append("format", format);
+      if (statusFilter !== "all") params.append("status", statusFilter);
+      if (siteTypeFilter !== "all") params.append("site_type", siteTypeFilter);
+      if (clusterFilter !== "all") params.append("cluster", clusterFilter);
+
+      const response = await api.get(`/sites/export/?${params.toString()}`, {
+        responseType: "blob",
+      });
+
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement("a");
+      link.href = url;
+      link.setAttribute("download", `sites_export.${format === "excel" ? "xlsx" : "csv"}`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Error exporting sites:", error);
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadCircleSites();
+    let isMounted = true;
+
+    const loadData = async () => {
+      try {
+        if (isMounted) await loadCircleSites();
+        if (isMounted) await loadClusters();
+        if (isMounted) await loadTowns();
+      } catch (error) {
+        if (isMounted) {
+          console.error("Error loading site data:", error);
+        }
+      }
+    };
+
+    // Add small delay to prevent double mounting issues
+    const timeoutId = setTimeout(loadData, 100);
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+      // Reset loading flags on unmount
+      loadingSitesRef.current = false;
+      loadingClustersRef.current = false;
+      loadingTownsRef.current = false;
+    };
   }, []);
+
+  // Update towns when cluster filter changes (with debounce)
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      loadTowns(clusterFilter);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [clusterFilter]);
 
   // Handle site creation
   const handleCreateSite = async () => {
@@ -250,7 +402,7 @@ const SitesPage: React.FC = () => {
         elevation: createForm.elevation ? parseFloat(createForm.elevation) : null,
       };
 
-      await api.post("/api/v1/sites/", payload);
+      await api.post("/sites/", payload);
 
       // Reset form and close dialog
       setCreateForm({
@@ -272,7 +424,6 @@ const SitesPage: React.FC = () => {
         safety_requirements: "",
         contact_person: "",
         contact_phone: "",
-        landmark_description: "",
       });
       setCreateDialogOpen(false);
 
@@ -296,7 +447,7 @@ const SitesPage: React.FC = () => {
       const formData = new FormData();
       formData.append("file", uploadFile);
 
-      const response = await api.post("/api/v1/sites/bulk-upload/", formData, {
+      const response = await api.post("/sites/bulk-upload/", formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
@@ -304,6 +455,16 @@ const SitesPage: React.FC = () => {
 
       setUploadResults(response.data);
       await loadCircleSites(); // Refresh data
+
+      // Auto-close dialog if upload was completely successful (no errors)
+      if (response.data && !response.data.error && response.data.summary?.error_count === 0) {
+        // Show success message briefly, then close dialog
+        setTimeout(() => {
+          setBulkUploadDialogOpen(false);
+          setUploadFile(null);
+          setUploadResults(null);
+        }, 2000); // Close after 2 seconds to let user see success message
+      }
     } catch (error: any) {
       console.error("Error uploading file:", error);
       setUploadResults({
@@ -317,7 +478,7 @@ const SitesPage: React.FC = () => {
   // Handle site deletion
   const handleDeleteSite = async (siteId: number) => {
     try {
-      await api.delete(`/api/v1/sites/${siteId}/`);
+      await api.delete(`/sites/${siteId}/`);
       await loadCircleSites(); // Refresh data
     } catch (error) {
       console.error("Error deleting site:", error);
@@ -329,14 +490,16 @@ const SitesPage: React.FC = () => {
     const matchesSearch =
       site.site_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       site.site_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      site.global_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       site.town.toLowerCase().includes(searchTerm.toLowerCase()) ||
       site.cluster.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus = statusFilter === "all" || site.status === statusFilter;
     const matchesSiteType = siteTypeFilter === "all" || site.site_type === siteTypeFilter;
+    const matchesCluster = clusterFilter === "all" || site.cluster === clusterFilter;
     const matchesLocation = locationFilter === "all" || site.state === locationFilter || site.town === locationFilter;
 
-    return matchesSearch && matchesStatus && matchesSiteType && matchesLocation;
+    return matchesSearch && matchesStatus && matchesSiteType && matchesCluster && matchesLocation;
   });
 
   // Helper functions
@@ -348,53 +511,6 @@ const SitesPage: React.FC = () => {
         return "error";
       case "maintenance":
         return "warning";
-      default:
-        return "default";
-    }
-  };
-
-  const getCoordinateQualityColor = (quality: string) => {
-    switch (quality) {
-      case "high_precision":
-        return "success";
-      case "medium_precision":
-        return "warning";
-      case "low_precision":
-        return "error";
-      case "no_coordinates":
-        return "error";
-      default:
-        return "default";
-    }
-  };
-
-  const getCoordinateQualityText = (quality: string) => {
-    switch (quality) {
-      case "high_precision":
-        return "High Precision";
-      case "medium_precision":
-        return "Medium Precision";
-      case "low_precision":
-        return "Low Precision";
-      case "no_coordinates":
-        return "No Coordinates";
-      case "placeholder":
-        return "Placeholder";
-      default:
-        return quality;
-    }
-  };
-
-  const getAccessibilityColor = (rating: string) => {
-    switch (rating) {
-      case "excellent":
-        return "success";
-      case "good":
-        return "info";
-      case "fair":
-        return "warning";
-      case "poor":
-        return "error";
       default:
         return "default";
     }
@@ -437,6 +553,21 @@ const SitesPage: React.FC = () => {
             </Typography>
           </Box>
           <Stack direction="row" spacing={2}>
+            <FeatureGate featureId="site_template_download">
+              <Button variant="outlined" startIcon={<Download />} onClick={handleDownloadTemplate}>
+                Download Template
+              </Button>
+            </FeatureGate>
+            <FeatureGate featureId="site_export">
+              <Button variant="outlined" startIcon={<Download />} onClick={() => handleExportSites("excel")}>
+                Export Excel
+              </Button>
+            </FeatureGate>
+            <FeatureGate featureId="site_export">
+              <Button variant="outlined" startIcon={<Download />} onClick={() => handleExportSites("csv")}>
+                Export CSV
+              </Button>
+            </FeatureGate>
             <FeatureGate featureId="site_bulk_upload">
               <Button variant="outlined" startIcon={<Upload />} onClick={() => setBulkUploadDialogOpen(true)}>
                 Bulk Upload
@@ -483,8 +614,8 @@ const SitesPage: React.FC = () => {
             {/* Filters */}
             <Card sx={{ mb: 3 }}>
               <CardContent>
-                <Grid container spacing={3} alignItems="center">
-                  <Grid size={{ xs: 12, md: 3 }}>
+                <Grid container spacing={2} alignItems="center">
+                  <Grid size={{ xs: 12, md: 2.5 }}>
                     <TextField
                       fullWidth
                       variant="outlined"
@@ -496,7 +627,7 @@ const SitesPage: React.FC = () => {
                       }}
                     />
                   </Grid>
-                  <Grid size={{ xs: 12, md: 2 }}>
+                  <Grid size={{ xs: 12, md: 1.5 }}>
                     <FormControl fullWidth>
                       <InputLabel>Status</InputLabel>
                       <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} label="Status">
@@ -507,7 +638,7 @@ const SitesPage: React.FC = () => {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 2 }}>
+                  <Grid size={{ xs: 12, md: 1.5 }}>
                     <FormControl fullWidth>
                       <InputLabel>Site Type</InputLabel>
                       <Select value={siteTypeFilter} onChange={(e) => setSiteTypeFilter(e.target.value)} label="Site Type">
@@ -520,14 +651,27 @@ const SitesPage: React.FC = () => {
                       </Select>
                     </FormControl>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 3 }}>
+                  <Grid size={{ xs: 12, md: 2 }}>
                     <FormControl fullWidth>
-                      <InputLabel>Location</InputLabel>
-                      <Select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} label="Location">
-                        <MenuItem value="all">All Locations</MenuItem>
-                        {Object.keys(distributions.cities).map((city) => (
-                          <MenuItem key={city} value={city}>
-                            {city} ({distributions.cities[city]})
+                      <InputLabel>Cluster</InputLabel>
+                      <Select value={clusterFilter} onChange={(e) => setClusterFilter(e.target.value)} label="Cluster">
+                        <MenuItem value="all">All Clusters</MenuItem>
+                        {clusters.map((cluster) => (
+                          <MenuItem key={cluster.cluster} value={cluster.cluster}>
+                            {cluster.cluster} ({cluster.site_count})
+                          </MenuItem>
+                        ))}
+                      </Select>
+                    </FormControl>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 2 }}>
+                    <FormControl fullWidth>
+                      <InputLabel>Town</InputLabel>
+                      <Select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} label="Town">
+                        <MenuItem value="all">All Towns</MenuItem>
+                        {towns.map((town) => (
+                          <MenuItem key={town.town} value={town.town}>
+                            {town.town} ({town.site_count})
                           </MenuItem>
                         ))}
                       </Select>
@@ -556,7 +700,11 @@ const SitesPage: React.FC = () => {
                         <TableCell>GPS Coordinates</TableCell>
                         <TableCell>Type & Status</TableCell>
                         <TableCell>Contact Info</TableCell>
-                        <TableCell>Quality Metrics</TableCell>
+                        <TableCell>
+                          <Tooltip title="Shows if site has valid GPS coordinates for map display and location services">
+                            <Typography variant="body2">GPS Status</Typography>
+                          </Tooltip>
+                        </TableCell>
                         <TableCell align="center">Actions</TableCell>
                       </TableRow>
                     </TableHead>
@@ -594,12 +742,9 @@ const SitesPage: React.FC = () => {
                           </TableCell>
                           <TableCell>
                             {site.has_coordinates ? (
-                              <Box>
-                                <Typography variant="body2">
-                                  {formatCoordinate(site.latitude)}, {formatCoordinate(site.longitude)}
-                                </Typography>
-                                <Chip label={getCoordinateQualityText(site.coordinate_quality)} color={getCoordinateQualityColor(site.coordinate_quality)} size="small" variant="outlined" />
-                              </Box>
+                              <Typography variant="body2">
+                                {formatCoordinate(site.latitude)}, {formatCoordinate(site.longitude)}
+                              </Typography>
                             ) : (
                               <Chip label="No GPS Data" color="error" size="small" icon={<Warning />} />
                             )}
@@ -631,12 +776,16 @@ const SitesPage: React.FC = () => {
                             </Box>
                           </TableCell>
                           <TableCell>
-                            <Chip label={site.accessibility_rating.toUpperCase()} color={getAccessibilityColor(site.accessibility_rating)} size="small" variant="outlined" />
+                            <Tooltip title={site.has_coordinates ? "Site has valid GPS coordinates for mapping" : "Site missing GPS coordinates"}>
+                              <Chip label={site.has_coordinates ? "GPS Available" : "No GPS"} color={site.has_coordinates ? "success" : "error"} size="small" variant="outlined" />
+                            </Tooltip>
                           </TableCell>
                           <TableCell align="center">
-                            <IconButton onClick={(e) => handleSiteMenuClick(e, site)} size="small">
-                              <MoreVert />
-                            </IconButton>
+                            <FeatureGate featureId="site_view">
+                              <IconButton onClick={(e) => handleSiteMenuClick(e, site)} size="small">
+                                <MoreVert />
+                              </IconButton>
+                            </FeatureGate>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -801,57 +950,65 @@ const SitesPage: React.FC = () => {
 
         {/* Site Actions Menu */}
         <Menu anchorEl={siteMenuAnchor} open={Boolean(siteMenuAnchor)} onClose={handleSiteMenuClose}>
-          <MenuItem
-            onClick={() => {
-              // Handle view site details
-              handleSiteMenuClose();
-            }}
-          >
-            <ListItemIcon>
-              <Visibility fontSize="small" />
-            </ListItemIcon>
-            View Details
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              // Handle edit site
-              handleSiteMenuClose();
-            }}
-          >
-            <ListItemIcon>
-              <Edit fontSize="small" />
-            </ListItemIcon>
-            Edit Site
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              if (selectedSite?.has_coordinates) {
-                window.open(`https://www.google.com/maps?q=${selectedSite.latitude},${selectedSite.longitude}`, "_blank");
-              }
-              handleSiteMenuClose();
-            }}
-            disabled={!selectedSite?.has_coordinates}
-          >
-            <ListItemIcon>
-              <Map fontSize="small" />
-            </ListItemIcon>
-            View on Map
-          </MenuItem>
-          <Divider />
-          <MenuItem
-            onClick={() => {
-              if (selectedSite) {
-                handleDeleteSite(selectedSite.id);
-              }
-              handleSiteMenuClose();
-            }}
-            sx={{ color: "error.main" }}
-          >
-            <ListItemIcon>
-              <Delete fontSize="small" color="error" />
-            </ListItemIcon>
-            Delete Site
-          </MenuItem>
+          <FeatureGate featureId="site_view">
+            <MenuItem
+              onClick={() => {
+                // Handle view site details
+                handleSiteMenuClose();
+              }}
+            >
+              <ListItemIcon>
+                <Visibility fontSize="small" />
+              </ListItemIcon>
+              View Details
+            </MenuItem>
+          </FeatureGate>
+          <FeatureGate featureId="site_edit">
+            <MenuItem
+              onClick={() => {
+                // Handle edit site
+                handleSiteMenuClose();
+              }}
+            >
+              <ListItemIcon>
+                <Edit fontSize="small" />
+              </ListItemIcon>
+              Edit Site
+            </MenuItem>
+          </FeatureGate>
+          <FeatureGate featureId="site_view">
+            <MenuItem
+              onClick={() => {
+                if (selectedSite?.has_coordinates) {
+                  window.open(`https://www.google.com/maps?q=${selectedSite.latitude},${selectedSite.longitude}`, "_blank");
+                }
+                handleSiteMenuClose();
+              }}
+              disabled={!selectedSite?.has_coordinates}
+            >
+              <ListItemIcon>
+                <Map fontSize="small" />
+              </ListItemIcon>
+              View on Map
+            </MenuItem>
+          </FeatureGate>
+          <FeatureGate featureId="site_delete">
+            <Divider />
+            <MenuItem
+              onClick={() => {
+                if (selectedSite) {
+                  handleDeleteSite(selectedSite.id);
+                }
+                handleSiteMenuClose();
+              }}
+              sx={{ color: "error.main" }}
+            >
+              <ListItemIcon>
+                <Delete fontSize="small" color="error" />
+              </ListItemIcon>
+              Delete Site
+            </MenuItem>
+          </FeatureGate>
         </Menu>
 
         {/* Create Site Dialog */}
@@ -1026,18 +1183,6 @@ const SitesPage: React.FC = () => {
                   helperText="Safety requirements and precautions"
                 />
               </Grid>
-
-              <Grid size={{ xs: 12 }}>
-                <TextField
-                  label="Landmark Description"
-                  value={createForm.landmark_description}
-                  onChange={(e) => setCreateForm({ ...createForm, landmark_description: e.target.value })}
-                  fullWidth
-                  multiline
-                  rows={2}
-                  helperText="Nearby landmarks for navigation"
-                />
-              </Grid>
             </Grid>
           </DialogContent>
           <DialogActions>
@@ -1057,6 +1202,20 @@ const SitesPage: React.FC = () => {
                 Upload Excel (.xlsx, .xls) or CSV files with site data. Required columns: site_id, global_id, site_name, town, cluster, latitude, longitude.
               </Alert>
 
+              <Box sx={{ mb: 2, p: 2, bgcolor: "grey.50", borderRadius: 1 }}>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  📄 Need a template?
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  Download our Excel template with sample data and field descriptions to get started quickly.
+                </Typography>
+                <FeatureGate featureId="site_template_download">
+                  <Button variant="outlined" size="small" startIcon={<Download />} onClick={handleDownloadTemplate}>
+                    Download Template
+                  </Button>
+                </FeatureGate>
+              </Box>
+
               <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setUploadFile(e.target.files?.[0] || null)} style={{ marginBottom: 16 }} />
 
               {uploadResults && (
@@ -1064,10 +1223,22 @@ const SitesPage: React.FC = () => {
                   {uploadResults.error ? (
                     <Alert severity="error">{uploadResults.error}</Alert>
                   ) : (
-                    <Alert severity="success">
-                      {uploadResults.message}
-                      <br />
-                      Success: {uploadResults.summary?.success_count}, Errors: {uploadResults.summary?.error_count}
+                    <Alert severity={uploadResults.summary?.error_count === 0 ? "success" : "warning"}>
+                      {uploadResults.summary?.error_count === 0 ? (
+                        <>
+                          🎉 <strong>Upload Successful!</strong> All {uploadResults.summary?.success_count} sites were created successfully.
+                          <br />
+                          <Typography variant="caption" color="text.secondary">
+                            Dialog will close automatically in 2 seconds...
+                          </Typography>
+                        </>
+                      ) : (
+                        <>
+                          {uploadResults.message}
+                          <br />
+                          Success: {uploadResults.summary?.success_count}, Errors: {uploadResults.summary?.error_count}
+                        </>
+                      )}
                     </Alert>
                   )}
 

@@ -232,6 +232,36 @@ class FeatureRegistry:
             required_actions=["create"],
             description="Upload multiple sites via bulk operations"
         ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="site_delete",
+            feature_name="Delete Sites",
+            resource_type="site",
+            component_path="pages/SitesPage",
+            api_endpoints=["/api/v1/sites/{id}/"],
+            required_actions=["delete"],
+            description="Remove sites from the system"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="site_export",
+            feature_name="Export Sites",
+            resource_type="site",
+            component_path="pages/SitesPage",
+            api_endpoints=["/api/v1/sites/export/"],
+            required_actions=["read"],
+            description="Export site data to Excel/CSV formats"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="site_template_download",
+            feature_name="Download Site Template",
+            resource_type="site",
+            component_path="pages/SitesPage",
+            api_endpoints=["/api/v1/sites/template/"],
+            required_actions=["read"],
+            description="Download Excel template for bulk upload"
+        ))
 
         # ==========================================
         # PROJECT MANAGEMENT FEATURES

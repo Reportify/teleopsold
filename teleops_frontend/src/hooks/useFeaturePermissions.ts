@@ -73,6 +73,48 @@ const FRONTEND_FEATURES: Record<string, FeatureDefinition> = {
     requiredActions: ["read"],
     description: "View site information and locations",
   },
+  site_create: {
+    featureId: "site_create",
+    featureName: "Create Sites",
+    resourceType: "site",
+    requiredActions: ["create"],
+    description: "Create new site entries",
+  },
+  site_export: {
+    featureId: "site_export",
+    featureName: "Export Sites",
+    resourceType: "site",
+    requiredActions: ["read"],
+    description: "Export site data to Excel or CSV",
+  },
+  site_bulk_upload: {
+    featureId: "site_bulk_upload",
+    featureName: "Bulk Upload Sites",
+    resourceType: "site",
+    requiredActions: ["create"],
+    description: "Upload multiple sites via Excel/CSV",
+  },
+  site_template_download: {
+    featureId: "site_template_download",
+    featureName: "Download Site Template",
+    resourceType: "site",
+    requiredActions: ["read"],
+    description: "Download site upload template",
+  },
+  site_edit: {
+    featureId: "site_edit",
+    featureName: "Edit Sites",
+    resourceType: "site",
+    requiredActions: ["update"],
+    description: "Edit existing site information",
+  },
+  site_delete: {
+    featureId: "site_delete",
+    featureName: "Delete Sites",
+    resourceType: "site",
+    requiredActions: ["delete"],
+    description: "Delete site entries",
+  },
 
   // User Management
   user_view: {
@@ -259,7 +301,7 @@ const COMPONENT_FEATURE_MAP: Record<string, string[]> = {
   DeviationManagementPage: ["deviation_view", "deviation_edit", "deviation_create"],
   DeviationApprovalPage: ["deviation_approve"],
   ProjectManagementPage: ["project_view"],
-  SitesPage: ["site_view"],
+  SitesPage: ["site_view", "site_create", "site_edit", "site_delete", "site_export", "site_bulk_upload", "site_template_download"],
   ComprehensivePermissionDashboard: ["rbac_permissions_view"],
   PermissionRegistryPage: ["rbac_permissions_view"],
   // Add more component mappings as needed
