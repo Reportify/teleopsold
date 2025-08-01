@@ -31,28 +31,24 @@ class TenantScopedJWTAuthentication(JWTAuthentication):
         Returns:
             Tuple of (user, token) if authentication succeeds, None otherwise
         """
-        logger.debug(f"TenantScopedJWTAuthentication.authenticate called for {request.path}")
+
         
         header = self.get_header(request)
         if header is None:
-            logger.debug("No authorization header found")
             return None
 
         raw_token = self.get_raw_token(header)
         if raw_token is None:
-            logger.debug("No raw token found")
             return None
 
         try:
             validated_token = self.get_validated_token(raw_token)
-            logger.debug("Token validated successfully")
         except Exception as e:
             logger.error(f"Token validation failed: {e}")
             raise
         
         # Get user from token with tenant validation
         user = self.get_user_from_token(validated_token)
-        logger.debug(f"User retrieved from token: {user.email} (type: {user.user_type})")
         
         # Set tenant context from token (preserve if already set by middleware)
         existing_tenant = getattr(request, 'tenant', None)
@@ -60,16 +56,12 @@ class TenantScopedJWTAuthentication(JWTAuthentication):
         
         # Use JWT tenant if available, otherwise preserve middleware tenant
         if tenant:
-            logger.debug(f"Tenant context from JWT: {tenant}")
             request.tenant = tenant
         elif existing_tenant:
-            logger.debug(f"Preserving middleware tenant context: {existing_tenant}")
             request.tenant = existing_tenant
         else:
-            logger.debug("No tenant context available")
             request.tenant = None
         
-        logger.debug(f"Authentication successful for user: {user.email}")
         return (user, validated_token)
     
     def get_tenant_from_token(self, token, request):
@@ -84,7 +76,6 @@ class TenantScopedJWTAuthentication(JWTAuthentication):
             try:
                 user = super().get_user(token)
                 if user and user.user_type == 'teleops':
-                    logger.debug(f"Internal user authenticated: {user.email}")
                     return None  # No tenant context needed for internal users
             except Exception:
                 pass
@@ -94,7 +85,6 @@ class TenantScopedJWTAuthentication(JWTAuthentication):
         
         try:
             tenant = Tenant.objects.get(id=tenant_id, is_active=True)
-            logger.debug(f"Tenant context set from JWT: {tenant.organization_name}")
             return tenant
         except Tenant.DoesNotExist:
             logger.warning(f"Invalid tenant_id in JWT token: {tenant_id}")
@@ -176,7 +166,6 @@ class MultiTenantJWTAuthentication(TenantScopedJWTAuthentication):
                 tenant = self.get_tenant_by_id(requested_tenant_id)
                 if tenant:
                     request.tenant = tenant
-                    logger.info(f"User {user.id} switched to tenant {tenant.organization_name}")
         
         return auth_result
     
@@ -230,7 +219,6 @@ class CircleScopedJWTAuthentication(TenantScopedJWTAuthentication):
         # Set circle context if tenant is a circle
         if tenant and tenant.tenant_type == 'CIRCLE':
             request.circle = tenant
-            logger.debug(f"Circle context set: {tenant.circle_code}")
         
         return auth_result
     

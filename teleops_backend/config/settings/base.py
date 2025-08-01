@@ -370,6 +370,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': False,
         },
+        'django.db.backends': {
+            'handlers': ['console'],
+            'level': 'WARNING',  # Disable SQL query logs
+            'propagate': False,
+        },
         'django.request': {
             'handlers': ['error_file', 'mail_admins'],
             'level': 'ERROR',
@@ -407,6 +412,11 @@ LOGGING = {
         },
         'core.middleware': {
             'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'audit': {
+            'handlers': ['file'],  # Only log to file, not console
             'level': 'INFO',
             'propagate': False,
         },

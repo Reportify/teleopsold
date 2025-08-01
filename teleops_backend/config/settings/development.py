@@ -114,7 +114,12 @@ LOGGING = {
         },
         'django.db.backends': {
             'handlers': ['console'],
-            'level': 'DEBUG',
+            'level': 'WARNING',  # Disable SQL query logs
+            'propagate': False,
+        },
+        'audit': {
+            'handlers': ['file'],  # Only log to file, not console
+            'level': 'INFO',
             'propagate': False,
         },
     },

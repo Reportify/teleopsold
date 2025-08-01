@@ -318,7 +318,7 @@ class CircleSiteManagementView(APIView):
                     'full_address': site.full_address,
                 }
                 
-                logger.info(f"Circle site created: {site.name} for tenant {tenant.organization_name}")
+        
                 
                 return Response(
                     {
@@ -576,7 +576,7 @@ class CircleSiteDetailView(APIView):
                 site.updated_at = timezone.now()
                 site.save()
                 
-                logger.info(f"Circle site updated: {site.site_id} for tenant {tenant.organization_name}")
+
                 
                 return Response(
                     {"message": "Site updated successfully"}, 
@@ -641,7 +641,7 @@ class CircleSiteDetailView(APIView):
                 site.deleted_at = timezone.now()
                 site.save()
                 
-                logger.info(f"Circle site deleted: {site.site_id} for tenant {tenant.organization_name}")
+
                 
                 return Response(
                     {"message": "Site deleted successfully"}, 
@@ -971,7 +971,7 @@ class SiteRestoreView(APIView):
                 site.updated_at = timezone.now()
                 site.save()
                 
-                logger.info(f"Circle site restored: {site.site_id} for tenant {tenant.organization_name}")
+
                 
                 return Response(
                     {"message": "Site restored successfully"}, 

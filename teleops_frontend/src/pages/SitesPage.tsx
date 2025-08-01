@@ -700,11 +700,6 @@ const SitesPage: React.FC = () => {
                         <TableCell>GPS Coordinates</TableCell>
                         <TableCell>Type & Status</TableCell>
                         <TableCell>Contact Info</TableCell>
-                        <TableCell>
-                          <Tooltip title="Shows if site has valid GPS coordinates for map display and location services">
-                            <Typography variant="body2">GPS Status</Typography>
-                          </Tooltip>
-                        </TableCell>
                         <TableCell align="center">Actions</TableCell>
                       </TableRow>
                     </TableHead>
@@ -775,11 +770,6 @@ const SitesPage: React.FC = () => {
                               )}
                             </Box>
                           </TableCell>
-                          <TableCell>
-                            <Tooltip title={site.has_coordinates ? "Site has valid GPS coordinates for mapping" : "Site missing GPS coordinates"}>
-                              <Chip label={site.has_coordinates ? "GPS Available" : "No GPS"} color={site.has_coordinates ? "success" : "error"} size="small" variant="outlined" />
-                            </Tooltip>
-                          </TableCell>
                           <TableCell align="center">
                             <FeatureGate featureId="site_view">
                               <IconButton onClick={(e) => handleSiteMenuClick(e, site)} size="small">
@@ -791,7 +781,7 @@ const SitesPage: React.FC = () => {
                       ))}
                       {filteredSites.length === 0 && (
                         <TableRow>
-                          <TableCell colSpan={7} align="center" sx={{ py: 4 }}>
+                          <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
                             <Typography variant="body2" color="text.secondary">
                               No sites found matching the current filters
                             </Typography>

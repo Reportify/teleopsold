@@ -41,7 +41,7 @@ class TenantMiddleware:
         if tenant_id:
             try:
                 tenant = Tenant.objects.select_related('circle').get(id=tenant_id, is_active=True)
-                logger.debug(f"Tenant context set from header: {tenant.organization_name}")
+        
             except ValueError as e:
                 logger.warning(f"Invalid tenant ID format in header: {tenant_id} - {e}")
                 # Set error context for better debugging
@@ -57,21 +57,22 @@ class TenantMiddleware:
         if not tenant:
             tenant = self.get_tenant_from_subdomain(request)
             if tenant:
-                logger.debug(f"Tenant context set from subdomain: {tenant.organization_name}")
+                pass
+        
         
         # Method 3: From URL path (for API endpoints)
         if not tenant:
             tenant = self.get_tenant_from_path(request)
             if tenant:
-                logger.debug(f"Tenant context set from path: {tenant.organization_name}")
+                pass
         
         # Set tenant context
         request.tenant = tenant
         
         if tenant:
-            logger.debug(f"Final tenant context: {tenant.organization_name} ({tenant.tenant_type})")
+            pass
         else:
-            logger.debug("No tenant context set")
+            pass
     
     def get_tenant_from_subdomain(self, request):
         """
