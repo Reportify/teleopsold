@@ -105,10 +105,10 @@ export const API_ENDPOINTS = {
     MARK_ALL_READ: "/notifications/mark-all-read/",
   },
   RELATIONSHIPS: {
-    LIST: "/circle-vendor-relationships/",
-    DETAIL: (id: number | string) => `/circle-vendor-relationships/${id}/`,
-    UPDATE: (id: number | string) => `/circle-vendor-relationships/${id}/`,
-    PATCH: (id: number | string) => `/circle-vendor-relationships/${id}/`,
+    LIST: "/client-vendor-relationships/",
+    DETAIL: (id: number | string) => `/client-vendor-relationships/${id}/`,
+    UPDATE: (id: number | string) => `/client-vendor-relationships/${id}/`,
+    PATCH: (id: number | string) => `/client-vendor-relationships/${id}/`,
   },
 } as const;
 

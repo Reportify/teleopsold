@@ -6,7 +6,7 @@ from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.core.management import call_command
 from django.contrib.auth import get_user_model
-from .models import Tenant, CircleVendorRelationship, TenantUserProfile
+from .models import Tenant, ClientVendorRelationship, TenantUserProfile
 import logging
 
 User = get_user_model()
@@ -23,7 +23,7 @@ def initialize_tenant_rbac(sender, instance, created, **kwargs):
             logger.info(f"Auto-initializing RBAC for new tenant: {instance.organization_name}")
             
             # Call the Circle Portal RBAC initialization command
-            call_command('init_circle_portal_rbac', tenant_id=str(instance.id))
+            call_command('init_default_rbac', tenant_id=str(instance.id))
             
             logger.info(f"✓ RBAC successfully initialized for tenant: {instance.organization_name}")
             
@@ -89,7 +89,7 @@ def create_default_admin_user(sender, instance, created, **kwargs):
 @receiver(post_save, sender=Tenant)
 def update_vendor_relationships_on_tenant_approval(sender, instance, created, **kwargs):
     """
-    Update CircleVendorRelationship status when tenant approval status changes
+    Update ClientVendorRelationship status when tenant approval status changes
     """
     # Only process for vendor tenants that are not newly created
     if created or instance.tenant_type != 'Vendor':
@@ -97,7 +97,7 @@ def update_vendor_relationships_on_tenant_approval(sender, instance, created, **
     
     try:
         # Find all vendor relationships for this tenant
-        relationships = CircleVendorRelationship.objects.filter(vendor_tenant=instance)
+        relationships = ClientVendorRelationship.objects.filter(vendor_tenant=instance)
         
         for relationship in relationships:
             # Determine the correct relationship status based on tenant status

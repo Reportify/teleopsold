@@ -1,4 +1,4 @@
-// Circle Vendor Management Page for Circle Tenants
+// Vendor Management Page for both Circle and Vendor tenants
 import React, { useState, useEffect, useCallback } from "react";
 import {
   Avatar,
@@ -52,7 +52,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { ModernSnackbar } from "../components";
-import circleVendorService, { VendorRelationship, VendorInviteRequest } from "../services/circleVendorService";
+import clientVendorService, { VendorRelationship, VendorInviteRequest } from "../services/clientVendorService";
 
 interface VendorInviteForm {
   vendor_name: string;
@@ -79,7 +79,7 @@ interface VendorInvitation {
   invitation_token: string;
 }
 
-const CircleVendorManagementPage: React.FC = () => {
+const VendorManagementPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
   const theme = useTheme();
   const [vendors, setVendors] = useState<VendorRelationship[]>([]);
@@ -124,7 +124,7 @@ const CircleVendorManagementPage: React.FC = () => {
   const loadVendorRelationships = useCallback(async () => {
     setLoading(true);
     try {
-      const vendorRelationships = await circleVendorService.getVendorRelationships();
+      const vendorRelationships = await clientVendorService.getVendorRelationships();
       setVendors(vendorRelationships);
     } catch (error: any) {
       console.error("Failed to load vendor relationships:", error);
@@ -300,7 +300,7 @@ const CircleVendorManagementPage: React.FC = () => {
         invitation_expires_at: expires_at,
       };
 
-      await circleVendorService.inviteVendor(inviteData);
+      await clientVendorService.inviteVendor(inviteData);
 
       // Reset form
       setInviteForm({
@@ -485,7 +485,7 @@ const CircleVendorManagementPage: React.FC = () => {
 
   const handleCancelInvitation = async (invitation: VendorInvitation) => {
     try {
-      const result = await circleVendorService.cancelInvitation(invitation.id);
+      const result = await clientVendorService.cancelInvitation(invitation.id);
 
       if (result.success) {
         setSnackbar({
@@ -518,7 +518,7 @@ const CircleVendorManagementPage: React.FC = () => {
         return;
       }
 
-      const result = await circleVendorService.deleteInvitation(invitation.id);
+      const result = await clientVendorService.deleteInvitation(invitation.id);
 
       if (result.success) {
         setSnackbar({
@@ -553,7 +553,7 @@ const CircleVendorManagementPage: React.FC = () => {
         return;
       }
 
-      const result = await circleVendorService.revokeCancellation(invitation.id);
+      const result = await clientVendorService.revokeCancellation(invitation.id);
 
       if (result.success) {
         setSnackbar({
@@ -604,7 +604,7 @@ const CircleVendorManagementPage: React.FC = () => {
         expiryDate.setDate(expiryDate.getDate() + parseInt(resendExpiryOption));
       }
 
-      const result = await circleVendorService.resendInvitation(resendInvitation.id, {
+      const result = await clientVendorService.resendInvitation(resendInvitation.id, {
         expires_at: expiryDate.toISOString(),
       });
 
@@ -672,7 +672,7 @@ const CircleVendorManagementPage: React.FC = () => {
               Vendor Management
             </Typography>
             <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-              Manage vendor relationships, invitations, and performance for {currentTenant?.circle_name} circle
+              Manage vendor relationships, invitations, and performance for your organization
             </Typography>
           </Box>
           <FeatureGate featureId="vendor_create">
@@ -1497,4 +1497,4 @@ const CircleVendorManagementPage: React.FC = () => {
   );
 };
 
-export default CircleVendorManagementPage;
+export default VendorManagementPage;

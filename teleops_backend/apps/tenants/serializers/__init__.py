@@ -2,9 +2,9 @@
 Tenant Serializers Package
 """
 
-# Import from main serializers (Circle/Vendor relationships, Tenant management)
+# Import from main serializers (Client/Vendor relationships, Tenant management)
 from .main_serializers import (
-    CircleVendorRelationshipSerializer,
+    ClientVendorRelationshipSerializer,
     CorporateOnboardingSerializer,
     TenantSerializer,
     TelecomCircleSerializer,
@@ -54,7 +54,7 @@ except ImportError:
 
 __all__ = [
     # Main serializers
-    'CircleVendorRelationshipSerializer',
+    'ClientVendorRelationshipSerializer',
     'CorporateOnboardingSerializer',
     'TenantSerializer',
     'TelecomCircleSerializer',

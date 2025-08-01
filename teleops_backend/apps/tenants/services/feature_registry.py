@@ -102,7 +102,7 @@ class FeatureRegistry:
             feature_name="View Vendors",
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
-            api_endpoints=["/api/v1/vendor-operations/", "/api/v1/circle-vendor-relationships/"],
+            api_endpoints=["/api/v1/vendor-operations/", "/api/v1/client-vendor-relationships/"],
             required_actions=["read"],
             description="View vendor information and relationships"
         ))
@@ -112,7 +112,7 @@ class FeatureRegistry:
             feature_name="Edit Vendors",
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
-            api_endpoints=["/api/v1/vendor-operations/{id}/", "/api/v1/circle-vendor-relationships/{id}/"],
+            api_endpoints=["/api/v1/vendor-operations/{id}/", "/api/v1/client-vendor-relationships/{id}/"],
             required_actions=["update"],
             description="Modify vendor information and contracts"
         ))
@@ -122,7 +122,7 @@ class FeatureRegistry:
             feature_name="Create Vendors",
             resource_type="vendor",
             component_path="pages/VendorOperationsManagementPage",
-            api_endpoints=["/api/v1/vendor-operations/", "/api/v1/circle-vendor-relationships/"],
+            api_endpoints=["/api/v1/vendor-operations/", "/api/v1/client-vendor-relationships/"],
             required_actions=["create"],
             description="Add new vendors and establish relationships"
         ))

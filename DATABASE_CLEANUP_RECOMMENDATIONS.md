@@ -41,10 +41,10 @@ The current `circle_vendor_relationships` table contains significant redundancie
 
 ## 🏗️ **Proposed New Schema**
 
-### **Cleaned CircleVendorRelationship Model**
+### **Cleaned ClientVendorRelationship Model**
 
 ```python
-class CircleVendorRelationship(models.Model):
+class ClientVendorRelationship(models.Model):
     # Core Relationship
     circle_tenant = models.ForeignKey(Tenant, ...)
     vendor_tenant = models.ForeignKey(Tenant, ..., null=True, blank=True)
@@ -99,8 +99,8 @@ def invite_vendor_new_flow(circle_tenant, vendor_data):
         expires_at=vendor_data['invitation_expires_at']
     )
 
-    # 2. Create CircleVendorRelationship (minimal data)
-    relationship = CircleVendorRelationship.objects.create(
+    # 2. Create ClientVendorRelationship (minimal data)
+    relationship = ClientVendorRelationship.objects.create(
         circle_tenant=circle_tenant,
         vendor_code=vendor_data['vendor_code'],
         contact_person_name=vendor_data['contact_person_name'],
@@ -125,8 +125,8 @@ def accept_vendor_invitation(invitation_token):
         coverage_areas=[]  # Fill during onboarding
     )
 
-    # 2. Link to CircleVendorRelationship
-    relationship = CircleVendorRelationship.objects.get(
+    # 2. Link to ClientVendorRelationship
+    relationship = ClientVendorRelationship.objects.get(
         contact_person_name=invitation.contact_name,
         relationship_status='Circle_Invitation_Sent'
     )

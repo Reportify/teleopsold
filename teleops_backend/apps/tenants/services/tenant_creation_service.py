@@ -46,7 +46,7 @@ class TenantCreationService:
             logger.info(f"Created tenant: {tenant.organization_name}")
             
             # Initialize RBAC system for the tenant
-            call_command('init_circle_portal_rbac', tenant_id=str(tenant.id))
+            call_command('init_default_rbac', tenant_id=str(tenant.id))
             logger.info(f"Initialized RBAC for tenant: {tenant.organization_name}")
             
             # Create admin user profile
@@ -90,7 +90,7 @@ class TenantCreationService:
         """
         try:
             tenant = Tenant.objects.get(id=tenant_id)
-            call_command('init_circle_portal_rbac', tenant_id=str(tenant.id))
+            call_command('init_default_rbac', tenant_id=str(tenant.id))
             logger.info(f"Initialized RBAC for existing tenant: {tenant.organization_name}")
             
         except Tenant.DoesNotExist:

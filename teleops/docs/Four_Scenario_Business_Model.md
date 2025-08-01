@@ -789,7 +789,7 @@ class CircleBasedBillingManager:
     def calculate_multi_circle_vendor_bill(vendor_tenant, month, year):
         """Calculate multi-circle vendor billing"""
         # Base multi-circle access fee
-        circle_relationships = CircleVendorRelationship.objects.filter(
+        circle_relationships = ClientVendorRelationship.objects.filter(
             vendor_tenant=vendor_tenant,
             is_active=True
         )

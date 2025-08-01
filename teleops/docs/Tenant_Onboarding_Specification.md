@@ -1262,7 +1262,7 @@ class CircleTenantOnboardingService:
             admin_user = self.create_admin_user(vendor_tenant, registration_data)
 
         # Update the circle-vendor relationship
-        relationship = CircleVendorRelationship.objects.get(
+        relationship = ClientVendorRelationship.objects.get(
             circle_tenant_id=circle_tenant.id,
             vendor_code=invitation.vendor_code
         )
@@ -1290,7 +1290,7 @@ class CircleTenantOnboardingService:
                 raise ValidationError(f"{field} is required")
 
         # Check if vendor code is unique within circle
-        if CircleVendorRelationship.objects.filter(
+        if ClientVendorRelationship.objects.filter(
             circle_tenant_id=circle_tenant.id,
             vendor_code=vendor_data['vendor_code']
         ).exists():
@@ -1300,7 +1300,7 @@ class CircleTenantOnboardingService:
         invitation_token = self.generate_invitation_token()
 
         # Create circle-vendor relationship record
-        relationship = CircleVendorRelationship.objects.create(
+        relationship = ClientVendorRelationship.objects.create(
             circle_tenant_id=circle_tenant.id,
             vendor_name=vendor_data['vendor_name'],
             vendor_code=vendor_data['vendor_code'],
@@ -1412,21 +1412,21 @@ class CircleTenantOnboardingService:
 
     def get_vendor_circle_relationships(self, vendor_tenant_id):
         """Get all circle relationships for a vendor"""
-        return CircleVendorRelationship.objects.filter(
+        return ClientVendorRelationship.objects.filter(
             vendor_tenant_id=vendor_tenant_id,
             is_active=True
         ).select_related('circle_tenant')
 
     def get_circle_vendors(self, circle_tenant_id):
         """Get all vendors for a circle"""
-        return CircleVendorRelationship.objects.filter(
+        return ClientVendorRelationship.objects.filter(
             circle_tenant_id=circle_tenant_id,
             is_active=True
         ).select_related('vendor_tenant')
 
     def update_vendor_verification_status(self, circle_tenant_id, vendor_tenant_id, verification_status, verified_by, notes=None):
         """Update vendor verification status for specific circle relationship"""
-        relationship = CircleVendorRelationship.objects.get(
+        relationship = ClientVendorRelationship.objects.get(
             circle_tenant_id=circle_tenant_id,
             vendor_tenant_id=vendor_tenant_id,
             is_active=True
@@ -1466,7 +1466,7 @@ class CircleTenantOnboardingService:
 
     def get_vendor_status_by_circle(self, vendor_tenant_id):
         """Get vendor's status and roles across all circles"""
-        relationships = CircleVendorRelationship.objects.filter(
+        relationships = ClientVendorRelationship.objects.filter(
             vendor_tenant_id=vendor_tenant_id,
             is_active=True
         ).select_related('circle_tenant')
@@ -1500,7 +1500,7 @@ class CircleTenantOnboardingService:
 
     def can_vendor_access_circle(self, vendor_tenant_id, circle_tenant_id, required_permission=None):
         """Check if vendor has access to specific circle with optional permission check"""
-        relationship = CircleVendorRelationship.objects.filter(
+        relationship = ClientVendorRelationship.objects.filter(
             vendor_tenant_id=vendor_tenant_id,
             circle_tenant_id=circle_tenant_id,
             is_active=True
@@ -1526,7 +1526,7 @@ class CircleTenantOnboardingService:
 
     def get_vendor_circle_permissions(self, vendor_tenant_id, circle_tenant_id):
         """Get vendor's permissions for specific circle"""
-        relationship = CircleVendorRelationship.objects.filter(
+        relationship = ClientVendorRelationship.objects.filter(
             vendor_tenant_id=vendor_tenant_id,
             circle_tenant_id=circle_tenant_id,
             is_active=True

@@ -47,7 +47,7 @@ teleops_backend/domains/tenant_management/models/
 ├── telecom_circle.py           # ✅ TelecomCircle (Master data)
 ├── tenant.py                   # ✅ Tenant (Core hierarchy model)
 ├── corporate_circle.py         # ✅ CorporateCircleRelationship (Independence)
-├── circle_vendor.py            # ✅ CircleVendorRelationship (Circle management)
+├── circle_vendor.py            # ✅ ClientVendorRelationship (Circle management)
 ├── invitations.py              # ✅ TenantInvitation (Workflow management)
 ├── compliance.py               # ✅ TenantComplianceIssue & TenantComplianceDocument
 └── [Domain Complete! 🎯]

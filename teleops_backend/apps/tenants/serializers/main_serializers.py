@@ -13,14 +13,14 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
 from ..models import (
-    Tenant, TenantUserProfile, TelecomCircle, CircleVendorRelationship,
+    Tenant, TenantUserProfile, TelecomCircle, ClientVendorRelationship,
     TenantInvitation, TenantDesignation, VendorCreatedClient,
     VendorClientBilling, TenantDepartment
 )
 
 User = get_user_model()
 
-class CircleVendorRelationshipSerializer(serializers.ModelSerializer):
+class ClientVendorRelationshipSerializer(serializers.ModelSerializer):
     vendor_tenant = serializers.PrimaryKeyRelatedField(
         queryset=Tenant.objects.all(),
         required=False,
@@ -32,7 +32,7 @@ class CircleVendorRelationshipSerializer(serializers.ModelSerializer):
     invitation_data = serializers.SerializerMethodField()
     
     class Meta:
-        model = CircleVendorRelationship
+        model = ClientVendorRelationship
         fields = '__all__'
         # Note: invitation management fields removed (now handled by TenantInvitation)
     
@@ -150,7 +150,7 @@ class CircleVendorRelationshipSerializer(serializers.ModelSerializer):
             # Log error but don't break the serialization
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Failed to link vendor_tenant for CircleVendorRelationship {obj.id}: {e}")
+            logger.error(f"Failed to link vendor_tenant for ClientVendorRelationship {obj.id}: {e}")
             pass
 
 class CorporateOnboardingSerializer(serializers.Serializer):

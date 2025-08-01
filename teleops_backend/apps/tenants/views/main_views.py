@@ -13,9 +13,9 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 # Local imports
-from apps.tenants.models import CircleVendorRelationship, TenantInvitation, TelecomCircle, Tenant, VendorCreatedClient
+from apps.tenants.models import ClientVendorRelationship, TenantInvitation, TelecomCircle, Tenant, VendorCreatedClient
 from apps.tenants.serializers import (
-    CircleVendorRelationshipSerializer,
+    ClientVendorRelationshipSerializer,
     CorporateOnboardingSerializer,
     TenantInvitationSerializer,
     TenantInvitationAcceptSerializer,
@@ -33,9 +33,9 @@ from core.permissions.tenant_permissions import CrossTenantPermission
 logger = logging.getLogger(__name__)
 
 
-class CircleVendorRelationshipViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing circle-vendor relationships"""
-    serializer_class = CircleVendorRelationshipSerializer
+class ClientVendorRelationshipViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing client-vendor relationships"""
+    serializer_class = ClientVendorRelationshipSerializer
     permission_classes = [IsAuthenticated, CrossTenantPermission]
 
     def create(self, request, *args, **kwargs):
@@ -52,9 +52,9 @@ class CircleVendorRelationshipViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # For Circle tenants, automatically set the circle_tenant
-        if tenant.tenant_type == 'Circle':
-            circle_tenant_id = str(tenant.id)
+        # For Circle and Vendor tenants, automatically set the client_tenant
+        if tenant.tenant_type in ['Circle', 'Vendor']:
+            client_tenant_id = str(tenant.id)
         # For Corporate tenants, they need to specify which circle
         elif tenant.tenant_type == 'Corporate':
             if 'circle_tenant' not in request.data:
@@ -62,10 +62,10 @@ class CircleVendorRelationshipViewSet(viewsets.ModelViewSet):
                     {"error": "Circle tenant must be specified"}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            circle_tenant_id = request.data['circle_tenant']
+            client_tenant_id = request.data['circle_tenant']
         else:
             return Response(
-                {"error": "Only Circle and Corporate tenants can invite vendors"}, 
+                {"error": "Only Circle, Vendor and Corporate tenants can invite vendors"}, 
                 status=status.HTTP_403_FORBIDDEN
             )
         
@@ -112,14 +112,14 @@ class CircleVendorRelationshipViewSet(viewsets.ModelViewSet):
                 notes=f"Vendor invitation from circle {tenant.organization_name}"
             )
             
-            # 2. Create CircleVendorRelationship (minimal data)
-            relationship = CircleVendorRelationship.objects.create(
-                circle_tenant_id=circle_tenant_id,
+            # 2. Create ClientVendorRelationship (minimal data)
+            relationship = ClientVendorRelationship.objects.create(
+                client_tenant_id=client_tenant_id,
                 vendor_code=vendor_code,
                 contact_person_name=contact_person_name,
-                relationship_status='Circle_Invitation_Sent',
+                relationship_status='Client_Invitation_Sent',
                 vendor_verification_status='Independent',
-                relationship_type='Circle_Vendor',
+                relationship_type='Client_Vendor',
                 communication_allowed=True,
                 is_active=False,  # Only becomes active after vendor completes onboarding
                 vendor_permissions={},
@@ -154,26 +154,22 @@ class CircleVendorRelationshipViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None)
         
         if not tenant:
-            return CircleVendorRelationship.objects.none()
+            return ClientVendorRelationship.objects.none()
 
         # Corporate: see all relationships for their circles
         if tenant.tenant_type == 'Corporate':
             circle_ids = tenant.child_tenants.filter(tenant_type='Circle').values_list('id', flat=True)
-            return CircleVendorRelationship.objects.filter(circle_tenant_id__in=circle_ids)
+            return ClientVendorRelationship.objects.filter(client_tenant_id__in=circle_ids)
         
-        # Circle: see all relationships for their circle
-        elif tenant.tenant_type == 'Circle':
-            return CircleVendorRelationship.objects.filter(circle_tenant=tenant)
-        
-        # Vendor: see all relationships for their vendor tenant
-        elif tenant.tenant_type == 'Vendor':
-            return CircleVendorRelationship.objects.filter(vendor_tenant=tenant)
+        # Both Circle and Vendor: see relationships where they are the CLIENT
+        elif tenant.tenant_type in ['Circle', 'Vendor']:
+            return ClientVendorRelationship.objects.filter(client_tenant=tenant)
         
         # Superuser fallback
         elif user.is_superuser:
-            return CircleVendorRelationship.objects.all()
+            return ClientVendorRelationship.objects.all()
         
-        return CircleVendorRelationship.objects.none()
+        return ClientVendorRelationship.objects.none()
 
 
 class CorporateOnboardingView(APIView):
@@ -715,7 +711,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        from .services import DualModeVendorService
+        from apps.tenants.services.dual_mode_vendor_service import DualModeVendorService
         self.dual_mode_service = DualModeVendorService()
 
     def _get_vendor_tenant_id(self):
@@ -752,7 +748,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
             
             portfolio = self.dual_mode_service.get_vendor_client_portfolio(vendor_tenant_id)
             
-            from .serializers import VendorClientPortfolioSerializer
+            from apps.tenants.serializers import VendorClientPortfolioSerializer
             serializer = VendorClientPortfolioSerializer(portfolio)
             
             return Response(serializer.data, status=status.HTTP_200_OK)
@@ -778,7 +774,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
             
             clients = self.dual_mode_service.get_associated_clients_only(vendor_tenant_id)
             
-            from .serializers import AssociatedClientSerializer
+            from apps.tenants.serializers import AssociatedClientSerializer
             serializer = AssociatedClientSerializer(clients, many=True)
             
             return Response({
@@ -818,7 +814,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
         try:
             clients = self.dual_mode_service.get_independent_clients_only(vendor_tenant_id)
             
-            from .serializers import IndependentClientSerializer
+            from apps.tenants.serializers import IndependentClientSerializer
             serializer = IndependentClientSerializer(clients, many=True)
             
             return Response({
@@ -837,7 +833,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
     def _create_independent_client(self, vendor_tenant_id, data):
         """Create independent client"""
         try:
-            from .serializers import VendorCreatedClientSerializer
+            from apps.tenants.serializers import VendorCreatedClientSerializer
             
             # Add vendor tenant ID to context for validation
             serializer = VendorCreatedClientSerializer(
@@ -887,7 +883,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
     def _get_independent_client_detail(self, vendor_tenant_id, client_id):
         """Get independent client detail"""
         try:
-            from .serializers import VendorCreatedClientSerializer
+            from apps.tenants.serializers import VendorCreatedClientSerializer
             
             client = VendorCreatedClient.objects.get(
                 id=client_id,
@@ -917,7 +913,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
                 vendor_tenant_id, client_id, data
             )
             
-            from .serializers import VendorCreatedClientSerializer
+            from apps.tenants.serializers import VendorCreatedClientSerializer
             serializer = VendorCreatedClientSerializer(client)
             return Response(serializer.data, status=status.HTTP_200_OK)
             
@@ -967,7 +963,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
             vendor_tenant_id = self._get_vendor_tenant_id()
             self._check_vendor_permission(vendor_tenant_id)
             
-            from .serializers import ClientNameValidationSerializer, ClientNameValidationResponseSerializer
+            from apps.tenants.serializers import ClientNameValidationSerializer, ClientNameValidationResponseSerializer
             
             serializer = ClientNameValidationSerializer(data=request.data)
             if serializer.is_valid():
@@ -1006,7 +1002,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
                 vendor_tenant_id, months
             )
             
-            from .serializers import VendorBillingSummarySerializer
+            from apps.tenants.serializers import VendorBillingSummarySerializer
             serializer = VendorBillingSummarySerializer(billing_summary)
             return Response(serializer.data, status=status.HTTP_200_OK)
             
@@ -1031,7 +1027,7 @@ class DualModeVendorViewSet(viewsets.ViewSet):
             
             analytics = self.dual_mode_service.calculate_conversion_analytics(vendor_tenant_id)
             
-            from .serializers import ConversionAnalyticsSerializer
+            from apps.tenants.serializers import ConversionAnalyticsSerializer
             serializer = ConversionAnalyticsSerializer(analytics)
             return Response(serializer.data, status=status.HTTP_200_OK)
             

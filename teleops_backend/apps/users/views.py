@@ -159,8 +159,8 @@ class LoginView(TokenObtainPairView):
                 'circles.oversight',
                 'corporate.reporting'
             ])
-        elif user.is_circle_user or self._has_tenant_profile(user):
-            # Get permissions from RBAC system for circle users and any tenant users
+        elif user.is_circle_user or user.is_vendor_user or self._has_tenant_profile(user):
+            # Get permissions from RBAC system for circle users, vendor users, and any tenant users
             try:
                 # Import required models first
                 from apps.tenants.models import TenantUserProfile
@@ -205,16 +205,6 @@ class LoginView(TokenObtainPairView):
                 
                 # Fallback permissions if RBAC fails  
                 permissions.extend(['dashboard.view'])
-        elif user.is_vendor_user:
-            permissions.extend([
-                'dashboard.view',
-                'tasks.view',
-                'equipment.view',
-                'warehouse.view',
-                'transport.view',
-                'analytics.view',
-                'profile.view'
-            ])
         
         return permissions
     
@@ -391,8 +381,8 @@ class VerifyTokenView(generics.GenericAPIView):
                 'circles.oversight',
                 'corporate.reporting'
             ])
-        elif user.is_circle_user or self._has_tenant_profile(user):
-            # Get permissions from RBAC system for circle users and any tenant users
+        elif user.is_circle_user or user.is_vendor_user or self._has_tenant_profile(user):
+            # Get permissions from RBAC system for circle users, vendor users, and any tenant users
             try:
                 # Import required models first
                 from apps.tenants.models import TenantUserProfile
@@ -437,16 +427,6 @@ class VerifyTokenView(generics.GenericAPIView):
                 
                 # Fallback permissions if RBAC fails  
                 permissions.extend(['dashboard.view'])
-        elif user.is_vendor_user:
-            permissions.extend([
-                'dashboard.view',
-                'tasks.view',
-                'equipment.view',
-                'warehouse.view',
-                'transport.view',
-                'analytics.view',
-                'profile.view'
-            ])
         
         return permissions
     

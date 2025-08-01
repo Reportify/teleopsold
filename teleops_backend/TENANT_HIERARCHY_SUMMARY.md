@@ -81,10 +81,10 @@ class CorporateCircleRelationship(models.Model):
     data_sharing_level = models.CharField()  # None, Aggregated, Full
 ```
 
-### 4. CircleVendorRelationship
+### 4. ClientVendorRelationship
 
 ```python
-class CircleVendorRelationship(models.Model):
+class ClientVendorRelationship(models.Model):
     circle_tenant = models.ForeignKey(Tenant)
     vendor_tenant = models.ForeignKey(Tenant)
 

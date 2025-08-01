@@ -225,7 +225,7 @@ PUT /api/vendor-relationships/{relationship_id}/revenue-share/
 
 ### Legacy Support Maintained
 
-- **Existing CircleVendorRelationship**: Fully preserved for existing users
+- **Existing ClientVendorRelationship**: Fully preserved for existing users
 - **Gradual migration path**: Can coexist with enhanced model
 - **API backward compatibility**: All existing endpoints continue to work
 - **Data preservation**: No breaking changes to existing data

@@ -211,8 +211,8 @@ class Tenant(models.Model):
     def vendor_relationships(self):
         """Get vendor relationships for circle tenants"""
         if self.tenant_type == 'Circle':
-            return self.circle_vendor_relationships.filter(is_active=True)
-        return CircleVendorRelationship.objects.none()
+            return self.client_vendor_relationships.filter(is_active=True)
+        return ClientVendorRelationship.objects.none()
 
 
 class CorporateCircleRelationship(models.Model):
@@ -296,26 +296,26 @@ class CorporateCircleRelationship(models.Model):
             raise ValidationError("Circle tenant must be of type 'Circle'")
 
 
-class CircleVendorRelationship(models.Model):
-    """Circle-specific vendor relationships and permissions"""
+class ClientVendorRelationship(models.Model):
+    """Client-Vendor relationship management"""
     
     # Relationship Types
     RELATIONSHIP_TYPE_CHOICES = [
-        ('Circle_Vendor', 'Circle Vendor'),
+        ('Client_Vendor', 'Client Vendor'),
         ('Partnership', 'Partnership'),
         ('Subcontractor', 'Subcontractor'),
     ]
     
     # Relationship Status
     RELATIONSHIP_STATUS_CHOICES = [
-        ('Circle_Invitation_Sent', 'Circle Invitation Sent'),
+        ('Client_Invitation_Sent', 'Client Invitation Sent'),
         ('Active', 'Active'),
         ('Suspended', 'Suspended'),
         ('Terminated', 'Terminated'),
         ('Expired', 'Expired'),
     ]
     
-    # Vendor Verification Status (per circle)
+    # Vendor Verification Status (per client)
     VENDOR_VERIFICATION_STATUS_CHOICES = [
         ('Independent', 'Independent'),
         ('Pending_Verification', 'Pending Verification'),
@@ -331,10 +331,10 @@ class CircleVendorRelationship(models.Model):
         ('None', 'None'),
     ]
 
-    circle_tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, 
-                                     related_name='circle_vendor_relationships')
+    client_tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, 
+                                     related_name='client_vendor_relationships')
     vendor_tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, 
-                                     related_name='vendor_circle_relationships', null=True, blank=True)
+                                     related_name='vendor_client_relationships', null=True, blank=True)
     
     # Vendor Information (minimal for invitation process)
     vendor_code = models.CharField(max_length=100, help_text="Client-generated vendor code (from client's existing vendor management system)")
@@ -345,16 +345,16 @@ class CircleVendorRelationship(models.Model):
     
     # Relationship Details
     relationship_type = models.CharField(max_length=50, choices=RELATIONSHIP_TYPE_CHOICES, 
-                                        default='Circle_Vendor')
+                                        default='Client_Vendor')
     relationship_status = models.CharField(max_length=50, choices=RELATIONSHIP_STATUS_CHOICES, 
-                                          default='Circle_Invitation_Sent')
+                                          default='Client_Invitation_Sent')
     
-    # Vendor Verification Status (circle-specific)
+    # Vendor Verification Status (client-specific)
     vendor_verification_status = models.CharField(
         max_length=50,
         choices=VENDOR_VERIFICATION_STATUS_CHOICES,
         default='Independent',
-        help_text="Vendor verification status for this circle relationship"
+        help_text="Vendor verification status for this client relationship"
     )
     
     # Permissions and Access
@@ -365,7 +365,7 @@ class CircleVendorRelationship(models.Model):
     
     # Relationship Management (invitation management moved to TenantInvitation table)
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, 
-                                   related_name='approved_circle_vendor_relationships')
+                                   related_name='approved_client_vendor_relationships')
     approved_at = models.DateTimeField(null=True, blank=True)
     
     # Status and Notes
@@ -376,15 +376,15 @@ class CircleVendorRelationship(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'circle_vendor_relationships'
-        verbose_name = _('Circle Vendor Relationship')
-        verbose_name_plural = _('Circle Vendor Relationships')
+        db_table = 'client_vendor_relationships'
+        verbose_name = _('Client Vendor Relationship')
+        verbose_name_plural = _('Client Vendor Relationships')
         unique_together = [
-            ['circle_tenant', 'vendor_code'],  # Client-generated vendor codes (unique per client)
-            ['circle_tenant', 'vendor_tenant'],  # One relationship per circle-vendor pair
+            ['client_tenant', 'vendor_code'],  # Client-generated vendor codes (unique per client)
+            ['client_tenant', 'vendor_tenant'],  # One relationship per client-vendor pair
         ]
         indexes = [
-            models.Index(fields=['circle_tenant']),
+            models.Index(fields=['client_tenant']),
             models.Index(fields=['vendor_tenant']),
             models.Index(fields=['vendor_code']),
             models.Index(fields=['relationship_status']),
@@ -392,14 +392,14 @@ class CircleVendorRelationship(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.circle_tenant.organization_name} → {self.vendor_name or self.vendor_tenant.organization_name}"
+        return f"{self.client_tenant.organization_name} → {self.vendor_tenant.organization_name if self.vendor_tenant else 'Unknown Vendor'}"
 
     def clean(self):
         """Validate relationship types"""
         from django.core.exceptions import ValidationError
         
-        if self.circle_tenant.tenant_type != 'Circle':
-            raise ValidationError("Circle tenant must be of type 'Circle'")
+        if self.client_tenant.tenant_type not in ['Circle', 'Vendor']:
+            raise ValidationError("Client tenant must be of type 'Circle' or 'Vendor'")
         
         if self.vendor_tenant and self.vendor_tenant.tenant_type != 'Vendor':
             raise ValidationError("Vendor tenant must be of type 'Vendor'")

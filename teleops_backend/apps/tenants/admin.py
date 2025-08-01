@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.utils.html import format_html
-from .models import TelecomCircle, Tenant, CorporateCircleRelationship, CircleVendorRelationship, TenantInvitation
+from .models import TelecomCircle, Tenant, CorporateCircleRelationship, ClientVendorRelationship, TenantInvitation
 
 
 @admin.register(TelecomCircle)
@@ -127,10 +127,10 @@ class CorporateCircleRelationshipAdmin(admin.ModelAdmin):
         return super().get_queryset(request).select_related('corporate_tenant', 'circle_tenant')
 
 
-@admin.register(CircleVendorRelationship)
-class CircleVendorRelationshipAdmin(admin.ModelAdmin):
+@admin.register(ClientVendorRelationship)
+class ClientVendorRelationshipAdmin(admin.ModelAdmin):
     list_display = [
-        'circle_tenant', 'vendor_tenant', 'vendor_code', 'relationship_status',
+        'client_tenant', 'vendor_tenant', 'vendor_code', 'relationship_status',
         'vendor_verification_status', 'is_active', 'created_at'
     ]
     list_filter = [
@@ -138,14 +138,14 @@ class CircleVendorRelationshipAdmin(admin.ModelAdmin):
         'contact_access_level', 'communication_allowed', 'is_active'
     ]
     search_fields = [
-        'circle_tenant__organization_name', 'vendor_tenant__organization_name',
+        'client_tenant__organization_name', 'vendor_tenant__organization_name',
         'vendor_code', 'contact_person_name'
     ]
-    ordering = ['circle_tenant__organization_name', 'vendor_code']
+    ordering = ['client_tenant__organization_name', 'vendor_code']
     
     fieldsets = (
         ('Relationship', {
-            'fields': ('circle_tenant', 'vendor_tenant', 'vendor_code', 'contact_person_name', 'relationship_type')
+            'fields': ('client_tenant', 'vendor_tenant', 'vendor_code', 'contact_person_name', 'relationship_type')
         }),
         ('Status and Performance', {
             'fields': ('relationship_status', 'vendor_verification_status', 'performance_rating')
@@ -164,7 +164,7 @@ class CircleVendorRelationshipAdmin(admin.ModelAdmin):
     
     def get_queryset(self, request):
         return super().get_queryset(request).select_related(
-            'circle_tenant', 'vendor_tenant', 'invited_by', 'approved_by'
+            'client_tenant', 'vendor_tenant', 'invited_by', 'approved_by'
         )
 
 

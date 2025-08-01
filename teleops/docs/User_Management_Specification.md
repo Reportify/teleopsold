@@ -1067,7 +1067,7 @@ class UserManagementService:
 
         elif tenant.tenant_type == 'Vendor':
             # Vendor users have multi-circle access based on ACTIVE contracts only
-            circle_relationships = CircleVendorRelationship.objects.filter(
+            circle_relationships = ClientVendorRelationship.objects.filter(
                 vendor_tenant_id=tenant.id,
                 is_active=True
             ).values_list('circle_tenant_id', flat=True)
@@ -1124,7 +1124,7 @@ class UserManagementService:
 
         elif tenant.tenant_type == 'Vendor':
             # Vendor users can access circles they have relationships with
-            return CircleVendorRelationship.objects.filter(
+            return ClientVendorRelationship.objects.filter(
                 vendor_tenant_id=tenant.id,
                 circle_tenant_id=circle_tenant_id,
                 is_active=True

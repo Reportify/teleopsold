@@ -164,7 +164,7 @@ class Command(BaseCommand):
             # User Management Permissions
             {
                 'permission_name': 'View Users',
-                'permission_code': 'user_management.view_users',
+                'permission_code': 'user.read',
                 'permission_category': 'User Management',
                 'description': 'View user profiles and basic information',
                 'permission_type': 'access',
@@ -176,7 +176,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Create Users',
-                'permission_code': 'user_management.create_users',
+                'permission_code': 'user.create',
                 'permission_category': 'User Management',
                 'description': 'Create new user accounts and profiles',
                 'permission_type': 'action',
@@ -188,7 +188,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Edit Users',
-                'permission_code': 'user_management.edit_users',
+                'permission_code': 'user.update',
                 'permission_category': 'User Management',
                 'description': 'Edit user profiles, information, and settings',
                 'permission_type': 'action',
@@ -200,7 +200,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Delete Users',
-                'permission_code': 'user_management.delete_users',
+                'permission_code': 'user.delete',
                 'permission_category': 'User Management',
                 'description': 'Delete or deactivate user accounts',
                 'permission_type': 'action',
@@ -212,7 +212,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Reset Passwords',
-                'permission_code': 'user_management.reset_passwords',
+                'permission_code': 'user.reset_password',
                 'permission_category': 'User Management',
                 'description': 'Reset user passwords and authentication credentials',
                 'permission_type': 'action',
@@ -226,7 +226,7 @@ class Command(BaseCommand):
             # Project Management Permissions
             {
                 'permission_name': 'View Projects',
-                'permission_code': 'project_management.view_projects',
+                'permission_code': 'project.read',
                 'permission_category': 'Project Management',
                 'description': 'View project information, details, and status',
                 'permission_type': 'access',
@@ -238,7 +238,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Create Projects',
-                'permission_code': 'project_management.create_projects',
+                'permission_code': 'project.create',
                 'permission_category': 'Project Management',
                 'description': 'Create new projects and initialize project settings',
                 'permission_type': 'action',
@@ -250,7 +250,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Edit Projects',
-                'permission_code': 'project_management.edit_projects',
+                'permission_code': 'project.update',
                 'permission_category': 'Project Management',
                 'description': 'Edit project information, settings, and configurations',
                 'permission_type': 'action',
@@ -262,7 +262,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Archive Projects',
-                'permission_code': 'project_management.archive_projects',
+                'permission_code': 'project.delete',
                 'permission_category': 'Project Management',
                 'description': 'Archive completed or inactive projects',
                 'permission_type': 'action',
@@ -272,23 +272,12 @@ class Command(BaseCommand):
                 'effect': 'allow',
                 'is_auditable': True
             },
-            {
-                'permission_name': 'Manage Deviation Forms',
-                'permission_code': 'project_management.deviation_forms',
-                'permission_category': 'Project Management',
-                'description': 'Create, review, and approve project deviation forms',
-                'permission_type': 'action',
-                'risk_level': 'high',
-                'requires_scope': True,
-                'is_delegatable': False,
-                'effect': 'allow',
-                'is_auditable': True
-            },
+
             
             # Site Management Permissions
             {
                 'permission_name': 'View Sites',
-                'permission_code': 'site_management.view_sites',
+                'permission_code': 'site.read',
                 'permission_category': 'Site Management',
                 'description': 'View site information, locations, and details',
                 'permission_type': 'access',
@@ -300,7 +289,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Create Sites',
-                'permission_code': 'site_management.create_sites',
+                'permission_code': 'site.create',
                 'permission_category': 'Site Management',
                 'description': 'Create new site entries and configure site settings',
                 'permission_type': 'action',
@@ -312,7 +301,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Edit Sites',
-                'permission_code': 'site_management.edit_sites',
+                'permission_code': 'site.update',
                 'permission_category': 'Site Management',
                 'description': 'Edit site information, settings, and configurations',
                 'permission_type': 'action',
@@ -324,7 +313,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Bulk Upload Sites',
-                'permission_code': 'site_management.bulk_upload_sites',
+                'permission_code': 'site.bulk_upload',
                 'permission_category': 'Site Management',
                 'description': 'Upload multiple sites via bulk import operations',
                 'permission_type': 'action',
@@ -338,7 +327,7 @@ class Command(BaseCommand):
             # Task Management Permissions
             {
                 'permission_name': 'View Tasks',
-                'permission_code': 'task_management.view_tasks',
+                'permission_code': 'task.read',
                 'permission_category': 'Task Management',
                 'description': 'View task assignments, progress, and details',
                 'permission_type': 'access',
@@ -350,7 +339,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Create Tasks',
-                'permission_code': 'task_management.create_tasks',
+                'permission_code': 'task.create',
                 'permission_category': 'Task Management',
                 'description': 'Create new tasks and task templates',
                 'permission_type': 'action',
@@ -362,7 +351,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Assign Tasks',
-                'permission_code': 'task_management.assign_tasks',
+                'permission_code': 'task.assign',
                 'permission_category': 'Task Management',
                 'description': 'Assign tasks to users, teams, or roles',
                 'permission_type': 'action',
@@ -374,7 +363,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Update Task Status',
-                'permission_code': 'task_management.update_status',
+                'permission_code': 'task.update',
                 'permission_category': 'Task Management',
                 'description': 'Update task status and progress information',
                 'permission_type': 'action',
@@ -388,7 +377,7 @@ class Command(BaseCommand):
             # RBAC Management Permissions
             {
                 'permission_name': 'View Permissions',
-                'permission_code': 'rbac_management.view_permissions',
+                'permission_code': 'rbac.read',
                 'permission_category': 'RBAC Management',
                 'description': 'View permission configurations and assignments',
                 'permission_type': 'access',
@@ -400,7 +389,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Manage Permissions',
-                'permission_code': 'rbac_management.manage_permissions',
+                'permission_code': 'rbac.update',
                 'permission_category': 'RBAC Management',
                 'description': 'Create, edit, and delete custom permissions',
                 'permission_type': 'administrative',
@@ -412,7 +401,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Grant Permissions',
-                'permission_code': 'rbac_management.grant_permissions',
+                'permission_code': 'rbac.grant',
                 'permission_category': 'RBAC Management',
                 'description': 'Grant and revoke permissions to users and roles',
                 'permission_type': 'administrative',
@@ -424,7 +413,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Manage Groups',
-                'permission_code': 'rbac_management.manage_groups',
+                'permission_code': 'rbac.manage_groups',
                 'permission_category': 'RBAC Management',
                 'description': 'Create, edit, and delete permission groups',
                 'permission_type': 'administrative',
@@ -436,7 +425,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'View Audit Trail',
-                'permission_code': 'rbac_management.view_audit_trail',
+                'permission_code': 'rbac.audit',
                 'permission_category': 'RBAC Management',
                 'description': 'View security and permission audit logs',
                 'permission_type': 'access',
@@ -450,7 +439,7 @@ class Command(BaseCommand):
             # System Administration Permissions
             {
                 'permission_name': 'System Configuration',
-                'permission_code': 'system_administration.system_config',
+                'permission_code': 'system.configure',
                 'permission_category': 'System Administration',
                 'description': 'Configure system-wide settings and parameters',
                 'permission_type': 'administrative',
@@ -462,7 +451,7 @@ class Command(BaseCommand):
             },
             {
                 'permission_name': 'Tenant Management',
-                'permission_code': 'system_administration.tenant_management',
+                'permission_code': 'system.manage_tenants',
                 'permission_category': 'System Administration',
                 'description': 'Manage tenant settings and configurations',
                 'permission_type': 'administrative',
@@ -508,30 +497,9 @@ class Command(BaseCommand):
         
         groups_data = [
             {
-                'group_name': 'Tenant Administrators',
-                'group_code': 'tenant_administrators',
-                'description': 'Full administrative access to all tenant resources and settings',
-                'group_type': 'administrative',
-                'is_system_group': True
-            },
-            {
                 'group_name': 'Project Managers',
                 'group_code': 'project_managers',
                 'description': 'Manage projects, sites, and coordinate team activities',
-                'group_type': 'functional',
-                'is_system_group': True
-            },
-            {
-                'group_name': 'Site Coordinators',
-                'group_code': 'site_coordinators',
-                'description': 'Coordinate site operations and manage site-specific tasks',
-                'group_type': 'functional',
-                'is_system_group': True
-            },
-            {
-                'group_name': 'Field Engineers',
-                'group_code': 'field_engineers',
-                'description': 'Execute field work and update task progress',
                 'group_type': 'functional',
                 'is_system_group': True
             },
@@ -577,71 +545,25 @@ class Command(BaseCommand):
         """Assign permissions to system groups."""
         
         group_permissions = {
-            'tenant_administrators': [
-                # Full access to everything
-                'user_management.view_users',
-                'user_management.create_users',
-                'user_management.edit_users',
-                'user_management.delete_users',
-                'user_management.reset_passwords',
-                'project_management.view_projects',
-                'project_management.create_projects',
-                'project_management.edit_projects',
-                'project_management.archive_projects',
-                'project_management.deviation_forms',
-                'site_management.view_sites',
-                'site_management.create_sites',
-                'site_management.edit_sites',
-                'site_management.bulk_upload_sites',
-                'task_management.view_tasks',
-                'task_management.create_tasks',
-                'task_management.assign_tasks',
-                'task_management.update_status',
-                'rbac_management.view_permissions',
-                'rbac_management.manage_permissions',
-                'rbac_management.grant_permissions',
-                'rbac_management.manage_groups',
-                'rbac_management.view_audit_trail',
-                'system_administration.system_config',
-                'system_administration.tenant_management'
-            ],
             'project_managers': [
-                'user_management.view_users',
-                'project_management.view_projects',
-                'project_management.create_projects',
-                'project_management.edit_projects',
-                'project_management.deviation_forms',
-                'site_management.view_sites',
-                'site_management.create_sites',
-                'site_management.edit_sites',
-                'site_management.bulk_upload_sites',
-                'task_management.view_tasks',
-                'task_management.create_tasks',
-                'task_management.assign_tasks',
-                'task_management.update_status'
-            ],
-            'site_coordinators': [
-                'user_management.view_users',
-                'project_management.view_projects',
-                'site_management.view_sites',
-                'site_management.edit_sites',
-                'task_management.view_tasks',
-                'task_management.create_tasks',
-                'task_management.assign_tasks',
-                'task_management.update_status'
-            ],
-            'field_engineers': [
-                'user_management.view_users',
-                'project_management.view_projects',
-                'site_management.view_sites',
-                'task_management.view_tasks',
-                'task_management.update_status'
+                'user.read',
+                'project.read',
+                'project.create',
+                'project.update',
+                'site.read',
+                'site.create',
+                'site.update',
+                'site.bulk_upload',
+                'task.read',
+                'task.create',
+                'task.assign',
+                'task.update'
             ],
             'basic_users': [
-                'user_management.view_users',
-                'project_management.view_projects',
-                'site_management.view_sites',
-                'task_management.view_tasks'
+                'user.read',
+                'project.read',
+                'site.read',
+                'task.read'
             ]
         }
         

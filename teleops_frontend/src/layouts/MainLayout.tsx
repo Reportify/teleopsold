@@ -122,8 +122,8 @@ const corporateNavigationItems = [
   },
 ];
 
-// Circle tenant navigation (operational management)
-const circleNavigationItems = [
+// Unified navigation for both Circle and Vendor tenants
+const unifiedNavigationItems = [
   {
     text: "Dashboard",
     icon: <Dashboard />,
@@ -146,13 +146,6 @@ const circleNavigationItems = [
     description: "Site operations",
   },
   {
-    text: "Teams",
-    icon: <People />,
-    path: "/teams",
-    permission: "teams.view",
-    description: "Team management",
-  },
-  {
     text: "Vendors",
     icon: <SupervisorAccount />,
     path: "/vendors",
@@ -160,11 +153,25 @@ const circleNavigationItems = [
     description: "Vendor management and relationships",
   },
   {
+    text: "Clients",
+    icon: <Business />,
+    path: "/clients",
+    permission: "clients.manage",
+    description: "Client management and relationships",
+  },
+  {
+    text: "Teams",
+    icon: <People />,
+    path: "/teams",
+    permission: "teams.view",
+    description: "Team management",
+  },
+  {
     text: "Users",
     icon: <Group />,
     path: "/users",
     permission: "users.manage",
-    description: "Circle user management and designations",
+    description: "User management and designations",
   },
   {
     text: "Equipment",
@@ -199,7 +206,7 @@ const circleNavigationItems = [
     icon: <Settings />,
     path: "/settings",
     permission: "settings.view",
-    description: "Circle settings",
+    description: "Settings and configuration",
   },
   {
     text: "Designations",
@@ -221,66 +228,6 @@ const circleNavigationItems = [
     path: "/rbac/comprehensive-dashboard",
     permission: "rbac.manage",
     description: "Advanced permission analysis and insights",
-  },
-];
-
-// Vendor tenant navigation (service delivery)
-const vendorNavigationItems = [
-  {
-    text: "Dashboard",
-    icon: <Dashboard />,
-    path: "/dashboard",
-    permission: "dashboard.view",
-    description: "Service overview",
-  },
-  {
-    text: "Projects",
-    icon: <Assignment />,
-    path: "/projects",
-    permission: "projects.view",
-    description: "Assigned projects",
-  },
-  {
-    text: "Teams",
-    icon: <People />,
-    path: "/teams",
-    permission: "teams.view",
-    description: "Service teams",
-  },
-  {
-    text: "Operations Management",
-    icon: <AdminPanelSettings />,
-    path: "/vendor-operations",
-    permission: "operations.manage",
-    description: "Manage designations, certifications, and employee readiness",
-  },
-  {
-    text: "Designations",
-    icon: <Shield />,
-    path: "/designations",
-    permission: "designations.manage",
-    description: "Manage organizational roles and designations",
-  },
-  {
-    text: "Equipment",
-    icon: <Inventory />,
-    path: "/equipment",
-    permission: "equipment.view",
-    description: "Equipment tracking",
-  },
-  {
-    text: "Reports",
-    icon: <Assessment />,
-    path: "/analytics",
-    permission: "analytics.view",
-    description: "Service reports",
-  },
-  {
-    text: "Settings",
-    icon: <Settings />,
-    path: "/settings",
-    permission: "settings.view",
-    description: "Vendor settings",
   },
 ];
 
@@ -306,9 +253,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // Get navigation items based on tenant type
   const getNavigationItems = () => {
     if (isCorporateUser()) return corporateNavigationItems;
-    if (isCircleUser()) return circleNavigationItems;
-    if (isVendorUser()) return vendorNavigationItems;
-    return circleNavigationItems; // Default fallback
+    return unifiedNavigationItems; // For both Circle and Vendor
   };
 
   const navigationItems = getNavigationItems();
@@ -361,6 +306,18 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (isCircleUser()) return "Circle";
     if (isVendorUser()) return "Vendor";
     return "Tenant";
+  };
+
+  // Tenant context component for optional parent display
+  const TenantContext = () => {
+    return (
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <Typography variant="body2" fontWeight={500}>
+          {currentTenant.organization_name}
+        </Typography>
+        {currentTenant.parent_tenant && <Chip label={`Part of ${currentTenant.parent_tenant.organization_name}`} size="small" variant="outlined" />}
+      </Box>
+    );
   };
 
   return (
@@ -593,7 +550,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       >
         {/* Google Style Navigation */}
         <Box sx={{ pt: 2 }}>
-          {navigationItems.map((item) => (
+          {navigationItems.map((item: any) => (
             <ListItem key={item.text} disablePadding sx={{ display: "block", px: 1 }}>
               <ListItemButton
                 component={RouterLink}

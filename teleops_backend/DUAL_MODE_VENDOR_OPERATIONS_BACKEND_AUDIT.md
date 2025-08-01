@@ -63,7 +63,7 @@ class VendorRelationship(models.Model):
     vendor_code = models.CharField()  # Respects client vendor management systems
 
 # ✅ GOOD: Legacy circle-vendor relationships maintained
-class CircleVendorRelationship(models.Model):
+class ClientVendorRelationship(models.Model):
     circle_tenant = models.ForeignKey(Tenant)
     vendor_tenant = models.ForeignKey(Tenant)
     vendor_code = models.CharField()  # Client-generated codes
@@ -93,7 +93,7 @@ class TenantService:
 # File: api/v1/urls.py
 # ✅ GOOD: Basic tenant management APIs
 urlpatterns = [
-    path('circle-vendor-relationships/', CircleVendorRelationshipViewSet),
+    path('client-vendor-relationships/', ClientVendorRelationshipViewSet),
     path('public/corporate/register/', CorporateOnboardingView),
     path('public/invitations/accept/', TenantInvitationAcceptView),
 ]

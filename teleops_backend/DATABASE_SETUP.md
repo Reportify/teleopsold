@@ -364,7 +364,7 @@ Once migrations are complete, you'll have these core tables:
 
 - `tenants_tenant` - Tenant hierarchy (Corporate, Circle, Vendor)
 - `tenants_corporatecirclerelationship` - Corporate-Circle associations
-- `tenants_circlevendorrelationship` - Circle-Vendor associations
+- `tenants_ClientVendorRelationship` - Circle-Vendor associations
 
 ### Business Tables
 

@@ -88,12 +88,12 @@ export interface CorporateCircleRelationship {
   updated_at: string;
 }
 
-export interface CircleVendorRelationship {
+export interface ClientVendorRelationship {
   id: number;
-  circle_tenant_id: string;
+  client_tenant_id: string;
   vendor_tenant_id: string;
   vendor_code: string;
-  relationship_status: "Circle_Invitation_Sent" | "Active" | "Suspended" | "Terminated" | "Expired";
+  relationship_status: "Client_Invitation_Sent" | "Active" | "Suspended" | "Terminated" | "Expired";
   vendor_verification_status: "Independent" | "Pending_Verification" | "Verified" | "Verification_Rejected";
   contract_start_date?: string;
   contract_end_date?: string;

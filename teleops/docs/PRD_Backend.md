@@ -1241,7 +1241,7 @@ class CircleBillingService:
         ).count()
 
         # Count active vendors
-        vendors_count = CircleVendorRelationship.objects.filter(
+        vendors_count = ClientVendorRelationship.objects.filter(
             circle_tenant_id=circle_tenant_id,
             is_active=True
         ).count()

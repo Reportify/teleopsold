@@ -907,7 +907,7 @@ class CircleVendorManagementService:
             raise PermissionError("No permission to manage vendors in this circle")
 
         # Create circle-vendor relationship (legacy)
-        relationship = CircleVendorRelationship.objects.create(
+        relationship = ClientVendorRelationship.objects.create(
             circle_tenant_id=circle_tenant_id,
             vendor_tenant_id=vendor_data['vendor_tenant_id'],
             vendor_code=vendor_data['vendor_code'],

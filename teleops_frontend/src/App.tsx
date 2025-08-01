@@ -59,9 +59,10 @@ import ComplianceCenterPage from "./pages/ComplianceCenterPage";
 import CircleManagementPage from "./pages/CircleManagementPage";
 import VendorOversightPage from "./pages/VendorOversightPage";
 import GovernancePage from "./pages/GovernancePage";
-import CircleVendorManagementPage from "./pages/CircleVendorManagementPage";
-import CircleUserManagementPage from "./pages/CircleUserManagementPage";
-import VendorOperationsManagementPage from "./pages/VendorOperationsManagementPage";
+import VendorManagementPage from "./pages/VendorManagementPage";
+import UserManagementPage from "./pages/CircleUserManagementPage";
+import OperationsManagementPage from "./pages/VendorOperationsManagementPage";
+import ClientManagementPage from "./pages/ClientManagementPage";
 
 // RBAC Management Pages
 import RBACDashboardPage from "./pages/RBACDashboardPage";
@@ -388,15 +389,15 @@ const AppInner: React.FC = () => {
           path="/vendors"
           element={
             <ProtectedRoute>
-              <CircleVendorManagementPage />
+              <VendorManagementPage />
             </ProtectedRoute>
           }
         />
         <Route
-          path="/vendor-operations"
+          path="/operations"
           element={
             <ProtectedRoute>
-              <VendorOperationsManagementPage />
+              <OperationsManagementPage />
             </ProtectedRoute>
           }
         />
@@ -404,7 +405,15 @@ const AppInner: React.FC = () => {
           path="/users"
           element={
             <ProtectedRoute>
-              <CircleUserManagementPage />
+              <UserManagementPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/clients"
+          element={
+            <ProtectedRoute>
+              <ClientManagementPage />
             </ProtectedRoute>
           }
         />
