@@ -11,15 +11,19 @@ from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.permissions import IsAuthenticated, IsAdminUser, AllowAny
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework import serializers
 
 # Local imports
 from apps.tenants.models import ClientVendorRelationship, TenantInvitation, TelecomCircle, Tenant, VendorCreatedClient
 from apps.tenants.serializers import (
     ClientVendorRelationshipSerializer,
+    ClientManagementSerializer,
     CorporateOnboardingSerializer,
     TenantInvitationSerializer,
     TenantInvitationAcceptSerializer,
-    TelecomCircleSerializer
+    TelecomCircleSerializer,
+    VendorCreatedClientSerializer,
+    VendorCreatedClientFormSerializer
 )
 from apps.tenants.services import TenantService, InvitationService, OnboardingService, EmailService
 from apps.tenants.exceptions import (
@@ -170,6 +174,325 @@ class ClientVendorRelationshipViewSet(viewsets.ModelViewSet):
             return ClientVendorRelationship.objects.all()
         
         return ClientVendorRelationship.objects.none()
+
+
+class UnifiedClientViewSet(viewsets.ModelViewSet):
+    """
+    Unified client management for both Circle and Vendor tenants.
+    
+    Provides APIs for:
+    1. Client portfolio management (works for both tenant types)
+    2. Client analytics and reporting
+    3. Client relationship management
+    4. Single portal compliance
+    """
+    
+    serializer_class = ClientVendorRelationshipSerializer
+    permission_classes = [IsAuthenticated, CrossTenantPermission]
+    
+    def get_queryset(self):
+        """Filter queryset based on user's tenant context"""
+        user = self.request.user
+        tenant = getattr(self.request, 'tenant', None)
+        
+        if not tenant:
+            return ClientVendorRelationship.objects.none()
+
+        # Corporate: see all relationships for their circles
+        if tenant.tenant_type == 'Corporate':
+            circle_ids = tenant.child_tenants.filter(tenant_type='Circle').values_list('id', flat=True)
+            return ClientVendorRelationship.objects.filter(vendor_tenant_id__in=circle_ids)
+        
+        # Both Circle and Vendor: see relationships where they are the VENDOR (being hired)
+        elif tenant.tenant_type in ['Circle', 'Vendor']:
+            return ClientVendorRelationship.objects.filter(
+                vendor_tenant=tenant,
+                is_active=True
+            ).select_related('client_tenant')
+        
+        # Superuser fallback
+        elif user.is_superuser:
+            return ClientVendorRelationship.objects.all()
+        
+        return ClientVendorRelationship.objects.none()
+
+class ClientViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for client management (shows clients who hire you).
+    
+    This is separate from UnifiedClientViewSet to avoid conflicts with vendor management.
+    """
+    
+    permission_classes = [IsAuthenticated, CrossTenantPermission]
+    
+    def get_queryset(self):
+        """Filter queryset to show clients who hire the current tenant"""
+        user = self.request.user
+        tenant = getattr(self.request, 'tenant', None)
+
+        if not tenant:
+            return ClientVendorRelationship.objects.none()
+
+        # Corporate: see all relationships for their circles
+        if tenant.tenant_type == 'Corporate':
+            circle_ids = tenant.child_tenants.filter(tenant_type='Circle').values_list('id', flat=True)
+            return ClientVendorRelationship.objects.filter(vendor_tenant_id__in=circle_ids)
+
+        # Both Circle and Vendor: see relationships where they are the VENDOR (being hired)
+        elif tenant.tenant_type in ['Circle', 'Vendor']:
+            return ClientVendorRelationship.objects.filter(
+                vendor_tenant=tenant,  # Current tenant is the vendor (being hired)
+                is_active=True
+            ).select_related('client_tenant')
+
+        # Superuser fallback
+        elif user.is_superuser:
+            return ClientVendorRelationship.objects.all()
+
+        return ClientVendorRelationship.objects.none()
+
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action"""
+        if self.action == 'list':
+            # For list action, we handle serialization manually in the list method
+            # Return a dummy serializer to avoid the None error
+            from rest_framework import serializers
+            class DummySerializer(serializers.Serializer):
+                pass
+            return DummySerializer
+        return ClientManagementSerializer
+
+    def list(self, request, *args, **kwargs):
+        """Override list to include both associated and vendor-created clients"""
+        user = request.user
+        tenant = getattr(request, 'tenant', None)
+
+        if not tenant:
+            return Response({"clients": [], "count": 0, "tenant_type": "Unknown"})
+
+        # Get associated clients (from ClientVendorRelationship)
+        associated_clients = self.get_queryset()
+        
+        # Get vendor-created clients (only for Vendor tenants)
+        vendor_created_clients = []
+        if tenant.tenant_type == 'Vendor':
+            vendor_created_clients = VendorCreatedClient.objects.filter(
+                vendor_tenant=tenant,
+                relationship_status='Active'
+            )
+            
+
+
+        # Combine and serialize the data
+        combined_data = []
+        
+        # Add associated clients
+        for client_rel in associated_clients:
+            combined_data.append({
+                'id': str(client_rel.id),
+                'client_tenant': str(client_rel.client_tenant.id),
+                'client_tenant_data': {
+                    'id': str(client_rel.client_tenant.id),
+                    'organization_name': client_rel.client_tenant.organization_name,
+                    'primary_contact_name': client_rel.client_tenant.primary_contact_name,
+                    'primary_contact_email': client_rel.client_tenant.primary_contact_email,
+                    'primary_contact_phone': client_rel.client_tenant.primary_contact_phone,
+                    'registration_status': client_rel.client_tenant.registration_status,
+                    'activation_status': client_rel.client_tenant.activation_status,
+                    'is_active': client_rel.client_tenant.is_active,
+                },
+                'vendor_code': client_rel.vendor_code,
+                'relationship_type': client_rel.relationship_type,
+                'relationship_status': client_rel.relationship_status,
+                'vendor_verification_status': client_rel.vendor_verification_status,
+                'performance_rating': client_rel.performance_rating,
+                'vendor_permissions': client_rel.vendor_permissions,
+                'communication_allowed': client_rel.communication_allowed,
+                'contact_access_level': client_rel.contact_access_level,
+                'approved_by': client_rel.approved_by,
+                'approved_at': client_rel.approved_at,
+                'notes': client_rel.notes,
+                'is_active': client_rel.is_active,
+                'created_at': client_rel.created_at.isoformat(),
+                'updated_at': client_rel.updated_at.isoformat(),
+                'client_source': 'associated'
+            })
+
+        # Add vendor-created clients
+        for vendor_client in vendor_created_clients:
+            combined_data.append({
+                'id': f"vendor_created_{vendor_client.id}",
+                'client_tenant': None,
+                'client_tenant_data': {
+                    'id': str(vendor_client.id),
+                    'organization_name': vendor_client.client_name,
+                    'primary_contact_name': vendor_client.primary_contact_name,
+                    'primary_contact_email': vendor_client.primary_contact_email,
+                    'primary_contact_phone': vendor_client.primary_contact_phone,
+                    'registration_status': 'Non_Integrated',
+                    'activation_status': 'Active',
+                    'is_active': True,
+                },
+                'vendor_code': '',
+                'relationship_type': 'Self_Created',
+                'relationship_status': vendor_client.relationship_status,
+                'vendor_verification_status': 'Independent',
+                'performance_rating': None,
+                'vendor_permissions': {},
+                'communication_allowed': True,
+                'contact_access_level': 'Basic',
+                'approved_by': None,
+                'approved_at': None,
+                'notes': f"Manually created client - {vendor_client.client_type}",
+                'is_active': vendor_client.relationship_status == 'Active',
+                'created_at': vendor_client.created_at.isoformat(),
+                'updated_at': vendor_client.updated_at.isoformat(),
+                'client_source': 'vendor_created'
+            })
+
+        return Response({
+            "clients": combined_data,
+            "count": len(combined_data),
+            "tenant_type": tenant.tenant_type
+        })
+
+
+
+    @action(detail=False, methods=['get'])
+    def portfolio(self, request):
+        """
+        GET /api/v1/client-management/portfolio/
+        Get client portfolio with analytics
+        """
+        queryset = self.get_queryset()
+        tenant = getattr(request, 'tenant', None)
+        
+        # Calculate portfolio metrics
+        total_clients = queryset.count()
+        active_clients = queryset.filter(is_active=True).count()
+        recent_clients = queryset.filter(
+            created_at__gte=timezone.now() - timezone.timedelta(days=30)
+        ).count()
+        
+        portfolio_data = {
+            'total_clients': total_clients,
+            'active_clients': active_clients,
+            'recent_clients': recent_clients,
+            'tenant_type': getattr(tenant, 'tenant_type', None) if tenant else None,
+            'clients': self.get_serializer(queryset, many=True).data
+        }
+        
+        return Response(portfolio_data)
+
+    @action(detail=False, methods=['get'])
+    def analytics(self, request):
+        """
+        GET /api/v1/client-management/analytics/
+        Get client analytics and performance metrics
+        """
+        queryset = self.get_queryset()
+        tenant = getattr(request, 'tenant', None)
+        
+        # Calculate analytics
+        analytics_data = {
+            'total_relationships': queryset.count(),
+            'active_relationships': queryset.filter(is_active=True).count(),
+            'monthly_growth': self._calculate_monthly_growth(queryset),
+            'top_clients': self._get_top_clients(queryset),
+            'tenant_type': getattr(tenant, 'tenant_type', None) if tenant else None
+        }
+        
+        return Response(analytics_data)
+
+    def _calculate_monthly_growth(self, queryset):
+        """Calculate monthly client growth"""
+        current_month = queryset.filter(
+            created_at__month=timezone.now().month,
+            created_at__year=timezone.now().year
+        ).count()
+        
+        last_month = queryset.filter(
+            created_at__month=(timezone.now() - timezone.timedelta(days=30)).month,
+            created_at__year=(timezone.now() - timezone.timedelta(days=30)).year
+        ).count()
+        
+        if last_month == 0:
+            return 100 if current_month > 0 else 0
+        
+        return ((current_month - last_month) / last_month) * 100
+
+    def _get_top_clients(self, queryset):
+        """Get top clients by relationship duration"""
+        return queryset.filter(is_active=True).order_by('-created_at')[:5]
+
+
+
+    @action(detail=False, methods=['get'])
+    def portfolio(self, request):
+        """
+        GET /api/v1/clients/portfolio/
+        Get client portfolio with analytics and summary
+        """
+        queryset = self.get_queryset()
+        tenant = getattr(request, 'tenant', None)
+        
+        # Calculate portfolio metrics
+        total_clients = queryset.count()
+        active_clients = queryset.filter(is_active=True).count()
+        recent_clients = queryset.filter(
+            created_at__gte=timezone.now() - timezone.timedelta(days=30)
+        ).count()
+        
+        portfolio_data = {
+            'total_clients': total_clients,
+            'active_clients': active_clients,
+            'recent_clients': recent_clients,
+            'tenant_type': getattr(tenant, 'tenant_type', None) if tenant else None,
+            'clients': self.get_serializer(queryset, many=True).data
+        }
+        
+        return Response(portfolio_data)
+
+    @action(detail=False, methods=['get'])
+    def analytics(self, request):
+        """
+        GET /api/v1/clients/analytics/
+        Get client analytics and performance metrics
+        """
+        queryset = self.get_queryset()
+        tenant = getattr(request, 'tenant', None)
+        
+        # Calculate analytics
+        analytics_data = {
+            'total_relationships': queryset.count(),
+            'active_relationships': queryset.filter(is_active=True).count(),
+            'monthly_growth': self._calculate_monthly_growth(queryset),
+            'top_clients': self._get_top_clients(queryset),
+            'tenant_type': getattr(tenant, 'tenant_type', None) if tenant else None
+        }
+        
+        return Response(analytics_data)
+
+    def _calculate_monthly_growth(self, queryset):
+        """Calculate monthly client growth"""
+        current_month = queryset.filter(
+            created_at__month=timezone.now().month,
+            created_at__year=timezone.now().year
+        ).count()
+        
+        last_month = queryset.filter(
+            created_at__month=(timezone.now() - timezone.timedelta(days=30)).month,
+            created_at__year=(timezone.now() - timezone.timedelta(days=30)).year
+        ).count()
+        
+        if last_month == 0:
+            return 100 if current_month > 0 else 0
+        
+        return ((current_month - last_month) / last_month) * 100
+
+    def _get_top_clients(self, queryset):
+        """Get top clients by relationship duration"""
+        return queryset.filter(is_active=True).order_by('-created_at')[:5]
 
 
 class CorporateOnboardingView(APIView):
@@ -1151,5 +1474,81 @@ class TenantInvitationViewSet(viewsets.ModelViewSet):
             logger.error(f"Failed to delete invitation: {e}")
             return Response(
                 {"error": "Failed to delete invitation"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            ) 
+
+class VendorCreatedClientViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for vendor-created clients (manual client management).
+    
+    This ViewSet allows vendors to create and manage their own client entries
+    for clients who are not integrated into the platform.
+    """
+    
+    permission_classes = [IsAuthenticated, CrossTenantPermission]
+    
+    def get_serializer_class(self):
+        """Use form serializer for create/update, full serializer for read operations"""
+        if self.action in ['create', 'update', 'partial_update']:
+            return VendorCreatedClientFormSerializer
+        else:
+            return VendorCreatedClientSerializer
+    
+    def get_queryset(self):
+        """Filter queryset based on user's tenant context"""
+        user = self.request.user
+        tenant = getattr(self.request, 'tenant', None)
+        
+        if not tenant:
+            return VendorCreatedClient.objects.none()
+        
+        # Only Vendor tenants can access their created clients
+        if tenant.tenant_type == 'Vendor':
+            return VendorCreatedClient.objects.filter(
+                vendor_tenant=tenant,
+                relationship_status='Active'
+            )
+        
+        # Superuser fallback
+        elif user.is_superuser:
+            return VendorCreatedClient.objects.all()
+        
+        return VendorCreatedClient.objects.none()
+    
+    def perform_create(self, serializer):
+        """Set the vendor tenant when creating a new client"""
+        tenant = getattr(self.request, 'tenant', None)
+        if tenant and tenant.tenant_type == 'Vendor':
+            serializer.save(vendor_tenant=tenant)
+        else:
+            raise serializers.ValidationError("Only Vendor tenants can create clients")
+    
+    def create(self, request, *args, **kwargs):
+        """Create a new vendor-created client"""
+        try:
+            # Add vendor tenant ID to context for validation
+            tenant = getattr(request, 'tenant', None)
+            if not tenant or tenant.tenant_type != 'Vendor':
+                return Response(
+                    {"error": "Only Vendor tenants can create clients"}, 
+                    status=status.HTTP_403_FORBIDDEN
+                )
+            
+            serializer = self.get_serializer(
+                data=request.data, 
+                context={'vendor_tenant_id': str(tenant.id)}
+            )
+            
+            if serializer.is_valid():
+                client = serializer.save(vendor_tenant=tenant)
+                response_serializer = VendorCreatedClientSerializer(client)
+                return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            logger.error(f"Failed to create vendor client: {e}", exc_info=True)
+            return Response(
+                {"error": "Failed to create client"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 

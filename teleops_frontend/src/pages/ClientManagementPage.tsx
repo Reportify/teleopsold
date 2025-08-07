@@ -1,4 +1,4 @@
-// Client Management Page for both Circle and Vendor tenants
+// Unified Client Management Page for both Circle and Vendor tenants
 import React, { useState, useEffect } from "react";
 import {
   Box,
@@ -28,52 +28,35 @@ import {
   Alert,
   CircularProgress,
   Tooltip,
+  Rating,
 } from "@mui/material";
-import { Add, Edit, Delete, Visibility, Business, Email, Phone, LocationOn, Assignment, TrendingUp, Warning, CheckCircle } from "@mui/icons-material";
+import { Add, Edit, Delete, Visibility } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
 import { ModernSnackbar } from "../components";
+import clientService, { Client, ClientForm } from "../services/clientService";
+import { ClientDisplay, RelationshipType, RelationshipStatus, VerificationStatus } from "../types/client";
 
-interface Client {
-  id: string;
-  name: string;
-  organization_code: string;
-  contact_person: string;
-  email: string;
-  phone: string;
-  address: string;
-  relationship_type: "Primary" | "Secondary" | "Prospect";
-  status: "Active" | "Inactive" | "Pending";
-  total_projects: number;
-  active_projects: number;
-  total_revenue: number;
-  last_activity: string;
-  created_at: string;
-}
-
-interface ClientForm {
-  name: string;
-  organization_code: string;
-  contact_person: string;
-  email: string;
-  phone: string;
-  address: string;
-  relationship_type: "Primary" | "Secondary" | "Prospect";
-}
+// Remove the old interfaces since we're importing them from types
 
 const ClientManagementPage: React.FC = () => {
-  const { getCurrentTenant } = useAuth();
+  const { getCurrentTenant, isAuthenticated, user, tenantContext } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
+  const [clientStats, setClientStats] = useState({
+    total_clients: 0,
+    active_clients: 0,
+    pending_approvals: 0,
+    verified_clients: 0,
+    average_performance: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [formData, setFormData] = useState<ClientForm>({
-    name: "",
-    organization_code: "",
-    contact_person: "",
-    email: "",
-    phone: "",
-    address: "",
-    relationship_type: "Primary",
+  const [formData, setFormData] = useState({
+    client_name: "",
+    primary_contact_name: "",
+    primary_contact_email: "",
+    primary_contact_phone: "",
+    headquarters_address: "",
   });
 
   const [snackbar, setSnackbar] = useState({
@@ -84,75 +67,77 @@ const ClientManagementPage: React.FC = () => {
 
   const currentTenant = getCurrentTenant();
 
-  // Mock data for demonstration
-  useEffect(() => {
-    const mockClients: Client[] = [
-      {
-        id: "1",
-        name: "Vodafone MPCG",
-        organization_code: "VOD_MPCG",
-        contact_person: "Rajesh Kumar",
-        email: "rajesh.kumar@vodafone.com",
-        phone: "+91-9876543210",
-        address: "Indore, Madhya Pradesh",
-        relationship_type: "Primary",
-        status: "Active",
-        total_projects: 15,
-        active_projects: 8,
-        total_revenue: 2500000,
-        last_activity: "2024-12-15",
-        created_at: "2024-01-15",
-      },
-      {
-        id: "2",
-        name: "Airtel UP East",
-        organization_code: "AIR_UPE",
-        contact_person: "Priya Sharma",
-        email: "priya.sharma@airtel.com",
-        phone: "+91-9876543211",
-        address: "Lucknow, Uttar Pradesh",
-        relationship_type: "Secondary",
-        status: "Active",
-        total_projects: 8,
-        active_projects: 3,
-        total_revenue: 1200000,
-        last_activity: "2024-12-10",
-        created_at: "2024-03-20",
-      },
-      {
-        id: "3",
-        name: "BSNL Bihar",
-        organization_code: "BSNL_BIHAR",
-        contact_person: "Amit Singh",
-        email: "amit.singh@bsnl.in",
-        phone: "+91-9876543212",
-        address: "Patna, Bihar",
-        relationship_type: "Prospect",
-        status: "Pending",
-        total_projects: 0,
-        active_projects: 0,
-        total_revenue: 0,
-        last_activity: "2024-12-05",
-        created_at: "2024-11-15",
-      },
-    ];
+  // Use ref to prevent multiple API calls
+  const hasFetchedRef = React.useRef(false);
 
-    setTimeout(() => {
-      setClients(mockClients);
-      setLoading(false);
-    }, 1000);
-  }, []);
+  // Fetch clients from API
+  useEffect(() => {
+    const fetchClients = async () => {
+      // Prevent multiple calls
+      if (hasFetchedRef.current) {
+        return;
+      }
+
+      try {
+        setLoading(true);
+
+        // Check if user is authenticated
+        if (!isAuthenticated) {
+          console.error("User is not authenticated");
+          setSnackbar({
+            open: true,
+            message: "Please log in to view clients",
+            severity: "error",
+          });
+          return;
+        }
+
+        // Check if tenant context is available
+        if (!currentTenant) {
+          console.error("No tenant context available");
+          setSnackbar({
+            open: true,
+            message: "No tenant context available",
+            severity: "error",
+          });
+          return;
+        }
+
+        // Mark as fetched to prevent duplicate calls
+        hasFetchedRef.current = true;
+
+        const [clientsData, statsData] = await Promise.all([clientService.getClients(), clientService.getClientStats()]);
+
+        setClients(clientsData.clients);
+        setClientStats(statsData);
+      } catch (error) {
+        console.error("Failed to fetch clients:", error);
+        setSnackbar({
+          open: true,
+          message: "Failed to load clients",
+          severity: "error",
+        });
+        // Reset the ref on error so we can retry
+        hasFetchedRef.current = false;
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    // Only fetch if authenticated and tenant is available
+    if (isAuthenticated && currentTenant) {
+      fetchClients();
+    }
+  }, [isAuthenticated, currentTenant?.id]); // Single useEffect with proper dependencies
 
   const handleAddClient = () => {
     setEditingClient(null);
     setFormData({
-      name: "",
-      organization_code: "",
-      contact_person: "",
-      email: "",
-      phone: "",
-      address: "",
-      relationship_type: "Primary",
+      client_name: "",
+      primary_contact_name: "",
+      primary_contact_email: "",
+      primary_contact_phone: "",
+      headquarters_address: "",
     });
     setDialogOpen(true);
   };
@@ -160,55 +145,67 @@ const ClientManagementPage: React.FC = () => {
   const handleEditClient = (client: Client) => {
     setEditingClient(client);
     setFormData({
-      name: client.name,
-      organization_code: client.organization_code,
-      contact_person: client.contact_person,
-      email: client.email,
-      phone: client.phone,
-      address: client.address,
-      relationship_type: client.relationship_type,
+      client_name: client.client_tenant_data.organization_name,
+      primary_contact_name: client.client_tenant_data.primary_contact_name || "",
+      primary_contact_email: client.client_tenant_data.primary_contact_email || "",
+      primary_contact_phone: client.client_tenant_data.primary_contact_phone || "",
+      headquarters_address: "",
     });
     setDialogOpen(true);
   };
 
-  const handleDeleteClient = (clientId: string) => {
-    setClients(clients.filter((client) => client.id !== clientId));
-    setSnackbar({
-      open: true,
-      message: "Client deleted successfully",
-      severity: "success",
-    });
-  };
-
-  const handleSaveClient = () => {
-    if (editingClient) {
-      // Update existing client
-      setClients(clients.map((client) => (client.id === editingClient.id ? { ...client, ...formData } : client)));
+  const handleDeleteClient = async (clientId: string) => {
+    try {
+      await clientService.deleteClient(clientId);
+      setClients(clients.filter((client) => client.id !== clientId));
       setSnackbar({
         open: true,
-        message: "Client updated successfully",
+        message: "Client deleted successfully",
         severity: "success",
       });
-    } else {
-      // Add new client
-      const newClient: Client = {
-        id: Date.now().toString(),
-        ...formData,
-        status: "Active",
-        total_projects: 0,
-        active_projects: 0,
-        total_revenue: 0,
-        last_activity: new Date().toISOString().split("T")[0],
-        created_at: new Date().toISOString().split("T")[0],
-      };
-      setClients([...clients, newClient]);
+    } catch (error) {
+      console.error("Failed to delete client:", error);
       setSnackbar({
         open: true,
-        message: "Client added successfully",
-        severity: "success",
+        message: "Failed to delete client",
+        severity: "error",
       });
     }
-    setDialogOpen(false);
+  };
+
+  const handleSaveClient = async () => {
+    try {
+      if (editingClient) {
+        // Update existing client
+        const updatedClient = await clientService.updateClient(editingClient.id, formData);
+        setClients(clients.map((client) => (client.id === editingClient.id ? updatedClient : client)));
+        setSnackbar({
+          open: true,
+          message: "Client updated successfully",
+          severity: "success",
+        });
+      } else {
+        // Add new vendor client
+        const newClient = await clientService.createVendorClient(formData);
+        // Refresh the clients list to include the new client
+        const [clientsData, statsData] = await Promise.all([clientService.getClients(), clientService.getClientStats()]);
+        setClients(clientsData.clients);
+        setClientStats(statsData);
+        setSnackbar({
+          open: true,
+          message: "Client added successfully",
+          severity: "success",
+        });
+      }
+      setDialogOpen(false);
+    } catch (error) {
+      console.error("Failed to save client:", error);
+      setSnackbar({
+        open: true,
+        message: "Failed to save client",
+        severity: "error",
+      });
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -254,12 +251,26 @@ const ClientManagementPage: React.FC = () => {
             Client Management
           </Typography>
           <Typography variant="body1" color="text.secondary">
-            Manage your client relationships and partnerships
+            Manage your clients who hire you for services
           </Typography>
         </Box>
-        <Button variant="contained" startIcon={<Add />} onClick={handleAddClient} sx={{ borderRadius: 2 }}>
-          Add Client
-        </Button>
+        <Box sx={{ display: "flex", gap: 2 }}>
+          <Button
+            variant="outlined"
+            onClick={() => {
+              console.log("Manual test - Current state:", { isAuthenticated, currentTenant, user });
+              clientService
+                .getClients()
+                .then((data) => console.log("Manual API test result:", data))
+                .catch((err) => console.error("Manual API test error:", err));
+            }}
+          >
+            Test API
+          </Button>
+          <Button variant="contained" startIcon={<Add />} onClick={handleAddClient} sx={{ borderRadius: 2 }}>
+            Add Client
+          </Button>
+        </Box>
       </Box>
 
       {/* Statistics Cards */}
@@ -271,7 +282,7 @@ const ClientManagementPage: React.FC = () => {
                 Total Clients
               </Typography>
               <Typography variant="h4" component="div">
-                {clients.length}
+                {clientStats.total_clients}
               </Typography>
             </CardContent>
           </Card>
@@ -283,7 +294,7 @@ const ClientManagementPage: React.FC = () => {
                 Active Clients
               </Typography>
               <Typography variant="h4" component="div">
-                {clients.filter((c) => c.status === "Active").length}
+                {clientStats.active_clients}
               </Typography>
             </CardContent>
           </Card>
@@ -292,10 +303,10 @@ const ClientManagementPage: React.FC = () => {
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom>
-                Total Projects
+                Pending Approvals
               </Typography>
               <Typography variant="h4" component="div">
-                {clients.reduce((sum, client) => sum + client.total_projects, 0)}
+                {clientStats.pending_approvals}
               </Typography>
             </CardContent>
           </Card>
@@ -304,10 +315,10 @@ const ClientManagementPage: React.FC = () => {
           <Card>
             <CardContent>
               <Typography color="text.secondary" gutterBottom>
-                Total Revenue
+                Avg Performance
               </Typography>
               <Typography variant="h4" component="div">
-                ₹{clients.reduce((sum, client) => sum + client.total_revenue, 0).toLocaleString()}
+                {clientStats.average_performance.toFixed(1)}/5
               </Typography>
             </CardContent>
           </Card>
@@ -328,9 +339,6 @@ const ClientManagementPage: React.FC = () => {
                   <TableCell>Contact Person</TableCell>
                   <TableCell>Relationship</TableCell>
                   <TableCell>Status</TableCell>
-                  <TableCell>Projects</TableCell>
-                  <TableCell>Revenue</TableCell>
-                  <TableCell>Last Activity</TableCell>
                   <TableCell>Actions</TableCell>
                 </TableRow>
               </TableHead>
@@ -340,18 +348,18 @@ const ClientManagementPage: React.FC = () => {
                     <TableCell>
                       <Box>
                         <Typography variant="subtitle2" fontWeight={600}>
-                          {client.name}
+                          {client.client_tenant_data.organization_name}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {client.organization_code}
+                          {client.vendor_code}
                         </Typography>
                       </Box>
                     </TableCell>
                     <TableCell>
                       <Box>
-                        <Typography variant="body2">{client.contact_person}</Typography>
+                        <Typography variant="body2">{client.client_tenant_data.primary_contact_name}</Typography>
                         <Typography variant="caption" color="text.secondary">
-                          {client.email}
+                          {client.client_tenant_data.primary_contact_email}
                         </Typography>
                       </Box>
                     </TableCell>
@@ -359,25 +367,7 @@ const ClientManagementPage: React.FC = () => {
                       <Chip label={client.relationship_type} color={getRelationshipColor(client.relationship_type) as any} size="small" />
                     </TableCell>
                     <TableCell>
-                      <Chip label={client.status} color={getStatusColor(client.status) as any} size="small" />
-                    </TableCell>
-                    <TableCell>
-                      <Box>
-                        <Typography variant="body2">
-                          {client.active_projects}/{client.total_projects}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          Active/Total
-                        </Typography>
-                      </Box>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2" fontWeight={600}>
-                        ₹{client.total_revenue.toLocaleString()}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
-                      <Typography variant="body2">{new Date(client.last_activity).toLocaleDateString()}</Typography>
+                      <Chip label={client.relationship_status} color={getStatusColor(client.relationship_status) as any} size="small" />
                     </TableCell>
                     <TableCell>
                       <Box sx={{ display: "flex", gap: 1 }}>
@@ -412,32 +402,26 @@ const ClientManagementPage: React.FC = () => {
         <DialogContent>
           <Grid container spacing={2} sx={{ mt: 1 }}>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth label="Client Name" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} />
+              <TextField fullWidth label="Client Name" value={formData.client_name} onChange={(e) => setFormData({ ...formData, client_name: e.target.value })} />
+            </Grid>
+
+            <Grid size={{ xs: 12, sm: 6 }}>
+              <TextField fullWidth label="Primary Contact Name" value={formData.primary_contact_name} onChange={(e) => setFormData({ ...formData, primary_contact_name: e.target.value })} />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth label="Organization Code" value={formData.organization_code} onChange={(e) => setFormData({ ...formData, organization_code: e.target.value })} />
+              <TextField
+                fullWidth
+                label="Primary Contact Email"
+                type="email"
+                value={formData.primary_contact_email}
+                onChange={(e) => setFormData({ ...formData, primary_contact_email: e.target.value })}
+              />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth label="Contact Person" value={formData.contact_person} onChange={(e) => setFormData({ ...formData, contact_person: e.target.value })} />
+              <TextField fullWidth label="Primary Contact Phone" value={formData.primary_contact_phone} onChange={(e) => setFormData({ ...formData, primary_contact_phone: e.target.value })} />
             </Grid>
             <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth label="Email" type="email" value={formData.email} onChange={(e) => setFormData({ ...formData, email: e.target.value })} />
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <TextField fullWidth label="Phone" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} />
-            </Grid>
-            <Grid size={{ xs: 12, sm: 6 }}>
-              <FormControl fullWidth>
-                <InputLabel>Relationship Type</InputLabel>
-                <Select value={formData.relationship_type} label="Relationship Type" onChange={(e) => setFormData({ ...formData, relationship_type: e.target.value as any })}>
-                  <MenuItem value="Primary">Primary</MenuItem>
-                  <MenuItem value="Secondary">Secondary</MenuItem>
-                  <MenuItem value="Prospect">Prospect</MenuItem>
-                </Select>
-              </FormControl>
-            </Grid>
-            <Grid size={{ xs: 12 }}>
-              <TextField fullWidth label="Address" multiline rows={3} value={formData.address} onChange={(e) => setFormData({ ...formData, address: e.target.value })} />
+              <TextField fullWidth label="Headquarters Address" value={formData.headquarters_address} onChange={(e) => setFormData({ ...formData, headquarters_address: e.target.value })} />
             </Grid>
           </Grid>
         </DialogContent>

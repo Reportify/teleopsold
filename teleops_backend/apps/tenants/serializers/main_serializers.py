@@ -26,9 +26,15 @@ class ClientVendorRelationshipSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
+    client_tenant = serializers.PrimaryKeyRelatedField(
+        queryset=Tenant.objects.all(),
+        required=False,
+        allow_null=True
+    )
     vendor_organization_name = serializers.SerializerMethodField()
     vendor_email = serializers.SerializerMethodField()
     vendor_tenant_data = serializers.SerializerMethodField()
+    client_tenant_data = serializers.SerializerMethodField()
     invitation_data = serializers.SerializerMethodField()
     
     class Meta:
@@ -78,6 +84,133 @@ class ClientVendorRelationshipSerializer(serializers.ModelSerializer):
                 'service_capabilities': obj.vendor_tenant.service_capabilities,
                 'coverage_areas': obj.vendor_tenant.coverage_areas,
                 'certifications': obj.vendor_tenant.certifications,
+            }
+        return None
+
+    def get_client_tenant_data(self, obj):
+        """Return detailed client tenant information including registration status"""
+        if obj.client_tenant:
+            return {
+                'id': str(obj.client_tenant.id),
+                'organization_name': obj.client_tenant.organization_name,
+                'business_registration_number': obj.client_tenant.business_registration_number,
+                'primary_contact_name': obj.client_tenant.primary_contact_name,
+                'primary_contact_email': obj.client_tenant.primary_contact_email,
+                'primary_contact_phone': obj.client_tenant.primary_contact_phone,
+                'registration_status': obj.client_tenant.registration_status,
+                'activation_status': obj.client_tenant.activation_status,
+                'is_active': obj.client_tenant.is_active,
+                'registered_at': obj.client_tenant.registered_at.isoformat() if obj.client_tenant.registered_at else None,
+                'activated_at': obj.client_tenant.activated_at.isoformat() if obj.client_tenant.activated_at else None,
+                'service_capabilities': obj.client_tenant.service_capabilities,
+                'coverage_areas': obj.client_tenant.coverage_areas,
+                'certifications': obj.client_tenant.certifications,
+            }
+        return None
+
+    def get_invitation_data(self, obj):
+        """Return invitation data if still in invitation stage"""
+        invitation = self._get_related_invitation(obj)
+        if invitation:
+            return {
+                'id': str(invitation.id),
+                'token': invitation.invitation_token,
+                'status': invitation.status,
+                'expires_at': invitation.expires_at.isoformat() if invitation.expires_at else None,
+                'invited_at': invitation.invited_at.isoformat() if invitation.invited_at else None,
+                'invited_by': invitation.invited_by.email if invitation.invited_by else None,
+            }
+        return None
+
+    def _get_related_invitation(self, obj):
+        """Helper method to find related TenantInvitation"""
+        from ..models import TenantInvitation
+        
+        # Look for invitation based on contact person and vendor code
+        # This is a heuristic since we don't have a direct FK relationship
+        try:
+            # Try to extract invitation token from notes
+            if 'invitation' in obj.notes.lower():
+                import re
+                token_match = re.search(r'invitation\s+([a-f0-9-]+)', obj.notes)
+                if token_match:
+                    token = token_match.group(1)
+                    invitation = TenantInvitation.objects.filter(
+                        invitation_token=token,
+                        tenant_type='Vendor'
+                    ).first()
+                    
+                    # If invitation is completed and vendor_tenant is null, try to link it
+                    if invitation and invitation.status == 'Completed' and not obj.vendor_tenant and invitation.created_tenant:
+                        self._link_vendor_tenant(obj, invitation.created_tenant)
+                    
+                    return invitation
+            
+            # Fallback: search by contact person name and recent invitations
+            if obj.contact_person_name:
+                invitation = TenantInvitation.objects.filter(
+                    contact_name=obj.contact_person_name,
+                    tenant_type='Vendor',
+                    status__in=['Pending', 'Accepted', 'Completed']
+                ).order_by('-invited_at').first()
+                
+                if invitation:
+                    return invitation
+            
+            return None
+        except Exception as e:
+            print(f"Error finding related invitation: {e}")
+            return None
+
+    def _link_vendor_tenant(self, obj, created_tenant):
+        """Helper method to link vendor tenant to relationship"""
+        try:
+            obj.vendor_tenant = created_tenant
+            obj.save(update_fields=['vendor_tenant'])
+        except Exception as e:
+            print(f"Error linking vendor tenant: {e}")
+
+class ClientManagementSerializer(serializers.ModelSerializer):
+    """
+    Dedicated serializer for Client Management page.
+    Only returns client data (who hires you) - not vendor data (your own data).
+    """
+    
+    client_tenant = serializers.PrimaryKeyRelatedField(
+        queryset=Tenant.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    client_tenant_data = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ClientVendorRelationship
+        fields = [
+            'id', 'client_tenant', 'client_tenant_data', 'vendor_code', 
+            'contact_person_name', 'performance_rating', 'relationship_type',
+            'relationship_status', 'vendor_verification_status', 'vendor_permissions',
+            'communication_allowed', 'contact_access_level', 'approved_at',
+            'notes', 'is_active', 'created_at', 'updated_at', 'approved_by'
+        ]
+    
+    def get_client_tenant_data(self, obj):
+        """Return detailed client tenant information"""
+        if obj.client_tenant:
+            return {
+                'id': str(obj.client_tenant.id),
+                'organization_name': obj.client_tenant.organization_name,
+                'business_registration_number': obj.client_tenant.business_registration_number,
+                'primary_contact_name': obj.client_tenant.primary_contact_name,
+                'primary_contact_email': obj.client_tenant.primary_contact_email,
+                'primary_contact_phone': obj.client_tenant.primary_contact_phone,
+                'registration_status': obj.client_tenant.registration_status,
+                'activation_status': obj.client_tenant.activation_status,
+                'is_active': obj.client_tenant.is_active,
+                'registered_at': obj.client_tenant.registered_at.isoformat() if obj.client_tenant.registered_at else None,
+                'activated_at': obj.client_tenant.activated_at.isoformat() if obj.client_tenant.activated_at else None,
+                'service_capabilities': obj.client_tenant.service_capabilities,
+                'coverage_areas': obj.client_tenant.coverage_areas,
+                'certifications': obj.client_tenant.certifications,
             }
         return None
     
@@ -975,3 +1108,92 @@ class TenantUserSerializer(serializers.ModelSerializer):
                 'level': primary_designation.designation_level
             }
         return None 
+
+class VendorCreatedClientFormSerializer(serializers.ModelSerializer):
+    """
+    Simplified serializer for manual client creation form.
+    Only includes the essential fields required for basic client setup.
+    """
+    
+    class Meta:
+        model = VendorCreatedClient
+        fields = [
+            'client_name',
+            'primary_contact_name',
+            'primary_contact_email',
+            'primary_contact_phone',
+            'headquarters_address'
+        ]
+        extra_kwargs = {
+            'headquarters_address': {'required': False, 'allow_blank': True}
+        }
+    
+    def create(self, validated_data):
+        """Set client_type to Non_Integrated and generate unique client_code for all manually created clients"""
+        validated_data['client_type'] = 'Non_Integrated'
+        
+        # Generate a unique client_code
+        vendor_tenant_id = self.context.get('vendor_tenant_id')
+        if vendor_tenant_id:
+            # Generate a unique client code based on timestamp and vendor tenant
+            import uuid
+            import time
+            timestamp = int(time.time())
+            unique_id = str(uuid.uuid4())[:8]
+            validated_data['client_code'] = f"VC{timestamp}{unique_id}"
+        
+        return super().create(validated_data)
+    
+    def validate_client_name(self, value):
+        """Validate client name against business rules"""
+        if not value or not value.strip():
+            raise serializers.ValidationError("Client name cannot be empty")
+        
+        # If this is an update, get the current instance
+        if self.instance:
+            vendor_tenant_id = str(self.instance.vendor_tenant.id)
+            current_name = self.instance.client_name
+            
+            # Skip validation if name hasn't changed
+            if value.strip() == current_name:
+                return value
+        else:
+            # For new instances, get vendor from context
+            vendor_tenant_id = self.context.get('vendor_tenant_id')
+            
+        if vendor_tenant_id:
+            from ..services import DualModeVendorService
+            service = DualModeVendorService()
+            validation_result = service.validate_client_name_rules(vendor_tenant_id, value)
+            
+            if not validation_result['is_valid']:
+                error_msg = validation_result['validation_result']
+                if error_msg == 'EXACT_MATCH_BLOCKED':
+                    conflicting_client = validation_result['conflicting_client']
+                    raise serializers.ValidationError(
+                        f"Client name '{value}' already exists as associated client "
+                        f"({conflicting_client['name']}). Please use a different name."
+                    )
+                elif error_msg == 'DUPLICATE_INDEPENDENT_CLIENT':
+                    raise serializers.ValidationError(
+                        f"You already have an independent client named '{value}'"
+                    )
+                else:
+                    raise serializers.ValidationError(f"Invalid client name: {error_msg}")
+        
+        return value.strip()
+    
+    def validate_primary_contact_email(self, value):
+        """Validate email format"""
+        if value and '@' not in value:
+            raise serializers.ValidationError("Please enter a valid email address")
+        return value
+    
+    def validate_primary_contact_phone(self, value):
+        """Validate phone number format"""
+        if value:
+            # Remove all non-digit characters
+            digits_only = ''.join(filter(str.isdigit, value))
+            if len(digits_only) < 10:
+                raise serializers.ValidationError("Phone number must have at least 10 digits")
+        return value 

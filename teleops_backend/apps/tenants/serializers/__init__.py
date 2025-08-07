@@ -5,12 +5,14 @@ Tenant Serializers Package
 # Import from main serializers (Client/Vendor relationships, Tenant management)
 from .main_serializers import (
     ClientVendorRelationshipSerializer,
+    ClientManagementSerializer,
     CorporateOnboardingSerializer,
     TenantSerializer,
     TelecomCircleSerializer,
     TenantInvitationSerializer,
     TenantInvitationAcceptSerializer,
     VendorCreatedClientSerializer,
+    VendorCreatedClientFormSerializer,
     VendorClientBillingSerializer,
     TenantUserProfileSerializer,
     TenantDesignationSerializer,
@@ -55,12 +57,14 @@ except ImportError:
 __all__ = [
     # Main serializers
     'ClientVendorRelationshipSerializer',
+    'ClientManagementSerializer',
     'CorporateOnboardingSerializer',
     'TenantSerializer',
     'TelecomCircleSerializer',
     'TenantInvitationSerializer',
     'TenantInvitationAcceptSerializer',
     'VendorCreatedClientSerializer',
+    'VendorCreatedClientFormSerializer',
     'VendorClientBillingSerializer',
     'TenantUserProfileSerializer',
     'TenantDesignationSerializer',

@@ -1,12 +1,15 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework.response import Response
-from apps.tenants.views.main_views import ClientVendorRelationshipViewSet, list_telecom_circles, DualModeVendorViewSet
+from apps.tenants.views.main_views import ClientVendorRelationshipViewSet, list_telecom_circles, DualModeVendorViewSet, UnifiedClientViewSet, ClientViewSet, VendorCreatedClientViewSet
 from apps.tenants.views.main_views import CorporateOnboardingView, TenantInvitationView, TenantInvitationAcceptView, TenantInvitationResendView, TenantInvitationCancelView
 from apps.tenants.views.main_views import onboarding_status, public_invitation_details, CorporateCircleManagementView, CorporateCircleInvitationView, TenantInvitationViewSet
 
 router = DefaultRouter()
 router.register(r'client-vendor-relationships', ClientVendorRelationshipViewSet, basename='clientvendorrelationship')
+router.register(r'clients', UnifiedClientViewSet, basename='unified-client')
+router.register(r'client-management', ClientViewSet, basename='client-management')
+router.register(r'vendor-clients', VendorCreatedClientViewSet, basename='vendor-created-client')
 router.register(r'vendors/(?P<vendor_id>[^/.]+)/clients', DualModeVendorViewSet, basename='dual-mode-vendor')
 router.register(r'tenant-invitations', TenantInvitationViewSet, basename='tenant-invitation')
 
