@@ -71,6 +71,10 @@ Tables:
     - id, design_id(FK), version_number (1..n)
     - title, notes, changelog
     - is_locked (bool) # locked once approved
+    - locked_by, locked_at
+    - archived_at
+    - items_count (int, denormalized)
+    - attachments_count (int, denormalized)
     - created_by, created_at
 
   DesignItem:
@@ -80,15 +84,30 @@ Tables:
     - category (string, optional)
     - model (string, optional)
     - manufacturer (string, optional)
-    - attributes (jsonb) # flexible key-value specs
+    - attributes (jsonb, <=16KB) # flexible key-value specs
     - remarks (text)
-    - sort_order (int)
+    - sort_order (int, default 0)
 
   DesignAttachment:
     - id, design_version_id(FK)
-    - file_path, file_name, file_size
-    - file_type (drawing|photo|doc|other)
+    - file_path, file_name, file_size, content_type
+    - file_type (drawing|photo|doc|other), checksum_sha256
     - uploaded_by, uploaded_at
+```
+
+### Constraints & Indexes
+
+```yaml
+Constraints:
+  - unique(tenant_id, project_id) on ProjectDesign (one container per project)
+  - unique(design_id, version_number) on ProjectDesignVersion
+  - check: version is immutable when is_locked = true (enforced in service)
+
+Indexes:
+  - ProjectDesign: (tenant_id, project_id), (tenant_id, status)
+  - ProjectDesignVersion: (design_id, version_number), (design_id, created_at DESC)
+  - DesignItem: (design_version_id, sort_order), GIN(attributes)
+  - DesignAttachment: (design_version_id, uploaded_at DESC)
 ```
 
 ---
@@ -104,25 +123,46 @@ GET    /api/v1/projects/{project_id}/design/versions/      # List versions
 GET    /api/v1/projects/{project_id}/design/versions/{id}/ # Get version details (items + attachments)
 POST   /api/v1/projects/{project_id}/design/versions/{id}/lock/   # Lock version (approve)
 POST   /api/v1/projects/{project_id}/design/versions/{id}/archive # Archive version
+POST   /api/v1/projects/{project_id}/design/versions/{id}/clone/  # Clone version (deep copy items + metadata)
 ```
 
 ### 2. Design Items
 
 ```yaml
-GET    /api/v1/design/versions/{version_id}/items/         # List items
+GET    /api/v1/design/versions/{version_id}/items/         # List items (paginated)
 POST   /api/v1/design/versions/{version_id}/items/         # Create item
 GET    /api/v1/design/items/{item_id}/                     # Retrieve item
 PUT    /api/v1/design/items/{item_id}/                     # Update item
+PATCH  /api/v1/design/items/{item_id}/                     # Partial update
 DELETE /api/v1/design/items/{item_id}/                     # Delete item
-POST   /api/v1/design/versions/{version_id}/items/bulk/    # Bulk create/update
+POST   /api/v1/design/versions/{version_id}/items/bulk/    # Bulk create/update/delete
+```
+
+Bulk payload (example):
+
+```json
+{
+  "create": [{ "item_name": "MW Antenna 0.6m", "attributes": { "gain_dbi": 30 } }],
+  "update": [{ "id": 45, "attributes": { "polarization": "dual" } }],
+  "delete": [51, 52]
+}
 ```
 
 ### 3. Attachments
 
 ```yaml
-GET    /api/v1/design/versions/{version_id}/attachments/   # List attachments
+GET    /api/v1/design/versions/{version_id}/attachments/   # List attachments (paginated)
 POST   /api/v1/design/versions/{version_id}/attachments/   # Upload attachment (multipart)
 DELETE /api/v1/design/attachments/{attachment_id}/         # Delete attachment
+```
+
+Pagination & Ordering (applies to versions, items, attachments):
+
+```yaml
+Query Params:
+  - page: int (default 1)
+  - page_size: int (default 20, max 100)
+  - ordering: string (created_at|-created_at|version_number|-version_number|sort_order)
 ```
 
 ---
@@ -215,18 +255,25 @@ Response 200:
 Design Version:
   - title: required, 1..255
   - copy_from_version_id: must belong to same design
-  - cannot modify locked versions
+  - cannot modify locked versions (no item/attachment mutations)
+  - status transitions: draft -> under_review -> approved -> archived
+  - locking rules: lock allowed only from under_review; sets is_locked, locked_by, locked_at
+  - approve/lock requires at least 1 item
 
 Design Item:
   - item_name: required
-  - attributes: json object, size limit 16KB
+  - attributes: json object, size limit 16KB; allowed keys enforced by schema; reject unknown or oversized values
   - sort_order: integer >= 0
   - category/model/manufacturer: optional metadata
 
 Attachments:
   - Max size per file: 20MB
   - Allowed types: pdf, png, jpg, jpeg, svg, dxf, docx, xlsx
-  - Virus scan (if available)
+  - Virus scan (if available); checksum for dedup
+
+Cross-Tenant & Referential:
+  - All nested routes validate the project belongs to tenant
+  - version_id must map to same design and project
 ```
 
 ---
@@ -249,6 +296,10 @@ Flow: 1) User creates/duplicates a design version
 - Feature-gated endpoints (registered in Phase 5)
 - Action audit trail (create/update/delete/approve)
 - File storage access control (signed URLs if needed)
+- Suggested permissions:
+  - design.view, design.create, design.update, design.delete
+  - design.version.create, design.version.lock, design.version.archive
+  - design.item.manage, design.attachment.upload, design.attachment.delete
 
 ---
 
@@ -258,19 +309,22 @@ Flow: 1) User creates/duplicates a design version
 - Inline JSON attribute editor with schema hints
 - Attachment previews with type badges
 - Unsaved change indicators + optimistic UI
+- Pagination on versions/items/attachments with lazy loading
+- “Clone from version” dialog and success banner linking to new version
+- Disable edit controls when version is locked; show locked metadata
 
 ---
 
 ## Implementation Checklist
 
 - [ ] Models and migrations
-- [ ] Services: versioning, validation, clone
-- [ ] Endpoints and serializers
+- [ ] Services: versioning, validation, clone, locking rules
+- [ ] Endpoints and serializers (incl. clone, bulk, pagination, ordering)
 - [ ] Attachment storage service
-- [ ] List/detail screens, forms, uploader
+- [ ] List/detail screens, forms, uploader, pagination UI
 - [ ] Version diff component
-- [ ] Audit and soft delete
-- [ ] Unit/integration tests
+- [ ] Audit and soft delete (default manager hides deleted)
+- [ ] Unit/integration tests (workflow transitions, locking invariants, bulk ops)
 
 ---
 

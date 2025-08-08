@@ -29,12 +29,16 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter projects by tenant"""
+        """Filter projects by tenant and exclude soft-deleted records"""
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return Project.objects.none()
-        
-        return Project.objects.filter(tenant=tenant).select_related('client_tenant', 'created_by')
+
+        return (
+            Project.objects
+            .filter(tenant=tenant, deleted_at__isnull=True)
+            .select_related('client_tenant', 'created_by')
+        )
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -54,25 +58,85 @@ class ProjectViewSet(viewsets.ModelViewSet):
             created_by=self.request.user
         )
 
+    def destroy(self, request, *args, **kwargs):
+        """Soft delete: set deleted_at, do not hard delete"""
+        project = self.get_object()
+        if project.deleted_at:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        project.deleted_at = timezone.now()
+        project.save(update_fields=['deleted_at', 'updated_at'])
+        logger.info(f"Project {project.name} soft-deleted by {request.user.email}")
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     # Team member endpoints removed for Phase 1
+
+    # --- Workflow endpoints (explicit) ---
+    def _set_status(self, project: Project, new_status: str):
+        """Internal helper to validate and set status according to Phase 1 transitions"""
+        valid_transitions = {
+            'planning': {'active', 'cancelled'},
+            'active': {'on_hold', 'completed', 'cancelled'},
+            'on_hold': {'active', 'cancelled'},
+            'completed': set(),
+            'cancelled': set(),
+        }
+
+        if new_status not in dict(Project.PROJECT_STATUS):
+            return False, 'Invalid status'
+
+        current = project.status
+        if new_status not in valid_transitions.get(current, set()):
+            return False, f'Cannot transition from {current} to {new_status}'
+
+        project.status = new_status
+        project.save(update_fields=['status', 'updated_at'])
+        return True, None
 
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
         """Update project status"""
         project = self.get_object()
         new_status = request.data.get('status')
-        
-        if new_status not in dict(Project.PROJECT_STATUS):
-            return Response(
-                {'error': 'Invalid status'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        project.status = new_status
-        project.save(update_fields=['status', 'updated_at'])
-        
+        ok, err = self._set_status(project, new_status)
+        if not ok:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
         logger.info(f"Project {project.name} status updated to {new_status} by {request.user.email}")
-        
+        return Response(ProjectSerializer(project).data)
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        project = self.get_object()
+        ok, err = self._set_status(project, 'active')
+        if not ok:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        logger.info(f"Project {project.name} activated by {request.user.email}")
+        return Response(ProjectSerializer(project).data)
+
+    @action(detail=True, methods=['post'])
+    def hold(self, request, pk=None):
+        project = self.get_object()
+        ok, err = self._set_status(project, 'on_hold')
+        if not ok:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        logger.info(f"Project {project.name} put on hold by {request.user.email}")
+        return Response(ProjectSerializer(project).data)
+
+    @action(detail=True, methods=['post'])
+    def complete(self, request, pk=None):
+        project = self.get_object()
+        ok, err = self._set_status(project, 'completed')
+        if not ok:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        logger.info(f"Project {project.name} completed by {request.user.email}")
+        return Response(ProjectSerializer(project).data)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        project = self.get_object()
+        ok, err = self._set_status(project, 'cancelled')
+        if not ok:
+            return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
+        logger.info(f"Project {project.name} cancelled by {request.user.email}")
         return Response(ProjectSerializer(project).data)
 
     @action(detail=False, methods=['get'])
@@ -85,7 +149,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        projects = Project.objects.filter(tenant=tenant)
+        projects = Project.objects.filter(tenant=tenant, deleted_at__isnull=True)
         
         # Calculate statistics
         total_projects = projects.count()
@@ -136,7 +200,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, 'tenant', None)
         updated_count = Project.objects.filter(
             id__in=project_ids,
-            tenant=tenant
+            tenant=tenant,
+            deleted_at__isnull=True
         ).update(status=new_status, updated_at=timezone.now())
         
         logger.info(f"Bulk updated {updated_count} projects to status {new_status} by {request.user.email}")

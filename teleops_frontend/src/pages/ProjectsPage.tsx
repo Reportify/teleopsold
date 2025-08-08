@@ -54,6 +54,8 @@ const ProjectsPage: React.FC = () => {
 
   const [clients, setClients] = useState<Client[]>([]);
   const [circles, setCircles] = useState<Array<{ value: string; label: string }>>([]);
+  // Keep a ref for formatter usage in column definition
+  const circlesRef = React.useRef<Array<{ value: string; label: string }>>([]);
 
   const [creating, setCreating] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -74,13 +76,16 @@ const ProjectsPage: React.FC = () => {
         const normalized = Array.isArray(apiCircles) ? apiCircles.map((c: any) => ({ value: c.circle_code, label: c.circle_name })) : [];
         console.log("Normalized circles:", normalized);
         setCircles(normalized);
+        circlesRef.current = normalized;
       } catch (e) {
-        setCircles([
+        const fallback = [
           { value: "MH", label: "Maharashtra & Goa" },
           { value: "KA", label: "Karnataka" },
           { value: "TN", label: "Tamil Nadu" },
           { value: "AP", label: "Andhra Pradesh" },
-        ]);
+        ];
+        setCircles(fallback);
+        circlesRef.current = fallback;
       }
     };
     loadData();
@@ -146,6 +151,11 @@ const ProjectsPage: React.FC = () => {
       ),
     },
     {
+      id: "client_tenant_name",
+      label: "Client",
+      minWidth: 180,
+    },
+    {
       id: "start_date",
       label: "Start Date",
       minWidth: 120,
@@ -161,6 +171,11 @@ const ProjectsPage: React.FC = () => {
       id: "circle",
       label: "Circle",
       minWidth: 140,
+      format: (value: string) => {
+        // Render label instead of raw code using loaded circles
+        const found = circlesRef.current.find((c) => c.value === value);
+        return found ? found.label : value;
+      },
     },
     {
       id: "customer_name",
@@ -198,7 +213,7 @@ const ProjectsPage: React.FC = () => {
                 description: project.description || "",
                 project_type: (project.project_type as ProjectType) || "other",
                 client_id: project.client_tenant || "",
-                is_tenant_owner: project.client_tenant ? false : true,
+                is_tenant_owner: String(project.client_tenant) === String(currentTenant?.id),
                 customer_is_tenant_owner: project.customer_name && project.customer_name === (currentTenant?.organization_name || "") ? true : false,
                 customer_name: project.customer_name || "",
                 circle: project.circle || "",
@@ -221,8 +236,10 @@ const ProjectsPage: React.FC = () => {
             color: "error" as const,
             onClick: (project: any) => {
               if (window.confirm(`Are you sure you want to delete "${project.name}"?`)) {
-                console.log("Delete project:", project);
-                // TODO: Implement delete functionality
+                projectService
+                  .delete(project.id)
+                  .then(() => loadProjects())
+                  .catch((e) => console.error("Failed to delete", e));
               }
             },
             disabled: (project?: any) => project?.status === "active",

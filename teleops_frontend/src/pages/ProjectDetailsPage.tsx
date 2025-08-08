@@ -28,17 +28,21 @@ const ProjectDetailsPage: React.FC = () => {
         const data = await projectService.retrieve(id);
         setProject(data);
 
-        // Resolve client organization name
-        try {
-          const current = getCurrentTenant();
-          if (current && String(current.id) === String(data.client_tenant)) {
-            setClientName(`${current.organization_name} (My organization)`);
-          } else {
-            const tenant = await apiHelpers.get<any>(API_ENDPOINTS.TENANTS.DETAIL(String(data.client_tenant)));
-            setClientName(tenant?.organization_name || String(data.client_tenant));
+        // Prefer backend-provided friendly name
+        if ((data as any).client_tenant_name) {
+          setClientName((data as any).client_tenant_name as string);
+        } else {
+          try {
+            const current = getCurrentTenant();
+            if (current && String(current.id) === String(data.client_tenant)) {
+              setClientName(`${current.organization_name} (My organization)`);
+            } else {
+              const tenant = await apiHelpers.get<any>(API_ENDPOINTS.TENANTS.DETAIL(String(data.client_tenant)));
+              setClientName(tenant?.organization_name || String(data.client_tenant));
+            }
+          } catch {
+            setClientName(String(data.client_tenant));
           }
-        } catch {
-          setClientName(String(data.client_tenant));
         }
 
         // Resolve circle friendly label

@@ -12,12 +12,13 @@ class ProjectSerializer(serializers.ModelSerializer):
     """Basic project serializer for list views (Phase 1)"""
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
     client_tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    client_tenant_name = serializers.CharField(source='client_tenant.organization_name', read_only=True)
     
     class Meta:
         model = Project
         fields = [
             'id', 'name', 'description', 'project_type', 'status',
-            'client_tenant', 'customer_name', 'circle', 'activity',
+            'client_tenant', 'client_tenant_name', 'customer_name', 'circle', 'activity',
             'start_date', 'end_date', 'scope',
             'created_by_name', 'created_at', 'updated_at'
         ]

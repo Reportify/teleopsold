@@ -691,24 +691,15 @@ Response (200 OK):
 
 ### 2. Client/Customer Management APIs
 
+In Phase 1, client selection uses existing Tenant-based client APIs already present in the system, and the customer is captured as a free-text `customer_name` on the project.
+
 ```yaml
-# Client management
-GET    /api/v1/clients/                       # List clients
-POST   /api/v1/clients/                       # Create client
-GET    /api/v1/clients/{id}/                  # Get client details
-PUT    /api/v1/clients/{id}/                  # Update client
-DELETE /api/v1/clients/{id}/                  # Delete client (soft delete)
+# Clients (Tenant-based; existing APIs)
+GET    /api/v1/tenants/clients/ # List clients for current tenant
+# ... other tenant-client endpoints as available
 
-# Customer management
-GET    /api/v1/customers/                     # List customers
-POST   /api/v1/customers/                     # Create customer
-GET    /api/v1/customers/{id}/                # Get customer details
-PUT    /api/v1/customers/{id}/                # Update customer
-DELETE /api/v1/customers/{id}/                # Delete customer (soft delete)
-
-# Client/Customer search
-GET    /api/v1/clients/search/                # Search clients
-GET    /api/v1/customers/search/              # Search customers
+# Customer
+# No separate customer CRUD in Phase 1. Use free-text customer_name on Project.
 ```
 
 #### 2.5 Client Management API Specifications

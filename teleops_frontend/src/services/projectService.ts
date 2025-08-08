@@ -10,6 +10,7 @@ export interface Project {
   project_type: ProjectType;
   status: ProjectStatus;
   client_tenant: string | number; // primary key of Tenant
+  client_tenant_name?: string; // resolved on backend for convenience
   customer_name?: string;
   circle: string;
   activity: string;
