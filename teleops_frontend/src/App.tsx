@@ -29,6 +29,7 @@ import TeleopsInternalLayout from "./layouts/TeleopsInternalLayout";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
+import ProjectDetailsPage from "./pages/ProjectDetailsPage";
 import SitesPage from "./pages/SitesPage";
 import TasksPage from "./pages/TasksPage";
 import EquipmentPage from "./pages/EquipmentPage";
@@ -282,6 +283,15 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <ProjectsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/projects/:id"
+          element={
+            <ProtectedRoute>
+              <ProjectDetailsPage />
             </ProtectedRoute>
           }
         />

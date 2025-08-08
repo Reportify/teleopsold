@@ -1,11 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ProjectViewSet, ProjectTeamMemberViewSet
+from .views import ProjectViewSet
 
 # Create router for ViewSets
 router = DefaultRouter()
-router.register(r'projects', ProjectViewSet, basename='project')
-router.register(r'team-members', ProjectTeamMemberViewSet, basename='projectteammember')
+# Register at root so list is available at /api/v1/projects/
+router.register(r'', ProjectViewSet, basename='project')
 
 # Define URL patterns
 urlpatterns = [

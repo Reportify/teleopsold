@@ -64,6 +64,27 @@ const FRONTEND_FEATURES: Record<string, FeatureDefinition> = {
     requiredActions: ["read"],
     description: "View project information and status",
   },
+  project_create: {
+    featureId: "project_create",
+    featureName: "Create Projects",
+    resourceType: "project",
+    requiredActions: ["create"],
+    description: "Create new projects",
+  },
+  project_edit: {
+    featureId: "project_edit",
+    featureName: "Edit Projects",
+    resourceType: "project",
+    requiredActions: ["update"],
+    description: "Update existing projects",
+  },
+  project_delete: {
+    featureId: "project_delete",
+    featureName: "Delete Projects",
+    resourceType: "project",
+    requiredActions: ["delete"],
+    description: "Delete projects",
+  },
 
   // Site Management
   site_view: {

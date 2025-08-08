@@ -7,10 +7,10 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
-from .models import Project, ProjectTeamMember
+from .models import Project
 from .serializers import (
     ProjectSerializer, ProjectDetailSerializer, ProjectCreateSerializer,
-    ProjectUpdateSerializer, ProjectTeamMemberSerializer, ProjectStatsSerializer
+    ProjectUpdateSerializer, ProjectStatsSerializer
 )
 from core.permissions.tenant_permissions import TenantScopedPermission
 from core.pagination import StandardResultsSetPagination
@@ -23,8 +23,8 @@ class ProjectViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, TenantScopedPermission]
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['status', 'project_type', 'project_manager']
-    search_fields = ['name', 'description', 'location']
+    filterset_fields = ['status', 'project_type', 'circle']
+    search_fields = ['name', 'description', 'activity']
     ordering_fields = ['created_at', 'start_date', 'end_date', 'name']
     ordering = ['-created_at']
 
@@ -34,9 +34,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Project.objects.none()
         
-        return Project.objects.filter(tenant=tenant).select_related(
-            'project_manager', 'created_by'
-        ).prefetch_related('team_members')
+        return Project.objects.filter(tenant=tenant).select_related('client_tenant', 'created_by')
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -56,65 +54,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             created_by=self.request.user
         )
 
-    @action(detail=True, methods=['post'])
-    def add_team_member(self, request, pk=None):
-        """Add a team member to the project"""
-        project = self.get_object()
-        
-        serializer = ProjectTeamMemberSerializer(data=request.data)
-        if serializer.is_valid():
-            # Check if user is already a team member
-            user_id = serializer.validated_data['user'].id
-            if ProjectTeamMember.objects.filter(project=project, user_id=user_id, is_active=True).exists():
-                return Response(
-                    {'error': 'User is already a team member'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            serializer.save(project=project)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
-        
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-    @action(detail=True, methods=['post'])
-    def remove_team_member(self, request, pk=None):
-        """Remove a team member from the project"""
-        project = self.get_object()
-        user_id = request.data.get('user_id')
-        
-        if not user_id:
-            return Response(
-                {'error': 'user_id is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            team_member = ProjectTeamMember.objects.get(
-                project=project, 
-                user_id=user_id, 
-                is_active=True
-            )
-            team_member.is_active = False
-            team_member.save()
-            
-            return Response({'message': 'Team member removed successfully'})
-        except ProjectTeamMember.DoesNotExist:
-            return Response(
-                {'error': 'Team member not found'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-    @action(detail=True, methods=['get'])
-    def team_members(self, request, pk=None):
-        """Get all team members for the project"""
-        project = self.get_object()
-        team_members = ProjectTeamMember.objects.filter(
-            project=project, 
-            is_active=True
-        ).select_related('user')
-        
-        serializer = ProjectTeamMemberSerializer(team_members, many=True)
-        return Response(serializer.data)
+    # Team member endpoints removed for Phase 1
 
     @action(detail=True, methods=['post'])
     def update_status(self, request, pk=None):
@@ -156,9 +96,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         cancelled_projects = projects.filter(status='cancelled').count()
         
         # Project type breakdown
-        project_types = projects.values('project_type').annotate(
-            count=models.Count('id')
-        ).order_by('project_type')
+        project_types = projects.values('project_type').annotate(count=models.Count('id')).order_by('project_type')
         
         # Recent projects
         recent_projects = projects.order_by('-created_at')[:5]
@@ -220,24 +158,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         
         queryset = self.get_queryset()
         
-        # Apply additional filters
-        project_manager_id = request.query_params.get('project_manager_id')
-        if project_manager_id:
-            queryset = queryset.filter(project_manager_id=project_manager_id)
-        
+        # Apply date range filters if provided
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
         if date_from:
             queryset = queryset.filter(start_date__gte=date_from)
         if date_to:
             queryset = queryset.filter(end_date__lte=date_to)
-        
-        budget_min = request.query_params.get('budget_min')
-        budget_max = request.query_params.get('budget_max')
-        if budget_min:
-            queryset = queryset.filter(budget__gte=budget_min)
-        if budget_max:
-            queryset = queryset.filter(budget__lte=budget_max)
         
         # Apply standard filters
         queryset = self.filter_queryset(queryset)
@@ -263,7 +190,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
         
         # Add archived status if not exists in choices
-        project.status = 'archived'
+        project.status = 'cancelled'
         project.save(update_fields=['status', 'updated_at'])
         
         logger.info(f"Project {project.name} archived by {request.user.email}")
@@ -291,55 +218,27 @@ class ProjectViewSet(viewsets.ModelViewSet):
             )
         
         with transaction.atomic():
-            # Create duplicate project
+            # Create duplicate project (no team data in Phase 1)
             new_project = Project.objects.create(
                 tenant=original_project.tenant,
                 name=new_name,
                 description=f"Copy of {original_project.description}",
                 project_type=original_project.project_type,
-                status='planning',  # Always start as planning
-                budget=original_project.budget,
-                location=original_project.location,
+                status='planning',
+                client_tenant=original_project.client_tenant,
+                customer_name=original_project.customer_name,
+                circle=original_project.circle,
+                activity=original_project.activity,
+                start_date=original_project.start_date,
+                end_date=original_project.end_date,
                 scope=original_project.scope,
                 created_by=request.user
             )
-            
-            # Copy team members
-            team_members = ProjectTeamMember.objects.filter(
-                project=original_project, 
-                is_active=True
-            )
-            for member in team_members:
-                ProjectTeamMember.objects.create(
-                    project=new_project,
-                    user=member.user,
-                    role=member.role
-                )
         
         logger.info(f"Project {original_project.name} duplicated as {new_name} by {request.user.email}")
         
-        return Response(
-            ProjectDetailSerializer(new_project).data,
-            status=status.HTTP_201_CREATED
-        )
+        return Response(ProjectDetailSerializer(new_project).data, status=status.HTTP_201_CREATED)
 
 
-class ProjectTeamMemberViewSet(viewsets.ModelViewSet):
-    """ViewSet for managing project team members"""
-    serializer_class = ProjectTeamMemberSerializer
-    permission_classes = [IsAuthenticated, TenantScopedPermission]
-
-    def get_queryset(self):
-        """Filter team members by tenant projects"""
-        tenant = getattr(self.request, 'tenant', None)
-        if not tenant:
-            return ProjectTeamMember.objects.none()
-        
-        return ProjectTeamMember.objects.filter(
-            project__tenant=tenant
-        ).select_related('project', 'user')
-
-    def perform_create(self, serializer):
-        """Create team member assignment"""
-        # Additional validation can be added here
-        serializer.save() 
+class ProjectTeamMemberViewSet:  # Deprecated in Phase 1
+    pass

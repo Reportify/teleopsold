@@ -2,118 +2,55 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from .models import Project, ProjectTeamMember
-from apps.users.serializers import UserSerializer
+from .models import Project
+from apps.tenants.models import Tenant
 
 User = get_user_model()
 
 
 class ProjectSerializer(serializers.ModelSerializer):
-    """Basic project serializer for list views"""
-    project_manager_name = serializers.CharField(source='project_manager.full_name', read_only=True)
+    """Basic project serializer for list views (Phase 1)"""
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
-    team_members_count = serializers.SerializerMethodField()
-    progress_percentage = serializers.SerializerMethodField()
-    days_remaining = serializers.SerializerMethodField()
+    client_tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     
     class Meta:
         model = Project
         fields = [
-            'id', 'name', 'description', 'project_type', 'status', 
-            'start_date', 'end_date', 'budget', 'location', 'scope',
-            'project_manager', 'project_manager_name', 'created_by_name',
-            'team_members_count', 'progress_percentage', 'days_remaining',
-            'created_at', 'updated_at'
+            'id', 'name', 'description', 'project_type', 'status',
+            'client_tenant', 'customer_name', 'circle', 'activity',
+            'start_date', 'end_date', 'scope',
+            'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
-    
-    def get_team_members_count(self, obj):
-        """Get count of active team members"""
-        return obj.team_members.filter(projectteammember__is_active=True).count()
-    
-    def get_progress_percentage(self, obj):
-        """Calculate project progress based on tasks completion"""
-        # TODO: Implement when tasks are linked to projects
-        if obj.status == 'completed':
-            return 100
-        elif obj.status == 'active':
-            return 50  # Placeholder
-        return 0
-    
-    def get_days_remaining(self, obj):
-        """Calculate days remaining until end date"""
-        if not obj.end_date:
-            return None
-        
-        from django.utils import timezone
-        today = timezone.now().date()
-        
-        if obj.end_date < today:
-            return 0  # Overdue
-        
-        delta = obj.end_date - today
-        return delta.days
 
 
 class ProjectDetailSerializer(ProjectSerializer):
-    """Detailed project serializer for individual project views"""
-    project_manager_details = UserSerializer(source='project_manager', read_only=True)
-    created_by_details = UserSerializer(source='created_by', read_only=True)
-    team_members_details = serializers.SerializerMethodField()
-    tasks_summary = serializers.SerializerMethodField()
-    sites_summary = serializers.SerializerMethodField()
+    """Detailed project serializer for individual project views (Phase 1)"""
     
     class Meta(ProjectSerializer.Meta):
-        fields = ProjectSerializer.Meta.fields + [
-            'project_manager_details', 'created_by_details', 
-            'team_members_details', 'tasks_summary', 'sites_summary'
-        ]
+        fields = ProjectSerializer.Meta.fields
     
-    def get_team_members_details(self, obj):
-        """Get detailed team member information"""
-        team_members = ProjectTeamMember.objects.filter(
-            project=obj, 
-            is_active=True
-        ).select_related('user')
-        
-        return ProjectTeamMemberSerializer(team_members, many=True).data
-    
-    def get_tasks_summary(self, obj):
-        """Get task summary for the project"""
-        # TODO: Implement when tasks model is connected
-        return {
-            'total_tasks': 0,
-            'completed_tasks': 0,
-            'in_progress_tasks': 0,
-            'pending_tasks': 0
-        }
-    
-    def get_sites_summary(self, obj):
-        """Get sites summary for the project"""
-        # TODO: Implement when project-site relationship is established
-        return {
-            'total_sites': 0,
-            'active_sites': 0,
-            'sites_list': []
-        }
 
 
 class ProjectCreateSerializer(serializers.ModelSerializer):
-    """Serializer for creating new projects"""
-    team_members = serializers.ListField(
-        child=serializers.DictField(),
-        write_only=True,
-        required=False,
-        help_text="List of team members with user_id and role"
-    )
+    """Serializer for creating new projects (Phase 1)"""
+    client_id = serializers.PrimaryKeyRelatedField(source='client_tenant', queryset=Tenant.objects.all(), write_only=True, required=False, allow_null=True)
+    is_tenant_owner = serializers.BooleanField(write_only=True, required=False, default=False)
+    customer_is_tenant_owner = serializers.BooleanField(write_only=True, required=False, default=False)
+    # Make optional so we can populate from tenant when toggle is ON
+    customer_name = serializers.CharField(required=False, allow_blank=True)
     
     class Meta:
         model = Project
         fields = [
-            'name', 'description', 'project_type', 'status',
-            'start_date', 'end_date', 'budget', 'location', 'scope',
-            'project_manager', 'team_members'
+            'name', 'description', 'project_type',
+            'client_id', 'is_tenant_owner',
+            'customer_is_tenant_owner', 'customer_name',
+            'circle', 'activity',
+            'start_date', 'end_date', 'scope'
         ]
+
+    # queryset restricted at runtime by tenant scoping in view/middleware
     
     def validate_name(self, value):
         """Validate project name uniqueness within tenant"""
@@ -130,6 +67,32 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
     
     def validate(self, data):
         """Validate project data"""
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+
+        # Ownership toggles validation
+        is_owner = data.pop('is_tenant_owner', False)
+        customer_is_owner = data.pop('customer_is_tenant_owner', False)
+
+        client_value = data.get('client_tenant', None)
+        if is_owner:
+            # client will be set to current tenant later
+            pass
+        elif not client_value:
+            raise serializers.ValidationError("Either set is_tenant_owner=true or provide client_id")
+
+        # Customer validation
+        customer_name = data.get('customer_name')
+        if customer_is_owner:
+            # Set customer_name from tenant organization name
+            organization_name = getattr(tenant, 'organization_name', None)
+            if organization_name:
+                data['customer_name'] = organization_name
+            else:
+                raise serializers.ValidationError("Tenant organization name not found")
+        elif not customer_name:
+            raise serializers.ValidationError("Customer name is required unless customer_is_tenant_owner=true")
+
         start_date = data.get('start_date')
         end_date = data.get('end_date')
         
@@ -138,47 +101,28 @@ class ProjectCreateSerializer(serializers.ModelSerializer):
                 "Start date cannot be after end date."
             )
         
-        budget = data.get('budget')
-        if budget is not None and budget < 0:
-            raise serializers.ValidationError(
-                "Budget cannot be negative."
-            )
-        
+        # Store toggles in context for use in create
+        self._is_tenant_owner = is_owner
+        self._customer_is_tenant_owner = customer_is_owner
+        self._current_tenant = tenant
         return data
     
     def create(self, validated_data):
-        """Create project with team members"""
-        team_members_data = validated_data.pop('team_members', [])
-        
-        project = Project.objects.create(**validated_data)
-        
-        # Add team members
-        for member_data in team_members_data:
-            user_id = member_data.get('user_id')
-            role = member_data.get('role', 'engineer')
-            
-            try:
-                user = User.objects.get(id=user_id)
-                ProjectTeamMember.objects.create(
-                    project=project,
-                    user=user,
-                    role=role
-                )
-            except User.DoesNotExist:
-                continue  # Skip invalid users
-        
-        return project
+        """Create project (no team members in Phase 1)"""
+        # Apply ownership toggles
+        if getattr(self, '_is_tenant_owner', False):
+            validated_data['client_tenant'] = self._current_tenant
+        return Project.objects.create(**validated_data)
 
 
 class ProjectUpdateSerializer(serializers.ModelSerializer):
-    """Serializer for updating projects"""
+    """Serializer for updating projects (Phase 1)"""
     
     class Meta:
         model = Project
         fields = [
             'name', 'description', 'project_type', 'status',
-            'start_date', 'end_date', 'budget', 'location', 'scope',
-            'project_manager'
+            'start_date', 'end_date', 'scope'
         ]
     
     def validate_name(self, value):
@@ -209,52 +153,10 @@ class ProjectUpdateSerializer(serializers.ModelSerializer):
                 "Start date cannot be after end date."
             )
         
-        budget = data.get('budget')
-        if budget is not None and budget < 0:
-            raise serializers.ValidationError(
-                "Budget cannot be negative."
-            )
-        
         return data
 
 
-class ProjectTeamMemberSerializer(serializers.ModelSerializer):
-    """Serializer for project team members"""
-    user_details = UserSerializer(source='user', read_only=True)
-    user_name = serializers.CharField(source='user.full_name', read_only=True)
-    user_email = serializers.CharField(source='user.email', read_only=True)
-    project_name = serializers.CharField(source='project.name', read_only=True)
-    
-    class Meta:
-        model = ProjectTeamMember
-        fields = [
-            'id', 'project', 'user', 'role', 'assigned_date', 'is_active',
-            'user_details', 'user_name', 'user_email', 'project_name'
-        ]
-        read_only_fields = ['id', 'assigned_date']
-    
-    def validate(self, data):
-        """Validate team member assignment"""
-        project = data.get('project')
-        user = data.get('user')
-        
-        if project and user:
-            # Check if user is already a team member
-            existing = ProjectTeamMember.objects.filter(
-                project=project,
-                user=user,
-                is_active=True
-            )
-            
-            if self.instance:
-                existing = existing.exclude(id=self.instance.id)
-            
-            if existing.exists():
-                raise serializers.ValidationError(
-                    "This user is already a team member of this project."
-                )
-        
-        return data
+    # Team member APIs removed for Phase 1
 
 
 class ProjectStatsSerializer(serializers.Serializer):
