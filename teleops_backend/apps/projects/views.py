@@ -7,10 +7,12 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
-from .models import Project
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem
 from .serializers import (
     ProjectSerializer, ProjectDetailSerializer, ProjectCreateSerializer,
-    ProjectUpdateSerializer, ProjectStatsSerializer
+    ProjectUpdateSerializer, ProjectStatsSerializer,
+    ProjectDesignVersionSerializer, CreateDesignVersionRequestSerializer, CreateDesignItemRequestSerializer,
+    DesignItemSerializer,
 )
 from core.permissions.tenant_permissions import TenantScopedPermission
 from core.pagination import StandardResultsSetPagination
@@ -210,6 +212,226 @@ class ProjectViewSet(viewsets.ModelViewSet):
             'message': f'Updated {updated_count} projects',
             'updated_count': updated_count
         })
+
+    # -----------------------------
+    # Phase 2 - Project Design Endpoints (Draft/Publish)
+    # -----------------------------
+
+    def _get_or_create_design(self, project: Project) -> ProjectDesign:
+        tenant = getattr(self.request, 'tenant', None)
+        design, _created = ProjectDesign.objects.get_or_create(
+            tenant=tenant,
+            project=project,
+            defaults={'created_by': self.request.user}
+        )
+        return design
+
+    @action(detail=True, methods=['get', 'post'], url_path='design/versions')
+    def design_versions(self, request, pk=None):
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+
+        if request.method.lower() == 'get':
+            versions = design.versions.all().order_by('-version_number')
+            return Response(ProjectDesignVersionSerializer(versions, many=True).data)
+
+        # POST - create draft version (optionally copy from existing)
+        serializer = CreateDesignVersionRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        # Enforce single draft per design: return existing draft if present
+        existing_draft = design.versions.filter(status='draft').first()
+        if existing_draft:
+            return Response(ProjectDesignVersionSerializer(existing_draft).data)
+
+        # Compute next version_number based on latest published if any, else 1 for first draft
+        latest_published = design.versions.filter(status='published').order_by('-version_number').first()
+        next_version_number = (latest_published.version_number + 1) if latest_published else 1
+
+        with transaction.atomic():
+            draft = ProjectDesignVersion.objects.create(
+                design=design,
+                version_number=next_version_number,
+                title=data.get('title', ''),
+                notes=data.get('notes', ''),
+                status='draft',
+                is_locked=False,
+                created_by=request.user,
+            )
+
+            copy_from_id = data.get('copy_from_version_id')
+            if copy_from_id:
+                src = design.versions.filter(id=copy_from_id).first()
+                if not src:
+                    return Response({'error': 'Source version not found'}, status=status.HTTP_400_BAD_REQUEST)
+                items = list(src.items.all().order_by('sort_order', 'id'))
+                bulk = [
+                    DesignItem(
+                        version=draft,
+                        item_name=i.item_name,
+                        equipment_code=i.equipment_code,
+                        category=i.category,
+                        model=i.model,
+                        manufacturer=i.manufacturer,
+                        attributes=i.attributes,
+                        remarks=i.remarks,
+                        sort_order=i.sort_order,
+                        is_category=i.is_category,
+                    ) for i in items
+                ]
+                DesignItem.objects.bulk_create(bulk)
+                draft.items_count = len(bulk)
+                draft.save(update_fields=['items_count'])
+
+            design.current_version = draft
+            design.save(update_fields=['current_version', 'updated_at'])
+
+        return Response(ProjectDesignVersionSerializer(draft).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='design/versions/(?P<version_id>[^/.]+)/publish')
+    def publish_version(self, request, pk=None, version_id=None):
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+        version = design.versions.filter(id=version_id, status='draft').first()
+        if not version:
+            return Response({'error': 'Draft version not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Enforce max 5 published versions per project
+        if design.versions.filter(status='published').count() >= 5:
+            return Response({'error': 'Maximum 5 published versions reached. Delete old versions to publish more.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Require at least one item to publish
+        if version.items.count() == 0:
+            return Response({'error': 'At least one item is required to publish the design.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        version.status = 'published'
+        version.is_locked = True
+        version.published_at = timezone.now()
+        version.save(update_fields=['status', 'is_locked', 'published_at'])
+
+        design.current_version = version
+        design.save(update_fields=['current_version', 'updated_at'])
+
+        return Response(ProjectDesignVersionSerializer(version).data)
+
+    @action(detail=True, methods=['get', 'post'], url_path='design/versions/(?P<version_id>[^/.]+)/items')
+    def version_items(self, request, pk=None, version_id=None):
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+        version = design.versions.filter(id=version_id).first()
+        if not version:
+            return Response({'error': 'Version not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        if request.method.lower() == 'get':
+            return Response(DesignItemSerializer(version.items.all().order_by('sort_order', 'id'), many=True).data)
+
+        # POST - create item (only allowed for draft)
+        if version.status != 'draft' or version.is_locked:
+            return Response({'error': 'Version is locked or not a draft'}, status=status.HTTP_400_BAD_REQUEST)
+
+        item_ser = CreateDesignItemRequestSerializer(data=request.data)
+        item_ser.is_valid(raise_exception=True)
+        data = item_ser.validated_data
+
+        # Compute sort order
+        next_order = (version.items.aggregate(m=models.Max('sort_order'))['sort_order__max'] or 0) + 1
+        item = DesignItem.objects.create(version=version, sort_order=next_order, **data)
+        version.items_count = version.items.count()
+        version.save(update_fields=['items_count'])
+
+        return Response(DesignItemSerializer(item).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='design/versions/(?P<version_id>[^/.]+)/items/reorder')
+    def version_items_reorder(self, request, pk=None, version_id=None):
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+        version = design.versions.filter(id=version_id, status='draft').first()
+        if not version:
+            return Response({'error': 'Draft version not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        src_index = request.data.get('from_index')
+        dst_index = request.data.get('to_index')
+        if not isinstance(src_index, int) or not isinstance(dst_index, int):
+            return Response({'error': 'from_index and to_index must be integers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        items = list(version.items.all().order_by('sort_order', 'id'))
+        if not (0 <= src_index < len(items)) or not (0 <= dst_index < len(items)):
+            return Response({'error': 'Index out of range'}, status=status.HTTP_400_BAD_REQUEST)
+
+        moving = items.pop(src_index)
+        items.insert(dst_index, moving)
+        for idx, it in enumerate(items):
+            if it.sort_order != idx:
+                it.sort_order = idx
+        DesignItem.objects.bulk_update(items, ['sort_order'])
+        return Response({'ok': True})
+
+    @action(detail=True, methods=['delete'], url_path='design/versions/(?P<version_id>[^/.]+)')
+    def delete_version(self, request, pk=None, version_id=None):
+        """Delete a design version. Drafts and published versions are allowed.
+        For published deletion, current_version will be moved to the latest remaining published (if any)."""
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+        version = design.versions.filter(id=version_id).first()
+        if not version:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        was_published = (version.status == 'published')
+        version.delete()
+        if was_published:
+            latest_published = design.versions.filter(status='published').order_by('-version_number').first()
+            design.current_version = latest_published
+            design.save(update_fields=['current_version'])
+        else:
+            if design.current_version_id == int(version_id):
+                design.current_version = None
+                design.save(update_fields=['current_version'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], url_path='design/versions/(?P<version_id>[^/.]+)/items/bulk')
+    def version_items_bulk(self, request, pk=None, version_id=None):
+        """Bulk create items in a draft version. Accepts list under 'create'."""
+        project = self.get_object()
+        design = self._get_or_create_design(project)
+        version = design.versions.filter(id=version_id, status='draft').first()
+        if not version:
+            return Response({'error': 'Draft version not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        create_list = request.data.get('create') or []
+        replace_all = bool(request.data.get('replace'))
+        if not isinstance(create_list, list):
+            return Response({'error': 'create must be a list'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if replace_all:
+            version.items.all().delete()
+
+        existing_count = version.items.count()
+        bulk_items = []
+        order_cursor = existing_count
+        for raw in create_list:
+            ser = CreateDesignItemRequestSerializer(data=raw)
+            ser.is_valid(raise_exception=True)
+            payload = ser.validated_data
+            bulk_items.append(DesignItem(
+                version=version,
+                item_name=payload.get('item_name', ''),
+                equipment_code=payload.get('equipment_code', ''),
+                category=payload.get('category', ''),
+                model=payload.get('model', ''),
+                manufacturer=payload.get('manufacturer', ''),
+                attributes=payload.get('attributes', None),
+                remarks=payload.get('remarks', ''),
+                sort_order=order_cursor,
+                is_category=bool(payload.get('is_category', False)),
+            ))
+            order_cursor += 1
+
+        if bulk_items:
+            DesignItem.objects.bulk_create(bulk_items)
+            version.items_count = version.items.count()
+            version.save(update_fields=['items_count'])
+
+        return Response({'created': len(bulk_items)}, status=status.HTTP_201_CREATED)
 
     @action(detail=False, methods=['get'])
     def search(self, request):

@@ -50,6 +50,51 @@ function write(projectId: string, store: Store) {
 }
 
 export const mockDesignService = {
+  hydrateFromServer: async (
+    projectId: string,
+    versions: Array<{
+      id: number;
+      version_number: number;
+      status: "draft" | "published";
+      items?: any[];
+      created_at?: string;
+      published_at?: string | null;
+    }>
+  ) => {
+    const store: Store = { versions: [], nextVersionId: 1, nextItemId: 1 };
+    let maxVid = 0;
+    let maxItemId = 0;
+    const normalized = (versions || []).map((v) => ({
+      id: Number(v.id),
+      version_number: Number(v.version_number),
+      status: v.status,
+      items: (v.items || []).map((it) => {
+        const id = Number(it.id || 0);
+        if (id > maxItemId) maxItemId = id;
+        return {
+          id: id || 0,
+          item_name: String(it.item_name || it.model || ""),
+          category: it.category || "",
+          model: it.model || "",
+          manufacturer: it.manufacturer || "",
+          attributes: it.attributes || undefined,
+          remarks: it.remarks || "",
+          sort_order: typeof it.sort_order === "number" ? it.sort_order : 0,
+          is_category: Boolean(it.is_category),
+        } as DesignItem;
+      }),
+      created_at: v.created_at || new Date().toISOString(),
+      published_at: v.published_at || undefined,
+    }));
+    normalized.forEach((v) => {
+      store.versions.push(v as unknown as DesignVersion);
+      if (v.id > maxVid) maxVid = v.id;
+    });
+    store.nextVersionId = maxVid + 1;
+    store.nextItemId = Math.max(maxItemId + 1, 1);
+    write(projectId, store);
+    return true;
+  },
   listVersions: async (projectId: string) => {
     const store = read(projectId);
     return store.versions.sort((a, b) => b.version_number - a.version_number);

@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Box, Breadcrumbs, Button, Card, CardContent, Chip, Divider, List, ListItem, ListItemButton, ListItemText, Stack, Typography, IconButton, Paper } from "@mui/material";
-import { mockDesignService, DesignVersion } from "../services/mockDesignService";
+import { mockDesignService } from "../services/mockDesignService";
+import designService, { DesignVersion } from "../services/designService";
 import projectService from "../services/projectService";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import PictureAsPdfIcon from "@mui/icons-material/PictureAsPdf";
@@ -16,9 +17,10 @@ const ProjectDesignHistoryPage: React.FC = () => {
 
   useEffect(() => {
     (async () => {
-      const all = await mockDesignService.listPublished(projectId || "demo");
-      setVersions(all);
-      setSelected(all[0] || null);
+      const all = await designService.listVersions(projectId || "");
+      const published = (all || []).filter((v) => v.status === "published");
+      setVersions(published as any);
+      setSelected((published as any)[0] || null);
     })();
   }, [projectId]);
 
@@ -43,19 +45,21 @@ const ProjectDesignHistoryPage: React.FC = () => {
 
   const handleClone = async () => {
     if (!selected) return;
-    const draft = await mockDesignService.createDraft(projectId || "demo", selected.id);
+    // Placeholder: keep mock-based clone for now until backend clone is added
+    const draft = await mockDesignService.createDraft(projectId || "demo", selected.id as any);
     if (!draft) return;
-    await mockDesignService.setDraftItems(projectId || "demo", draft.id, selected.items as any);
+    await mockDesignService.setDraftItems(projectId || "demo", draft.id as any, (selected.items || []) as any);
     alert(`Cloned v${selected.version_number} into draft. Go back to Design to edit.`);
   };
 
   const handleDelete = async () => {
     if (!selected) return;
     if (!window.confirm(`Delete version v${selected.version_number}? You can download it as PDF first.`)) return;
-    await mockDesignService.deleteVersion(projectId || "demo", selected.id);
-    const remaining = await mockDesignService.listPublished(projectId || "demo");
-    setVersions(remaining);
-    setSelected(remaining[0] || null);
+    await designService.deleteDraft(projectId || "", selected.id as any);
+    const refresh = await designService.listVersions(projectId || "");
+    const published = (refresh || []).filter((v) => v.status === "published");
+    setVersions(published as any);
+    setSelected((published as any)[0] || null);
   };
 
   const handleDownloadPdf = () => {

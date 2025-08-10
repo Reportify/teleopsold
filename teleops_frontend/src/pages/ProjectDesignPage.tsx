@@ -59,6 +59,7 @@ import { SortableContext, verticalListSortingStrategy, useSortable } from "@dnd-
 import { CSS } from "@dnd-kit/utilities";
 
 import { mockDesignService, DesignItem, DesignVersion } from "../services/mockDesignService";
+import designService from "../services/designService";
 import { mockInventoryService } from "../services/mockInventoryService";
 import equipmentService from "../services/equipmentService";
 import projectService from "../services/projectService";
@@ -93,12 +94,77 @@ const ProjectDesignPage: React.FC = () => {
   const [cloneOpen, setCloneOpen] = useState(false);
   const [cloneVersions, setCloneVersions] = useState<DesignVersion[]>([]);
   const [cloneSelected, setCloneSelected] = useState<DesignVersion | null>(null);
+  // Track server-saved draft to drive Close/Delete UI
+  const [serverDraft, setServerDraft] = useState<any | null>(null);
+  const [serverDraftFingerprint, setServerDraftFingerprint] = useState<string | null>(null);
+
+  const fingerprint = useCallback((items?: any[]) => {
+    const arr = (items || [])
+      .map((it: any) => ({
+        n: String(it.item_name || it.model || ""),
+        c: String(it.category || ""),
+        m: String(it.model || ""),
+        f: String(it.manufacturer || ""),
+        a: it.attributes ? JSON.stringify(it.attributes) : "",
+        r: String(it.remarks || ""),
+        s: Number(typeof it.sort_order === "number" ? it.sort_order : 0),
+        k: Boolean(it.is_category),
+      }))
+      .sort((a, b) => a.s - b.s || a.n.localeCompare(b.n));
+    return JSON.stringify(arr);
+  }, []);
 
   const load = useCallback(async () => {
-    const vs = await mockDesignService.listVersions(projectId);
-    setVersions(vs);
-    setCurrentDraft(vs.find((v) => v.status === "draft") || null);
-    setLatestPublished(vs.find((v) => v.status === "published") || null);
+    // If a local draft exists, prefer local (user is editing). Avoid overwriting it with server hydration.
+    const localVs = await mockDesignService.listVersions(projectId);
+    const localDraft = localVs.find((v) => v.status === "draft") || null;
+    if (localDraft) {
+      setVersions(localVs);
+      setCurrentDraft(localDraft);
+      setLatestPublished(localVs.find((v) => v.status === "published") || null);
+      // Also probe server to know if a server draft exists
+      try {
+        const sv = await designService.listVersions(projectId);
+        const sd: any = (sv || []).find((v: any) => v.status === "draft") || null;
+        setServerDraft(sd);
+        setServerDraftFingerprint(sd ? fingerprint(sd.items || []) : null);
+      } catch {
+        setServerDraft(null);
+        setServerDraftFingerprint(null);
+      }
+      return;
+    }
+
+    // Otherwise prefer server and hydrate local cache
+    try {
+      const serverVersions = await designService.listVersions(projectId);
+      if (serverVersions && serverVersions.length) {
+        await mockDesignService.hydrateFromServer(projectId, serverVersions as any);
+        const mapped: any[] = (serverVersions || []).map((v: any) => ({
+          id: v.id,
+          version_number: v.version_number,
+          status: v.status,
+          items: v.items || [],
+          created_at: v.created_at,
+          published_at: v.published_at || undefined,
+        }));
+        setVersions(mapped as any);
+        const sdLocal = (mapped as any).find((v: any) => v.status === "draft") || null;
+        setCurrentDraft(sdLocal);
+        setLatestPublished((mapped as any).find((v: any) => v.status === "published") || null);
+        const sd: any = (serverVersions || []).find((v: any) => v.status === "draft") || null;
+        setServerDraft(sd);
+        setServerDraftFingerprint(sd ? fingerprint(sd.items || []) : null);
+        return;
+      }
+    } catch {
+      // fall back to local if server unavailable
+    }
+    setVersions(localVs);
+    setCurrentDraft(localDraft);
+    setLatestPublished(localVs.find((v) => v.status === "published") || null);
+    setServerDraft(null);
+    setServerDraftFingerprint(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -120,10 +186,9 @@ const ProjectDesignPage: React.FC = () => {
 
   const createDraft = useCallback(async (): Promise<DesignVersion | null> => {
     const draft = await mockDesignService.createDraft(projectId, latestPublished?.id);
-    await load();
     setCurrentDraft(draft);
     return draft ?? null;
-  }, [projectId, latestPublished, load]);
+  }, [projectId, latestPublished]);
 
   const onAddItem = useCallback(
     async (baseName: string, chosen?: Suggestion) => {
@@ -200,9 +265,16 @@ const ProjectDesignPage: React.FC = () => {
 
   const onPublish = async () => {
     if (!currentDraft) return;
-    // simple publish rule: require at least one item; (mock inventory checks optional)
-    await mockDesignService.publish(projectId, currentDraft.id);
-    await load();
+    try {
+      // Publish on server
+      const resp = await designService.publish(projectId, currentDraft.id as any);
+      // After publish, remove any local draft and refresh from server
+      await mockDesignService.deleteDraft(projectId);
+      await load();
+      setToast({ open: true, message: `Published v${resp.version_number}`, severity: "success" });
+    } catch (e: any) {
+      setToast({ open: true, message: "Failed to publish. Ensure at least one item is present and you have not exceeded 5 published versions.", severity: "error" });
+    }
   };
 
   // Suggestions - first try real equipment API, fallback to mock
@@ -401,6 +473,61 @@ const ProjectDesignPage: React.FC = () => {
   }, [viewItems, itemsByCategory]);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: "warning" | "success" | "info" | "error" }>({ open: false, message: "", severity: "warning" });
   const warn = (message: string) => setToast({ open: true, message, severity: "warning" });
+  const [isSaving, setIsSaving] = useState(false);
+
+  const saveDraftToBackend = useCallback(async () => {
+    if (!currentDraft || draftItemCount === 0 || isSaving) return;
+    try {
+      setIsSaving(true);
+      // 1) Create a backend draft version
+      const newVersion = await designService.createVersion(projectId, {});
+      // 2) Persist items in current order via bulk
+      const sorted = [...currentDraft.items].sort((a: any, b: any) => a.sort_order - b.sort_order);
+      const payload = sorted.map((it: any, idx: number) => ({
+        item_name: String(it.item_name || it.model || ""),
+        equipment_code: it.equipment_code || "",
+        category: it.is_category ? "" : it.category || "",
+        model: it.model || "",
+        manufacturer: it.manufacturer || "",
+        attributes: it.attributes || null,
+        remarks: it.remarks || "",
+        is_category: Boolean(it.is_category),
+        sort_order: idx,
+      }));
+      await designService.bulkCreateItems(projectId, newVersion.id, payload, { replace: true });
+      // Refresh draft state from backend for the new version so UI shows server data
+      const serverItems = await designService.listItems(projectId, newVersion.id);
+
+      // Remove local mock draft and replace in-memory state with server versions/items
+      await mockDesignService.deleteDraft(projectId);
+
+      // Load all versions from server and sync local state
+      const serverVersions = await designService.listVersions(projectId);
+      // Map server versions to local shape used in the page
+      const mapped: any[] = (serverVersions || []).map((v: any) => ({
+        id: v.id,
+        version_number: v.version_number,
+        status: v.status,
+        items: v.items || [],
+        created_at: v.created_at,
+        published_at: v.published_at || undefined,
+      }));
+      setVersions(mapped as any);
+
+      const latestPub: any = (serverVersions || []).find((v: any) => v.status === "published") || null;
+      setLatestPublished(latestPub as any);
+
+      setCurrentDraft({ id: newVersion.id, version_number: newVersion.version_number, status: "draft", items: serverItems, created_at: newVersion.created_at } as any);
+      setServerDraft({ id: newVersion.id, version_number: newVersion.version_number, status: "draft", items: serverItems });
+      setServerDraftFingerprint(fingerprint(serverItems));
+      setToast({ open: true, message: "Draft saved to server", severity: "success" });
+    } catch (e: any) {
+      console.error(e);
+      setToast({ open: true, message: "Failed to save draft", severity: "error" });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [currentDraft, draftItemCount, isSaving, projectId, fingerprint]);
 
   const isEquipmentExisting = useCallback(
     (name?: string, category?: string) => {
@@ -540,29 +667,70 @@ const ProjectDesignPage: React.FC = () => {
                 {canEdit && (
                   <>
                     <Stack alignItems="center" spacing={0.25}>
-                      <IconButton size="small" title="Save draft" onClick={() => setToast({ open: true, message: "Draft saved", severity: "success" })}>
+                      <IconButton size="small" title="Save draft" onClick={() => void saveDraftToBackend()} disabled={isSaving}>
                         <SaveOutlinedIcon fontSize="small" />
                       </IconButton>
-                      <Typography variant="caption">Save</Typography>
+                      <Typography variant="caption">{isSaving ? "Saving…" : "Save"}</Typography>
                     </Stack>
-                    <Stack alignItems="center" spacing={0.25}>
-                      <IconButton
-                        size="small"
-                        title="Cancel editing"
-                        onClick={async () => {
-                          if (currentDraft) {
-                            const confirmCancel = window.confirm("Discard draft changes and return to published view?");
-                            if (!confirmCancel) return;
-                            await mockDesignService.deleteDraft(projectId);
-                            await load();
-                            setToast({ open: true, message: "Draft discarded", severity: "success" });
-                          }
-                        }}
-                      >
-                        <CloseIcon fontSize="small" />
-                      </IconButton>
-                      <Typography variant="caption">Close</Typography>
-                    </Stack>
+                    {(!serverDraft || (serverDraft && fingerprint(currentDraft?.items) !== serverDraftFingerprint)) && (
+                      <Stack alignItems="center" spacing={0.25}>
+                        <IconButton
+                          size="small"
+                          title={!serverDraft ? "Close (discard and show published)" : "Revert to saved draft"}
+                          onClick={async () => {
+                            if (!currentDraft) return;
+                            if (!serverDraft) {
+                              const ok = window.confirm("Discard local changes and return to published view?");
+                              if (!ok) return;
+                              await mockDesignService.deleteDraft(projectId);
+                              await load();
+                              return;
+                            }
+                            const ok = window.confirm("Revert local changes to last saved server draft?");
+                            if (!ok) return;
+                            const sv = await designService.listVersions(projectId);
+                            const sd: any = (sv || []).find((v: any) => v.status === "draft");
+                            if (sd) {
+                              await mockDesignService.hydrateFromServer(projectId, sv as any);
+                              setVersions(sv as any);
+                              setCurrentDraft({ ...(sd as any), items: (sd as any).items || [] } as any);
+                              setServerDraft(sd);
+                              setServerDraftFingerprint(fingerprint(sd.items || []));
+                              setToast({ open: true, message: "Reverted to saved draft", severity: "success" });
+                            }
+                          }}
+                        >
+                          <CloseIcon fontSize="small" />
+                        </IconButton>
+                        <Typography variant="caption">{!serverDraft ? "Close" : "Revert"}</Typography>
+                      </Stack>
+                    )}
+                    {serverDraft && (
+                      <Stack alignItems="center" spacing={0.25}>
+                        <IconButton
+                          size="small"
+                          title="Delete draft"
+                          onClick={async () => {
+                            if (!currentDraft) return;
+                            const ok = window.confirm("Delete this draft permanently?");
+                            if (!ok) return;
+                            try {
+                              await designService.deleteDraft(projectId, (serverDraft as any).id);
+                              await mockDesignService.deleteDraft(projectId);
+                              setServerDraft(null);
+                              setServerDraftFingerprint(null);
+                              await load();
+                              setToast({ open: true, message: "Draft deleted", severity: "success" });
+                            } catch (e) {
+                              setToast({ open: true, message: "Failed to delete draft", severity: "error" });
+                            }
+                          }}
+                        >
+                          <DeleteOutlineIcon fontSize="small" />
+                        </IconButton>
+                        <Typography variant="caption">Delete</Typography>
+                      </Stack>
+                    )}
                   </>
                 )}
               </Box>

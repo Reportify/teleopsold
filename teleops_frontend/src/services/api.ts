@@ -55,6 +55,14 @@ export const API_ENDPOINTS = {
     DETAIL: (id: string) => `/projects/${id}/`,
     UPDATE: (id: string) => `/projects/${id}/`,
     DELETE: (id: string) => `/projects/${id}/`,
+    DESIGN: {
+      VERSIONS: (projectId: string) => `/projects/${projectId}/design/versions/`,
+      PUBLISH: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/publish/`,
+      ITEMS: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/items/`,
+      REORDER: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/items/reorder/`,
+      BULK: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/items/bulk/`,
+      DELETE_DRAFT: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/`,
+    },
   },
   SITES: {
     LIST: "/sites/",

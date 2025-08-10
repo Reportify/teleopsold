@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from .models import Project
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem
 from apps.tenants.models import Tenant
 
 User = get_user_model()
@@ -281,3 +281,44 @@ class ProjectDuplicateSerializer(serializers.Serializer):
                 )
         
         return value 
+
+
+# -----------------------------
+# Phase 2 - Project Design Serializers
+# -----------------------------
+
+
+class DesignItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DesignItem
+        fields = [
+            'id', 'item_name', 'equipment_code', 'category', 'model',
+            'manufacturer', 'attributes', 'remarks', 'sort_order', 'is_category'
+        ]
+        read_only_fields = ['id']
+
+
+class ProjectDesignVersionSerializer(serializers.ModelSerializer):
+    items = DesignItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ProjectDesignVersion
+        fields = [
+            'id', 'design', 'version_number', 'title', 'notes', 'status', 'is_locked',
+            'items_count', 'published_at', 'created_at', 'items'
+        ]
+        read_only_fields = ['id', 'design', 'version_number', 'status', 'is_locked', 'items_count', 'published_at', 'created_at']
+
+
+class CreateDesignVersionRequestSerializer(serializers.Serializer):
+    title = serializers.CharField(required=False, allow_blank=True)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    copy_from_version_id = serializers.IntegerField(required=False, allow_null=True)
+
+
+class CreateDesignItemRequestSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DesignItem
+        fields = [
+            'item_name', 'equipment_code', 'category', 'model', 'manufacturer', 'attributes', 'remarks', 'sort_order', 'is_category'
+        ]
