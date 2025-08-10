@@ -65,7 +65,7 @@ import projectService from "../services/projectService";
 
 type Suggestion = { type: "category"; id: number; label: string } | { type: "model"; id: number; label: string; categoryName: string; manufacturer?: string };
 
-const ProjectDesignMockPage: React.FC = () => {
+const ProjectDesignPage: React.FC = () => {
   const { id: projectIdParam } = useParams();
   const navigate = useNavigate();
   const projectId = projectIdParam || "demo";
@@ -135,8 +135,17 @@ const ProjectDesignMockPage: React.FC = () => {
       const base: Partial<DesignItem> = { item_name: baseName } as any;
       if (chosen?.type === "category") base.category = chosen.label;
       if (chosen?.type === "model") {
+        const FALLBACK_CATEGORY = "Uncategorized";
+        const targetCategory = (chosen.categoryName || "").trim() || FALLBACK_CATEGORY;
+        // Ensure header exists for target category
+        const hasHeader = (draft.items || []).some(
+          (it: any) => it.is_category && (String(it.item_name || "").toLowerCase() === targetCategory.toLowerCase() || String(it.category || "").toLowerCase() === targetCategory.toLowerCase())
+        );
+        if (!hasHeader) {
+          await mockDesignService.addCategory(projectId, draft.id, targetCategory);
+        }
         base.model = chosen.label;
-        base.category = chosen.categoryName;
+        base.category = targetCategory;
         if (chosen.manufacturer) base.manufacturer = chosen.manufacturer;
       }
       await mockDesignService.addItem(projectId, draft.id, base as any);
@@ -363,16 +372,33 @@ const ProjectDesignMockPage: React.FC = () => {
   const viewItems = useMemo(() => (currentDraft ? currentDraft.items : latestPublished?.items || []), [currentDraft, latestPublished]);
   const draftItemCount = currentDraft ? currentDraft.items.length : 0;
   const canEdit = Boolean(currentDraft);
-  const categoryItems = useMemo(() => (viewItems.filter((i: any) => i.is_category) as any[]).sort((a: any, b: any) => a.sort_order - b.sort_order), [viewItems]);
+  const normalizeCategory = (s?: string) => {
+    const n = (s || "").toString().trim();
+    return n.length ? n : "Uncategorized";
+  };
   const itemsByCategory = useMemo(() => {
     const map: Record<string, any[]> = {};
     (viewItems.filter((i: any) => !i.is_category) as any[]).forEach((it: any) => {
-      const key = it.category || "";
+      const key = normalizeCategory(it.category);
       if (!map[key]) map[key] = [];
       map[key].push(it);
     });
     return map;
   }, [viewItems]);
+  const categoryItems = useMemo(() => {
+    const headers = (viewItems.filter((i: any) => i.is_category) as any[]).sort((a: any, b: any) => a.sort_order - b.sort_order);
+    const headerNames = new Set(headers.map((h: any) => String(h.item_name || h.category || "").toLowerCase()));
+    const missing: any[] = [];
+    let nextOrder = headers.length;
+    Object.keys(itemsByCategory).forEach((cat) => {
+      const name = normalizeCategory(cat);
+      if (!headerNames.has(name.toLowerCase())) {
+        const synthId = -Math.abs(name.split("").reduce((a, c) => a + c.charCodeAt(0), 0) + 1000);
+        missing.push({ id: synthId, item_name: name, is_category: true, isSynthetic: true, sort_order: nextOrder++ });
+      }
+    });
+    return [...headers, ...missing].sort((a: any, b: any) => a.sort_order - b.sort_order);
+  }, [viewItems, itemsByCategory]);
   const [toast, setToast] = useState<{ open: boolean; message: string; severity: "warning" | "success" | "info" | "error" }>({ open: false, message: "", severity: "warning" });
   const warn = (message: string) => setToast({ open: true, message, severity: "warning" });
 
@@ -966,4 +992,4 @@ const ProjectDesignMockPage: React.FC = () => {
   );
 };
 
-export default ProjectDesignMockPage;
+export default ProjectDesignPage;

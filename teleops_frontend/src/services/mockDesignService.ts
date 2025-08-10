@@ -79,7 +79,10 @@ export const mockDesignService = {
       write(projectId, store);
       return existingDraft;
     }
-    const nextVersionNumber = store.versions.reduce((m, v) => Math.max(m, v.version_number), 0) + 1;
+    // Draft numbers should be derived from latest PUBLISHED only, so discarding a draft
+    // does NOT increment the next draft's number.
+    const latestPublished = store.versions.filter((v) => v.status === "published").reduce((m, v) => Math.max(m, v.version_number), 0);
+    const nextVersionNumber = latestPublished + 1;
     const newVersion: DesignVersion = {
       id: store.nextVersionId++,
       version_number: nextVersionNumber,
@@ -202,7 +205,17 @@ export const mockDesignService = {
     const store = read(projectId);
     const before = store.versions.length;
     store.versions = store.versions.filter((v) => v.status !== "draft");
-    if (store.versions.length !== before) write(projectId, store);
+    if (store.versions.length !== before) {
+      // Recompute counters so discarded drafts don't keep bumping ids
+      const maxVersionId = store.versions.reduce((m, v) => Math.max(m, v.id), 0);
+      const maxItemId = store.versions.reduce((mv, v) => {
+        const localMax = (v.items || []).reduce((mi, it) => Math.max(mi, it.id), 0);
+        return Math.max(mv, localMax);
+      }, 0);
+      store.nextVersionId = maxVersionId + 1;
+      store.nextItemId = maxItemId + 1;
+      write(projectId, store);
+    }
     return true;
   },
 };

@@ -30,7 +30,7 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectDetailsPage from "./pages/ProjectDetailsPage";
-import ProjectDesignMockPage from "./pages/ProjectDesignMockPage";
+import ProjectDesignPage from "./pages/ProjectDesignPage";
 import ProjectDesignHistoryPage from "./pages/ProjectDesignHistoryPage";
 import SitesPage from "./pages/SitesPage";
 import TasksPage from "./pages/TasksPage";
@@ -302,7 +302,7 @@ const AppInner: React.FC = () => {
           path="/projects/:id/design"
           element={
             <ProtectedRoute>
-              <ProjectDesignMockPage />
+              <ProjectDesignPage />
             </ProtectedRoute>
           }
         />
