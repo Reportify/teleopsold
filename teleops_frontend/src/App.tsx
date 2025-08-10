@@ -30,6 +30,8 @@ import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import ProjectsPage from "./pages/ProjectsPage";
 import ProjectDetailsPage from "./pages/ProjectDetailsPage";
+import ProjectDesignMockPage from "./pages/ProjectDesignMockPage";
+import ProjectDesignHistoryPage from "./pages/ProjectDesignHistoryPage";
 import SitesPage from "./pages/SitesPage";
 import TasksPage from "./pages/TasksPage";
 import EquipmentPage from "./pages/EquipmentPage";
@@ -292,6 +294,24 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <ProjectDetailsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/projects/:id/design"
+          element={
+            <ProtectedRoute>
+              <ProjectDesignMockPage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/projects/:id/design/history"
+          element={
+            <ProtectedRoute>
+              <ProjectDesignHistoryPage />
             </ProtectedRoute>
           }
         />

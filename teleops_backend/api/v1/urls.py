@@ -37,6 +37,9 @@ urlpatterns = [
     
     # Task Management endpoints
     path('tasks/', include('apps.tasks.urls')),
+
+    # Equipment Inventory endpoints
+    path('equipment/', include('apps.equipment.urls')),
     
     path('internal/', include('teleops_internal.api.urls')),
     path('public/corporate/register/', CorporateOnboardingView.as_view(), name='corporate-onboarding'),

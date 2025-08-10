@@ -171,6 +171,11 @@ const ProjectDetailsPage: React.FC = () => {
         <Button variant="contained" onClick={() => navigate(`/projects`)}>
           Edit Project
         </Button>
+        {project.project_type === "dismantle" && (
+          <Button variant="contained" color="secondary" component={Link} to={`/projects/${project.id}/design`}>
+            Open Design
+          </Button>
+        )}
       </Box>
     </Box>
   );

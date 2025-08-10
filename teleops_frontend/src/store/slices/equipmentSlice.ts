@@ -1,28 +1,24 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 
-export interface EquipmentCategory {
-  id: string;
+export interface EquipmentItem {
+  id: number;
   name: string;
-  description?: string;
-}
-
-export interface EquipmentModel {
-  id: string;
-  category_id: string;
-  name: string;
-  description?: string;
+  material_code?: string;
+  category?: string;
+  sub_category?: string;
+  manufacturer?: string;
+  unit_of_measurement?: string;
+  technologies?: string[];
 }
 
 interface EquipmentState {
-  categories: EquipmentCategory[];
-  models: EquipmentModel[];
+  items: EquipmentItem[];
   loading: boolean;
   error: string | null;
 }
 
 const initialState: EquipmentState = {
-  categories: [],
-  models: [],
+  items: [],
   loading: false,
   error: null,
 };
@@ -31,14 +27,11 @@ const equipmentSlice = createSlice({
   name: "equipment",
   initialState,
   reducers: {
-    setCategories: (state, action: PayloadAction<EquipmentCategory[]>) => {
-      state.categories = action.payload;
-    },
-    setModels: (state, action: PayloadAction<EquipmentModel[]>) => {
-      state.models = action.payload;
+    setItems: (state, action: PayloadAction<EquipmentItem[]>) => {
+      state.items = action.payload;
     },
   },
 });
 
-export const { setCategories, setModels } = equipmentSlice.actions;
+export const { setItems } = equipmentSlice.actions;
 export default equipmentSlice.reducer;

@@ -5,3 +5,7 @@ class EquipmentConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.equipment'
     verbose_name = 'Equipment' 
+
+    def ready(self):
+        # Placeholder for future signals (e.g., normalization hooks)
+        pass

@@ -72,19 +72,20 @@ export const API_ENDPOINTS = {
     EQUIPMENT_VERIFICATION: (id: string) => `/tasks/${id}/equipment-verification/`,
   },
   EQUIPMENT: {
-    CATEGORIES: {
-      LIST: "/equipment/categories/",
-      CREATE: "/equipment/categories/",
-      DETAIL: (id: string) => `/equipment/categories/${id}/`,
-      UPDATE: (id: string) => `/equipment/categories/${id}/`,
-      DELETE: (id: string) => `/equipment/categories/${id}/`,
+    ITEMS: {
+      LIST: "/equipment/items/",
+      CREATE: "/equipment/items/",
+      DETAIL: (id: string) => `/equipment/items/${id}/`,
+      UPDATE: (id: string) => `/equipment/items/${id}/`,
+      DELETE: (id: string) => `/equipment/items/${id}/`,
+      BULK_UPLOAD: "/equipment/items/bulk-upload/",
     },
-    MODELS: {
-      LIST: "/equipment/models/",
-      CREATE: "/equipment/models/",
-      DETAIL: (id: string) => `/equipment/models/${id}/`,
-      UPDATE: (id: string) => `/equipment/models/${id}/`,
-      DELETE: (id: string) => `/equipment/models/${id}/`,
+    TECHNOLOGIES: {
+      LIST: "/equipment/technologies/",
+      CREATE: "/equipment/technologies/",
+      DETAIL: (id: string) => `/equipment/technologies/${id}/`,
+      UPDATE: (id: string) => `/equipment/technologies/${id}/`,
+      DELETE: (id: string) => `/equipment/technologies/${id}/`,
     },
   },
   TEAMS: {
