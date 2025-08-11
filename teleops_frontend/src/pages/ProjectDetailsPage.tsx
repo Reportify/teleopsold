@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
-import { Box, Breadcrumbs, Typography, Chip, CircularProgress, Button, Divider, Paper } from "@mui/material";
+import { Box, Breadcrumbs, Typography, Chip, Button, Divider, Paper, Stack, Grid, Skeleton, Alert } from "@mui/material";
+import { BusinessOutlined, PlaceOutlined, CalendarTodayOutlined, BadgeOutlined, InfoOutlined } from "@mui/icons-material";
 import projectService, { Project } from "../services/projectService";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { useAuth } from "../contexts/AuthContext";
@@ -16,6 +17,7 @@ const ProjectDetailsPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [clientName, setClientName] = useState<string>("");
   const [circleLabel, setCircleLabel] = useState<string>("");
+  const [siteCount, setSiteCount] = useState<number | null>(null);
 
   const formattedStart = useMemo(() => (project?.start_date ? new Date(project.start_date).toLocaleDateString() : "-"), [project]);
   const formattedEnd = useMemo(() => (project?.end_date ? new Date(project.end_date).toLocaleDateString() : "-"), [project]);
@@ -53,6 +55,9 @@ const ProjectDetailsPage: React.FC = () => {
         } catch {
           setCircleLabel(data.circle);
         }
+
+        // Use project-linked site count from backend annotation
+        setSiteCount((data as any).site_count ?? 0);
       } catch (e: any) {
         setError(e?.message || "Failed to load project");
       } finally {
@@ -62,18 +67,72 @@ const ProjectDetailsPage: React.FC = () => {
     load();
   }, [id]);
 
-  if (loading) {
-    return (
-      <Box sx={{ p: 3, display: "flex", justifyContent: "center" }}>
-        <CircularProgress />
+  const StatusChip: React.FC<{ value: Project["status"] }> = ({ value }) => {
+    const color = value === "completed" ? "success" : value === "active" ? "primary" : value === "on_hold" ? "warning" : "default";
+    const label = value.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+    return <Chip size="small" variant="filled" color={color as any} label={label} />;
+  };
+
+  const InfoItem: React.FC<{ icon: React.ReactNode; label: string; value?: React.ReactNode }> = ({ icon, label, value }) => (
+    <Stack direction="row" spacing={1.5} alignItems="center">
+      <Box
+        sx={{
+          width: 32,
+          height: 32,
+          borderRadius: 1,
+          display: "grid",
+          placeItems: "center",
+          bgcolor: (theme) => (darkMode ? theme.palette.grey[800] : theme.palette.grey[100]),
+          color: (theme) => (darkMode ? theme.palette.grey[300] : theme.palette.text.secondary),
+        }}
+      >
+        {icon}
       </Box>
-    );
-  }
+      <Box>
+        <Typography variant="caption" sx={{ color: (theme) => (darkMode ? theme.palette.grey[400] : theme.palette.text.secondary) }}>
+          {label}
+        </Typography>
+        <Typography variant="body2" sx={{ fontWeight: 600 }}>
+          {value || "-"}
+        </Typography>
+      </Box>
+    </Stack>
+  );
 
   if (error) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography color="error">{error}</Typography>
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
+
+  if (loading) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Breadcrumbs sx={{ mb: 2 }}>
+          <Link to="/dashboard">Dashboard</Link>
+          <Link to="/projects">Projects</Link>
+          <Typography color="text.primary">Loading…</Typography>
+        </Breadcrumbs>
+        <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+          <Stack spacing={1}>
+            <Skeleton variant="text" height={36} width={280} />
+            <Skeleton variant="text" height={18} width={160} />
+          </Stack>
+        </Paper>
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Skeleton variant="rectangular" height={140} />
+            </Paper>
+          </Grid>
+          <Grid size={{ xs: 12, md: 6 }}>
+            <Paper variant="outlined" sx={{ p: 2 }}>
+              <Skeleton variant="rectangular" height={140} />
+            </Paper>
+          </Grid>
+        </Grid>
       </Box>
     );
   }
@@ -87,96 +146,99 @@ const ProjectDetailsPage: React.FC = () => {
         <Link to="/projects">Projects</Link>
         <Typography color="text.primary">{project.name}</Typography>
       </Breadcrumbs>
+      {/* Header */}
+      <Paper variant="outlined" sx={{ p: 2.5, mb: 2 }}>
+        <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between" spacing={1.5}>
+          <Box>
+            <Stack direction="row" spacing={1.25} alignItems="center">
+              <Typography variant="h5" sx={{ fontWeight: 700 }}>
+                {project.name}
+              </Typography>
+              <StatusChip value={project.status} />
+              <Chip size="small" variant="outlined" label={project.project_type === "dismantle" ? "Dismantle" : "Other"} />
+            </Stack>
+            <Typography variant="body2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280", mt: 0.5 }}>
+              {project.description || "No description provided"}
+            </Typography>
+          </Box>
 
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          {project.name}
-        </Typography>
-        <Chip
-          size="small"
-          label={project.status.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())}
-          color={project.status === "completed" ? "success" : project.status === "active" ? "primary" : "default"}
-        />
-        <Chip size="small" label={project.project_type === "dismantle" ? "Dismantle" : "Other"} />
-      </Box>
-
-      <Typography variant="body2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280", mb: 3 }}>
-        {project.description || "No description"}
-      </Typography>
-
-      <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-          Context
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 2 }}>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              Client
-            </Typography>
-            <Typography variant="body1">{clientName}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              Customer
-            </Typography>
-            <Typography variant="body1">{project.customer_name || "-"}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              Circle
-            </Typography>
-            <Typography variant="body1">{circleLabel}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              Activity
-            </Typography>
-            <Typography variant="body1">{project.activity}</Typography>
-          </Box>
-        </Box>
+          {/* Actions */}
+          <Stack direction="row" spacing={1} sx={{ width: { xs: "100%", sm: "auto" } }}>
+            <Button variant="outlined" component={Link} to={`/projects`}>
+              Back
+            </Button>
+            <Button variant="contained" onClick={() => navigate(`/projects`)}>
+              Edit
+            </Button>
+            {project.project_type === "dismantle" && (
+              <Button variant="contained" color="secondary" component={Link} to={`/projects/${project.id}/design`}>
+                Open Design
+              </Button>
+            )}
+          </Stack>
+        </Stack>
       </Paper>
 
+      {/* Quick facts */}
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
-        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
-          Timeline & Scope
-        </Typography>
-        <Divider sx={{ mb: 2 }} />
-        <Box sx={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 2 }}>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              Start Date
+        <Grid container spacing={2}>
+          <Grid size={{ xs: 12, sm: 6, md: 6 }}>
+            <InfoItem icon={<BusinessOutlined fontSize="small" />} label="Client" value={clientName} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 6 }}>
+            <InfoItem icon={<BadgeOutlined fontSize="small" />} label="Customer" value={project.customer_name || "-"} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 6 }}>
+            <InfoItem icon={<PlaceOutlined fontSize="small" />} label="Circle" value={circleLabel} />
+          </Grid>
+          <Grid size={{ xs: 12, sm: 6, md: 6 }}>
+            <InfoItem icon={<InfoOutlined fontSize="small" />} label="Activity" value={project.activity} />
+          </Grid>
+        </Grid>
+      </Paper>
+
+      <Grid container spacing={2}>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Paper variant="outlined" sx={{ p: 2, height: "100%" }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+              Timeline
             </Typography>
-            <Typography variant="body1">{formattedStart}</Typography>
-          </Box>
-          <Box>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
-              End Date
-            </Typography>
-            <Typography variant="body1">{formattedEnd}</Typography>
-          </Box>
-          <Box sx={{ gridColumn: "1 / -1" }}>
-            <Typography variant="subtitle2" sx={{ color: darkMode ? "#9aa0a6" : "#6b7280" }}>
+            <Divider sx={{ mb: 2 }} />
+            <Stack spacing={2}>
+              <InfoItem icon={<CalendarTodayOutlined fontSize="small" />} label="Start date" value={formattedStart} />
+              <InfoItem icon={<CalendarTodayOutlined fontSize="small" />} label="End date" value={formattedEnd} />
+            </Stack>
+          </Paper>
+        </Grid>
+        <Grid size={{ xs: 12, md: 6 }}>
+          <Paper variant="outlined" sx={{ p: 2, height: "100%" }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
               Scope
             </Typography>
-            <Typography variant="body1">{project.scope || "-"}</Typography>
-          </Box>
-        </Box>
-      </Paper>
+            <Divider sx={{ mb: 2 }} />
+            <Typography variant="body2">{project.scope || "-"}</Typography>
+          </Paper>
+        </Grid>
+      </Grid>
 
-      <Box sx={{ display: "flex", gap: 1 }}>
-        <Button variant="outlined" component={Link} to={`/projects`}>
-          Back to Projects
-        </Button>
-        <Button variant="contained" onClick={() => navigate(`/projects`)}>
-          Edit Project
-        </Button>
-        {project.project_type === "dismantle" && (
-          <Button variant="contained" color="secondary" component={Link} to={`/projects/${project.id}/design`}>
-            Open Design
-          </Button>
-        )}
-      </Box>
+      {/* Project Sites summary */}
+      <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
+          <Box>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Project Sites
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {siteCount === null ? "-" : `${siteCount} site${siteCount === 1 ? "" : "s"}`} available
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" component={Link} to={`/projects/${project.id}/sites`}>
+              Details
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
     </Box>
   );
 };

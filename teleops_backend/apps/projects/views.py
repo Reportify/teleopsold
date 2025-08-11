@@ -7,12 +7,13 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
-from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite
+from apps.sites.models import Site
 from .serializers import (
     ProjectSerializer, ProjectDetailSerializer, ProjectCreateSerializer,
     ProjectUpdateSerializer, ProjectStatsSerializer,
     ProjectDesignVersionSerializer, CreateDesignVersionRequestSerializer, CreateDesignItemRequestSerializer,
-    DesignItemSerializer,
+    DesignItemSerializer, ProjectSiteSerializer, LinkSitesRequestSerializer, ImportProjectSitesUploadSerializer,
 )
 from core.permissions.tenant_permissions import TenantScopedPermission
 from core.pagination import StandardResultsSetPagination
@@ -39,6 +40,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return (
             Project.objects
             .filter(tenant=tenant, deleted_at__isnull=True)
+            .annotate(site_count=models.Count('project_sites', filter=models.Q(project_sites__is_active=True)))
             .select_related('client_tenant', 'created_by')
         )
 
@@ -525,6 +527,155 @@ class ProjectViewSet(viewsets.ModelViewSet):
         logger.info(f"Project {original_project.name} duplicated as {new_name} by {request.user.email}")
         
         return Response(ProjectDetailSerializer(new_project).data, status=status.HTTP_201_CREATED)
+
+    # -----------------------------
+    # Phase 3 - Project ↔ Site Association
+    # -----------------------------
+
+    @action(detail=True, methods=['get'], url_path='sites')
+    def list_sites(self, request, pk=None):
+        project = self.get_object()
+        links = ProjectSite.objects.filter(project=project, is_active=True).select_related('site')
+        data = ProjectSiteSerializer(links, many=True).data
+        return Response(data)
+
+    @action(detail=True, methods=['get'], url_path='sites/count')
+    def sites_count(self, request, pk=None):
+        """Return count of active linked sites for this project.
+
+        This avoids any accidental use of master sites count on the frontend.
+        """
+        project = self.get_object()
+        count = ProjectSite.objects.filter(project=project, is_active=True).count()
+        return Response({'site_count': count})
+
+    @action(detail=True, methods=['post'], url_path='sites/link')
+    def link_sites(self, request, pk=None):
+        project = self.get_object()
+        ser = LinkSitesRequestSerializer(data=request.data, context={'request': request})
+        ser.is_valid(raise_exception=True)
+        site_ids = ser.validated_data['site_ids']
+        alias = ser.validated_data.get('alias_name', '').strip()
+
+        created = 0
+        skipped = 0
+        with transaction.atomic():
+            existing = set(ProjectSite.objects.filter(project=project, site_id__in=site_ids).values_list('site_id', flat=True))
+            to_create = []
+            for sid in site_ids:
+                if sid in existing:
+                    skipped += 1
+                    continue
+                to_create.append(ProjectSite(project=project, site_id=sid, alias_name=alias, created_by=request.user))
+            if to_create:
+                ProjectSite.objects.bulk_create(to_create)
+                created = len(to_create)
+
+        return Response({'linked': created, 'skipped': skipped, 'errors': []}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path='sites/(?P<link_id>[^/.]+)')
+    def unlink_site(self, request, pk=None, link_id=None):
+        project = self.get_object()
+        link = ProjectSite.objects.filter(project=project, id=link_id).first()
+        if not link:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        link.is_active = False
+        link.save(update_fields=['is_active', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=['post'], url_path='sites/import')
+    def import_sites(self, request, pk=None):
+        """Import/link sites from Excel/CSV. Creates missing master sites for tenant.
+        Template columns: site_id, global_id, site_name, town, cluster, address, latitude, longitude
+        """
+        project = self.get_object()
+        upload_ser = ImportProjectSitesUploadSerializer(data=request.data)
+        upload_ser.is_valid(raise_exception=True)
+        file = request.FILES['file']
+
+        import pandas as pd
+        try:
+            if file.name.lower().endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file)
+            else:
+                df = pd.read_csv(file)
+        except Exception as e:
+            return Response({'error': f'Failed to read file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        required = ['site_id', 'global_id', 'site_name', 'cluster', 'latitude', 'longitude']
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            return Response({'error': f'Missing required columns: {", ".join(missing)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant = getattr(request, 'tenant', None)
+        created_master = 0
+        linked = 0
+        skipped = 0
+        errors = []
+
+        with transaction.atomic():
+            for idx, row in df.iterrows():
+                rownum = idx + 2
+                try:
+                    site_id_val = str(row.get('site_id') or '').strip()
+                    global_id_val = str(row.get('global_id') or '').strip()
+                    site_name_val = str(row.get('site_name') or '').strip()
+                    town_val = str(row.get('town') or '').strip()
+                    cluster_val = str(row.get('cluster') or '').strip()
+                    address_val = str(row.get('address') or '').strip()
+                    lat_val = float(row.get('latitude'))
+                    lng_val = float(row.get('longitude'))
+
+                    if not all([site_id_val, global_id_val, site_name_val, cluster_val]):
+                        errors.append({'row': rownum, 'error': 'site_id, global_id, site_name, cluster required'})
+                        continue
+
+                    # find or create master site
+                    site = Site.objects.filter(tenant=tenant, site_id=site_id_val, deleted_at__isnull=True).first()
+                    if not site:
+                        if not (-90 <= lat_val <= 90) or not (-180 <= lng_val <= 180):
+                            errors.append({'row': rownum, 'error': 'Invalid coordinates'})
+                            continue
+                        if Site.objects.filter(tenant=tenant, global_id=global_id_val, deleted_at__isnull=True).exists():
+                            errors.append({'row': rownum, 'error': f'Global ID {global_id_val} already exists'})
+                            continue
+                        site = Site.objects.create(
+                            tenant=tenant,
+                            created_by=request.user,
+                            site_id=site_id_val,
+                            global_id=global_id_val,
+                            site_name=site_name_val,
+                            town=town_val,
+                            cluster=cluster_val,
+                            latitude=lat_val,
+                            longitude=lng_val,
+                            address=address_val,
+                            name=site_name_val,
+                            city=town_val,
+                            site_code=site_id_val,
+                        )
+                        created_master += 1
+
+                    # link to project (idempotent)
+                    link, created = ProjectSite.objects.get_or_create(
+                        project=project,
+                        site=site,
+                        defaults={'alias_name': '', 'created_by': request.user}
+                    )
+                    if created:
+                        linked += 1
+                    else:
+                        skipped += 1
+                except Exception as e:
+                    errors.append({'row': rownum, 'error': str(e)})
+
+        return Response({
+            'created_master': created_master,
+            'linked': linked,
+            'skipped': skipped,
+            'errors': errors[:50],
+            'has_more_errors': len(errors) > 50
+        }, status=status.HTTP_200_OK)
 
 
 class ProjectTeamMemberViewSet:  # Deprecated in Phase 1

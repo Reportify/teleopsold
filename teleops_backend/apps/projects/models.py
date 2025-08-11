@@ -154,3 +154,39 @@ class DesignItem(models.Model):
 
     def __str__(self) -> str:
         return f"{'[CAT] ' if self.is_category else ''}{self.item_name}"
+
+
+# -----------------------------
+# Phase 3 - Project ↔ Site Association
+# -----------------------------
+
+
+class ProjectSite(models.Model):
+    """Association between a Project and a master Site.
+
+    A project can link many sites. A site can be linked to many projects.
+    """
+
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='project_sites')
+    site = models.ForeignKey('sites.Site', on_delete=models.CASCADE, related_name='site_projects')
+
+    alias_name = models.CharField(max_length=255, blank=True)
+    is_active = models.BooleanField(default=True)
+
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='created_project_sites')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'project_sites'
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'site'], name='unique_site_per_project'),
+        ]
+        indexes = [
+            models.Index(fields=['project']),
+            models.Index(fields=['site']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self) -> str:
+        return f"project={self.project_id} ↔ site={self.site_id}"

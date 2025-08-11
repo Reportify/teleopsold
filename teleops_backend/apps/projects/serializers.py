@@ -2,7 +2,8 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite
+from apps.sites.models import Site
 from apps.tenants.models import Tenant
 
 User = get_user_model()
@@ -13,6 +14,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
     client_tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     client_tenant_name = serializers.CharField(source='client_tenant.organization_name', read_only=True)
+    site_count = serializers.IntegerField(read_only=True)
     
     class Meta:
         model = Project
@@ -20,7 +22,7 @@ class ProjectSerializer(serializers.ModelSerializer):
             'id', 'name', 'description', 'project_type', 'status',
             'client_tenant', 'client_tenant_name', 'customer_name', 'circle', 'activity',
             'start_date', 'end_date', 'scope',
-            'created_by_name', 'created_at', 'updated_at'
+            'created_by_name', 'created_at', 'updated_at', 'site_count'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -322,3 +324,55 @@ class CreateDesignItemRequestSerializer(serializers.ModelSerializer):
         fields = [
             'item_name', 'equipment_code', 'category', 'model', 'manufacturer', 'attributes', 'remarks', 'sort_order', 'is_category'
         ]
+
+# -----------------------------
+# Phase 3 - Project ↔ Site Association Serializers
+# -----------------------------
+
+
+class ProjectSiteSerializer(serializers.ModelSerializer):
+    site_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProjectSite
+        fields = ['id', 'project', 'site', 'alias_name', 'is_active', 'created_at', 'updated_at', 'site_details']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'project']
+
+    def get_site_details(self, obj):
+        return {
+            'id': obj.site.id,
+            'site_id': obj.site.site_id,
+            'global_id': obj.site.global_id,
+            'site_name': obj.site.site_name,
+            'town': obj.site.town,
+            'cluster': obj.site.cluster,
+            'latitude': float(obj.site.latitude) if obj.site.latitude is not None else None,
+            'longitude': float(obj.site.longitude) if obj.site.longitude is not None else None,
+            'status': obj.site.status,
+        }
+
+
+class LinkSitesRequestSerializer(serializers.Serializer):
+    site_ids = serializers.ListField(child=serializers.IntegerField(), min_length=1)
+    alias_name = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_site_ids(self, value):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None)
+        existing = Site.objects.filter(id__in=value, tenant=tenant, deleted_at__isnull=True).values_list('id', flat=True)
+        missing = set(value) - set(existing)
+        if missing:
+            raise serializers.ValidationError(f"Invalid site IDs for tenant: {sorted(missing)}")
+        return value
+
+
+class ImportProjectSitesUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        name = value.name.lower()
+        if not name.endswith(('.xlsx', '.xls', '.csv')):
+            raise serializers.ValidationError('Only .xlsx, .xls, .csv supported')
+        if value.size > 10 * 1024 * 1024:
+            raise serializers.ValidationError('File size cannot exceed 10MB')
+        return value

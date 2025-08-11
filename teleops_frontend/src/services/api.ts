@@ -55,6 +55,13 @@ export const API_ENDPOINTS = {
     DETAIL: (id: string) => `/projects/${id}/`,
     UPDATE: (id: string) => `/projects/${id}/`,
     DELETE: (id: string) => `/projects/${id}/`,
+    SITES: {
+      LIST: (projectId: string) => `/projects/${projectId}/sites/`,
+      LINK: (projectId: string) => `/projects/${projectId}/sites/link/`,
+      UNLINK: (projectId: string, linkId: string | number) => `/projects/${projectId}/sites/${linkId}/`,
+      IMPORT: (projectId: string) => `/projects/${projectId}/sites/import/`,
+      COUNT: (projectId: string) => `/projects/${projectId}/sites/count/`,
+    },
     DESIGN: {
       VERSIONS: (projectId: string) => `/projects/${projectId}/design/versions/`,
       PUBLISH: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/publish/`,
@@ -70,6 +77,7 @@ export const API_ENDPOINTS = {
     DETAIL: (id: string) => `/sites/${id}/`,
     UPDATE: (id: string) => `/sites/${id}/`,
     DELETE: (id: string) => `/sites/${id}/`,
+    TEMPLATE: "/sites/template/",
   },
   TASKS: {
     LIST: "/tasks/",

@@ -5,6 +5,7 @@ from .views import ProjectViewSet
 # Create router for ViewSets
 router = DefaultRouter()
 # Register at root so list is available at /api/v1/projects/
+# Register at root so list is available at /api/v1/projects/
 router.register(r'', ProjectViewSet, basename='project')
 
 # Define URL patterns
