@@ -36,6 +36,7 @@ import ProjectSitesImportPage from "./pages/ProjectSitesImportPage";
 import ProjectDesignPage from "./pages/ProjectDesignPage";
 import ProjectDesignHistoryPage from "./pages/ProjectDesignHistoryPage";
 import SitesPage from "./pages/SitesPage";
+import ProjectInventoryPage from "./pages/ProjectInventoryPage";
 import TasksPage from "./pages/TasksPage";
 import EquipmentPage from "./pages/EquipmentPage";
 import TeamsPage from "./pages/TeamsPage";
@@ -331,6 +332,14 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <ProjectDesignPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:id/inventory"
+          element={
+            <ProtectedRoute>
+              <ProjectInventoryPage />
             </ProtectedRoute>
           }
         />

@@ -2,7 +2,16 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db import models
 
-from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite
+from .models import (
+    Project,
+    ProjectDesign,
+    ProjectDesignVersion,
+    DesignItem,
+    ProjectSite,
+    ProjectInventoryPlan,
+    ProjectSiteInventory,
+)
+from apps.equipment.models import EquipmentInventoryItem
 from apps.sites.models import Site
 from apps.tenants.models import Tenant
 
@@ -375,4 +384,49 @@ class ImportProjectSitesUploadSerializer(serializers.Serializer):
             raise serializers.ValidationError('Only .xlsx, .xls, .csv supported')
         if value.size > 10 * 1024 * 1024:
             raise serializers.ValidationError('File size cannot exceed 10MB')
+        return value
+
+
+# -----------------------------
+# Phase 3 - Project Inventory (Dismantle) Serializers
+# -----------------------------
+
+
+class ProjectInventoryPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectInventoryPlan
+        fields = ['id', 'tenant', 'project', 'project_type', 'notes', 'created_by', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'tenant', 'project', 'created_by', 'created_at', 'updated_at']
+
+
+class CreateProjectInventoryPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProjectInventoryPlan
+        fields = ['project_type', 'notes']
+
+
+class ProjectSiteInventorySerializer(serializers.ModelSerializer):
+    equipment_item_name = serializers.CharField(source='equipment_item.name', read_only=True)
+    equipment_category = serializers.CharField(source='equipment_item.category', read_only=True)
+    project_site_id = serializers.IntegerField(source='project_site.id', read_only=True)
+
+    class Meta:
+        model = ProjectSiteInventory
+        fields = [
+            'id', 'plan', 'project_site', 'project_site_id', 'equipment_item', 'equipment_item_name', 'equipment_category',
+            'serial_number', 'serial_normalized', 'equipment_name', 'equipment_model', 'site_id_business',
+            'remarks', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'serial_normalized', 'equipment_name', 'equipment_model', 'site_id_business', 'created_at', 'updated_at']
+
+
+class DismantleBulkUploadSerializer(serializers.Serializer):
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        name = value.name.lower()
+        if not name.endswith(('.xlsx', '.xls', '.csv')):
+            raise serializers.ValidationError('Only .xlsx, .xls, .csv supported')
+        if value.size > 20 * 1024 * 1024:
+            raise serializers.ValidationError('File size cannot exceed 20MB')
         return value

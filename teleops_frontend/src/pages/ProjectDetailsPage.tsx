@@ -18,6 +18,7 @@ const ProjectDetailsPage: React.FC = () => {
   const [clientName, setClientName] = useState<string>("");
   const [circleLabel, setCircleLabel] = useState<string>("");
   const [siteCount, setSiteCount] = useState<number | null>(null);
+  const [inventoryCount, setInventoryCount] = useState<number | null>(null);
 
   const formattedStart = useMemo(() => (project?.start_date ? new Date(project.start_date).toLocaleDateString() : "-"), [project]);
   const formattedEnd = useMemo(() => (project?.end_date ? new Date(project.end_date).toLocaleDateString() : "-"), [project]);
@@ -58,6 +59,23 @@ const ProjectDetailsPage: React.FC = () => {
 
         // Use project-linked site count from backend annotation
         setSiteCount((data as any).site_count ?? 0);
+
+        // Preload inventory count for dismantle projects
+        if ((data as any).project_type === "dismantle") {
+          try {
+            const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)));
+            // If paginated, expect results and count in headers; otherwise use length
+            if (Array.isArray(res)) {
+              setInventoryCount(res.length);
+            } else if (res && Array.isArray(res.results)) {
+              setInventoryCount(res.count ?? res.results.length);
+            } else {
+              setInventoryCount(null);
+            }
+          } catch {
+            setInventoryCount(null);
+          }
+        }
       } catch (e: any) {
         setError(e?.message || "Failed to load project");
       } finally {
@@ -239,6 +257,27 @@ const ProjectDetailsPage: React.FC = () => {
           </Stack>
         </Stack>
       </Paper>
+
+      {/* Project Inventory summary (dismantle only) */}
+      {project.project_type === "dismantle" && (
+        <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Project Inventory (Dismantle)
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {inventoryCount == null ? "-" : `${inventoryCount} serial${inventoryCount === 1 ? "" : "s"}`} planned
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1}>
+              <Button variant="outlined" component={Link} to={`/projects/${project.id}/inventory`}>
+                Details
+              </Button>
+            </Stack>
+          </Stack>
+        </Paper>
+      )}
     </Box>
   );
 };

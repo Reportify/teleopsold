@@ -70,6 +70,12 @@ export const API_ENDPOINTS = {
       BULK: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/items/bulk/`,
       DELETE_DRAFT: (projectId: string, versionId: number | string) => `/projects/${projectId}/design/versions/${versionId}/`,
     },
+    INVENTORY: {
+      CREATE_PLAN: (projectId: string) => `/projects/${projectId}/inventory/plan/`,
+      SITE_SERIALS: (projectId: string) => `/projects/${projectId}/inventory/site-serials/`,
+      DISMANTLE_UPLOAD: (projectId: string, planId?: string | number) => `/projects/${projectId}/inventory/dismantle/upload/${planId ? `?plan_id=${planId}` : ""}`,
+      DISMANTLE_TEMPLATE: (projectId: string) => `/projects/${projectId}/inventory/dismantle/template/`,
+    },
   },
   SITES: {
     LIST: "/sites/",

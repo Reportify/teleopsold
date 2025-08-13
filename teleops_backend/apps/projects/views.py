@@ -7,14 +7,16 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
-from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite, ProjectInventoryPlan, ProjectSiteInventory
 from apps.sites.models import Site
 from .serializers import (
     ProjectSerializer, ProjectDetailSerializer, ProjectCreateSerializer,
     ProjectUpdateSerializer, ProjectStatsSerializer,
     ProjectDesignVersionSerializer, CreateDesignVersionRequestSerializer, CreateDesignItemRequestSerializer,
     DesignItemSerializer, ProjectSiteSerializer, LinkSitesRequestSerializer, ImportProjectSitesUploadSerializer,
+    ProjectInventoryPlanSerializer, CreateProjectInventoryPlanSerializer, ProjectSiteInventorySerializer, DismantleBulkUploadSerializer,
 )
+from apps.equipment.models import EquipmentInventoryItem
 from core.permissions.tenant_permissions import TenantScopedPermission
 from core.pagination import StandardResultsSetPagination
 
@@ -548,6 +550,326 @@ class ProjectViewSet(viewsets.ModelViewSet):
         project = self.get_object()
         count = ProjectSite.objects.filter(project=project, is_active=True).count()
         return Response({'site_count': count})
+
+    # -----------------------------
+    # Phase 3 - Inventory (Dismantle)
+    # -----------------------------
+
+    @action(detail=True, methods=['post'], url_path='inventory/plan')
+    def create_inventory_plan(self, request, pk=None):
+        project = self.get_object()
+        ser = CreateProjectInventoryPlanSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        tenant = getattr(request, 'tenant', None)
+        plan = ProjectInventoryPlan.objects.create(
+            tenant=tenant,
+            project=project,
+            project_type=ser.validated_data.get('project_type', 'dismantle'),
+            notes=ser.validated_data.get('notes', ''),
+            created_by=request.user
+        )
+        return Response(ProjectInventoryPlanSerializer(plan).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['get'], url_path='inventory/site-serials')
+    def list_site_serials(self, request, pk=None):
+        project = self.get_object()
+        plan_id = request.query_params.get('plan_id')
+        project_site_id = request.query_params.get('project_site_id')
+        equipment_item_id = request.query_params.get('equipment_item_id')
+        search = request.query_params.get('search')
+        linked = request.query_params.get('linked')  # 'true' | 'false' | None
+
+        qs = ProjectSiteInventory.objects.filter(plan__project=project, plan__tenant=getattr(request, 'tenant', None), deleted_at__isnull=True)
+        if plan_id:
+            qs = qs.filter(plan_id=plan_id)
+        if project_site_id:
+            qs = qs.filter(project_site_id=project_site_id)
+        if equipment_item_id:
+            qs = qs.filter(equipment_item_id=equipment_item_id)
+        if search:
+            qs = qs.filter(models.Q(serial_number__icontains=search) | models.Q(equipment_model__icontains=search) | models.Q(equipment_name__icontains=search))
+        if linked == 'true':
+            qs = qs.filter(project_site__isnull=False)
+        elif linked == 'false':
+            qs = qs.filter(project_site__isnull=True)
+
+        page = self.paginate_queryset(qs.order_by('-created_at'))
+        if page is not None:
+            return self.get_paginated_response(ProjectSiteInventorySerializer(page, many=True).data)
+        return Response(ProjectSiteInventorySerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='inventory/dismantle/upload')
+    def dismantle_bulk_upload(self, request, pk=None):
+        """Bulk upload planned dismantle serials from Excel/CSV.
+
+        Expected columns: Site ID (business), Radio, Radio Serial, DUG/DUX, DUG/DUX Serial.
+        Up to two serials per row will be created if present.
+        """
+        project = self.get_object()
+        upload_ser = DismantleBulkUploadSerializer(data=request.data)
+        upload_ser.is_valid(raise_exception=True)
+        file = request.FILES['file']
+
+        import pandas as pd
+        try:
+            if file.name.lower().endswith(('.xlsx', '.xls')):
+                df = pd.read_excel(file)
+            else:
+                df = pd.read_csv(file)
+        except Exception as e:
+            return Response({'error': f'Failed to read file: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant = getattr(request, 'tenant', None)
+        plan_id = request.query_params.get('plan_id')
+        plan = None
+        if plan_id:
+            plan = ProjectInventoryPlan.objects.filter(id=plan_id, tenant=tenant, project=project).first()
+        if not plan:
+            plan = ProjectInventoryPlan.objects.create(
+                tenant=tenant, project=project, project_type='dismantle', created_by=request.user
+            )
+
+        # Mapping for equipment columns to EquipmentInventoryItem lookup
+        # Prefer material_code exact match; fallback to name (case-insensitive)
+        def resolve_equipment(name_or_code: str) -> EquipmentInventoryItem | None:
+            if not name_or_code:
+                return None
+            token = str(name_or_code).strip()
+            # Prefer material_code match (exact) over name
+            eq = EquipmentInventoryItem.objects.filter(tenant=tenant, material_code=token).first()
+            if eq:
+                return eq
+            return EquipmentInventoryItem.objects.filter(tenant=tenant, name__iexact=token).first()
+
+        # Columns expected in the sheet
+        def pick_col(candidates: list[str]) -> str | None:
+            for c in candidates:
+                if c in df.columns:
+                    return c
+            return None
+
+        site_col = pick_col(['Site ID', 'SiteId', 'site_id'])
+        radio_col = pick_col(['Radio (Material Code or Name)', 'Radio', 'Radio Name', 'Radio Material Code'])
+        radio_serial_col = pick_col(['Radio Serial', 'RadioSerial', 'Radio SN'])
+        dug_col = pick_col(['DUG/DUX (Material Code or Name)', 'DUG/DUX', 'DUG', 'DUX'])
+        dug_serial_col = pick_col(['DUG/DUX Serial', 'DUG Serial', 'DUX Serial'])
+
+        if not site_col:
+            return Response({'error': 'Missing required column: Site ID'}, status=status.HTTP_400_BAD_REQUEST)
+
+        created = 0
+        skipped = 0
+        errors = []
+
+        for idx, row in df.iterrows():
+            rownum = idx + 2
+            sp = transaction.savepoint()
+            try:
+                    # Helper to stringify cells from pandas reliably
+                    def cell(v):
+                        import math
+                        if v is None:
+                            return ''
+                        try:
+                            # Handle pandas NA
+                            if v != v:  # NaN check
+                                return ''
+                        except Exception:
+                            pass
+                        if isinstance(v, (int,)):
+                            return str(v)
+                        if isinstance(v, float):
+                            if v.is_integer():
+                                return str(int(v))
+                            return str(v)
+                        return str(v)
+
+                    site_business_id = cell(row.get(site_col)).strip()
+                    if not site_business_id:
+                        continue
+                    # Resolve project_site by business site_id → master Site → ProjectSite link
+                    ps = ProjectSite.objects.filter(
+                        project=project,
+                        site__site_id=site_business_id,
+                        is_active=True
+                    ).select_related('site').first()
+
+                    # Two potential serials per row
+                    pairs = []
+                    if radio_col or radio_serial_col:
+                        pairs.append((cell(row.get(radio_col)) if radio_col else '', cell(row.get(radio_serial_col)) if radio_serial_col else ''))
+                    if dug_col or dug_serial_col:
+                        pairs.append((cell(row.get(dug_col)) if dug_col else '', cell(row.get(dug_serial_col)) if dug_serial_col else ''))
+                    for equipment_name, serial in pairs:
+                        serial_str = cell(serial).strip()
+                        if not serial_str:
+                            continue
+                        eq = resolve_equipment(cell(equipment_name).strip()) if equipment_name is not None else None
+                        if not eq:
+                            errors.append({'row': rownum, 'error': f'Equipment not found: {equipment_name if equipment_name else "(empty)"}'})
+                            continue
+
+                        # Idempotent insert
+                        normalized = serial_str.strip().upper()
+                        # Check idempotency depending on link status
+                        if ps:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site=ps,
+                                serial_normalized=normalized,
+                                deleted_at__isnull=True
+                            ).exists()
+                        else:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site__isnull=True,
+                                site_id_business=site_business_id,
+                                serial_normalized=normalized,
+                                deleted_at__isnull=True
+                            ).exists()
+                        if exists:
+                            skipped += 1
+                            continue
+
+                        item = ProjectSiteInventory(
+                            plan=plan,
+                            project_site=ps,  # may be None (deferred linking)
+                            equipment_item=eq,
+                            serial_number=serial_str,
+                            site_id_business=site_business_id,
+                            equipment_material_code=getattr(eq, 'material_code', '') or '',
+                            created_by=request.user,
+                        )
+                        # Use bulk-friendly insert path
+                        item.save()
+                        created += 1
+                        transaction.savepoint_commit(sp)
+            except Exception as e:
+                transaction.savepoint_rollback(sp)
+                errors.append({'row': rownum, 'error': str(e)})
+
+        return Response({
+            'plan_id': plan.id,
+            'created': created,
+            'skipped': skipped,
+            'errors': errors[:50],
+            'has_more_errors': len(errors) > 50,
+        })
+
+    @action(detail=True, methods=['get'], url_path='inventory/dismantle/template')
+    def dismantle_upload_template(self, request, pk=None):
+        """Download Excel template for dismantle planned inventory upload.
+
+        Columns:
+        - Site ID
+        - Radio (Material Code or Name)
+        - Radio Serial
+        - DUG/DUX (Material Code or Name)
+        - DUG/DUX Serial
+        """
+        try:
+            import pandas as pd
+            from django.http import HttpResponse
+            import io
+
+            sample_data = {
+                'Site ID': ['IMBIL_01010', 'IMBIL_01002'],
+                'Radio (Material Code or Name)': ['301637367', 'DTRU'],
+                'Radio Serial': ['CD32433864', 'CB43472435'],
+                'DUG/DUX (Material Code or Name)': ['DXU-31', 'DXU-31'],
+                'DUG/DUX Serial': ['X173373549', 'CB47984085'],
+            }
+
+            df = pd.DataFrame(sample_data)
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name='Planned Inventory', index=False)
+
+                instructions = {
+                    'Column': [
+                        'Site ID',
+                        'Radio (Material Code or Name)',
+                        'Radio Serial',
+                        'DUG/DUX (Material Code or Name)',
+                        'DUG/DUX Serial',
+                    ],
+                    'Required': [
+                        'Yes', 'At least one of Radio/DUG/DUX', 'If Radio present', 'At least one of Radio/DUG/DUX', 'If DUG/DUX present'
+                    ],
+                    'Notes': [
+                        'Project business Site ID (must be consistent; if site not yet linked, row is stored as Unlinked)',
+                        'Prefer Material Code for deterministic mapping; name allowed as fallback',
+                        'Serial number of the Radio unit',
+                        'Prefer Material Code for deterministic mapping; name allowed as fallback',
+                        'Serial number of the DUG/DUX unit',
+                    ]
+                }
+                pd.DataFrame(instructions).to_excel(writer, sheet_name='Instructions', index=False)
+
+            output.seek(0)
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = 'attachment; filename="dismantle_planned_inventory_template.xlsx"'
+            return response
+        except Exception as e:
+            return Response({'error': f'Failed to generate template: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'], url_path='inventory/reconcile-sites')
+    def reconcile_inventory_sites(self, request, pk=None):
+        """Attempt to link unlinked inventory rows (project_site IS NULL) using current ProjectSite links.
+
+        Optional query param: plan_id to scope reconciliation.
+        """
+        project = self.get_object()
+        tenant = getattr(request, 'tenant', None)
+        plan_id = request.query_params.get('plan_id')
+
+        qs = ProjectSiteInventory.objects.filter(plan__project=project, plan__tenant=tenant, project_site__isnull=True, deleted_at__isnull=True)
+        if plan_id:
+            qs = qs.filter(plan_id=plan_id)
+
+        updated = 0
+        collisions = 0
+        with transaction.atomic():
+            # Prefetch project sites into a dict by business id
+            site_map = {
+                ps.site.site_id: ps
+                for ps in ProjectSite.objects.filter(project=project, is_active=True).select_related('site')
+            }
+            for item in qs.select_for_update().iterator():
+                ps = site_map.get(item.site_id_business)
+                if not ps:
+                    continue
+                # Check if setting project_site would violate unique constraint for linked rows
+                exists = ProjectSiteInventory.objects.filter(
+                    plan=item.plan,
+                    project_site=ps,
+                    serial_normalized=item.serial_normalized,
+                    deleted_at__isnull=True
+                ).exists()
+                if exists:
+                    collisions += 1
+                    continue
+                item.project_site = ps
+                item.updated_at = timezone.now()
+                item.save(update_fields=['project_site', 'updated_at'])
+                updated += 1
+
+        return Response({'updated': updated, 'collisions': collisions})
+
+    @action(detail=True, methods=['delete'], url_path='inventory/site-serials/(?P<item_id>[^/.]+)')
+    def delete_site_serial(self, request, pk=None, item_id=None):
+        """Soft-delete a project site inventory record."""
+        project = self.get_object()
+        tenant = getattr(request, 'tenant', None)
+        item = ProjectSiteInventory.objects.filter(id=item_id, plan__project=project, plan__tenant=tenant, deleted_at__isnull=True).first()
+        if not item:
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        item.deleted_at = timezone.now()
+        item.save(update_fields=['deleted_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=['post'], url_path='sites/link')
     def link_sites(self, request, pk=None):
