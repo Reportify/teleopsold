@@ -19,6 +19,7 @@ const ProjectDetailsPage: React.FC = () => {
   const [circleLabel, setCircleLabel] = useState<string>("");
   const [siteCount, setSiteCount] = useState<number | null>(null);
   const [inventoryCount, setInventoryCount] = useState<number | null>(null);
+  const [vendorCount, setVendorCount] = useState<number | null>(null);
 
   const formattedStart = useMemo(() => (project?.start_date ? new Date(project.start_date).toLocaleDateString() : "-"), [project]);
   const formattedEnd = useMemo(() => (project?.end_date ? new Date(project.end_date).toLocaleDateString() : "-"), [project]);
@@ -75,6 +76,16 @@ const ProjectDetailsPage: React.FC = () => {
           } catch {
             setInventoryCount(null);
           }
+        }
+
+        // Preload vendors count
+        try {
+          const vendors: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.VENDORS.LIST(String(id)));
+          const list = Array.isArray(vendors) ? vendors : vendors?.results || [];
+          const count = Array.isArray(vendors) ? list.length : vendors?.count ?? list.length;
+          setVendorCount(count);
+        } catch {
+          setVendorCount(null);
         }
       } catch (e: any) {
         setError(e?.message || "Failed to load project");
@@ -252,6 +263,25 @@ const ProjectDetailsPage: React.FC = () => {
           </Box>
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" component={Link} to={`/projects/${project.id}/sites`}>
+              Details
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
+
+      {/* Project Vendors summary */}
+      <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
+        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
+          <Box>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Project Vendors
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              {vendorCount == null ? "-" : `${vendorCount} vendor${vendorCount === 1 ? "" : "s"}`} linked
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={1}>
+            <Button variant="outlined" component={Link} to={`/projects/${project.id}/vendors`}>
               Details
             </Button>
           </Stack>

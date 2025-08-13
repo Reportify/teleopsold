@@ -12,6 +12,8 @@ from .models import (
     ProjectSiteInventory,
 )
 from apps.equipment.models import EquipmentInventoryItem
+from apps.tenants.models import ClientVendorRelationship, TenantInvitation
+from .models import ProjectVendor, VendorInvitation
 from apps.sites.models import Site
 from apps.tenants.models import Tenant
 
@@ -430,3 +432,145 @@ class DismantleBulkUploadSerializer(serializers.Serializer):
         if value.size > 20 * 1024 * 1024:
             raise serializers.ValidationError('File size cannot exceed 20MB')
         return value
+
+
+# -----------------------------
+# Phase 4 - Project Vendor serializers
+# -----------------------------
+
+
+class ProjectVendorSerializer(serializers.ModelSerializer):
+    relationship_id = serializers.IntegerField(source='relationship.id', read_only=True)
+    relationship_vendor_code = serializers.CharField(source='relationship.vendor_code', read_only=True)
+    vendor_tenant_id = serializers.IntegerField(source='vendor_tenant.id', read_only=True)
+
+    class Meta:
+        model = ProjectVendor
+        fields = [
+            'id', 'project', 'relationship_id', 'relationship_vendor_code', 'vendor_tenant_id',
+            'scope_notes', 'start_at', 'end_at', 'status', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'project']
+
+
+class CreateProjectVendorSerializer(serializers.ModelSerializer):
+    relationship_id = serializers.IntegerField(write_only=True)
+
+    class Meta:
+        model = ProjectVendor
+        fields = ['relationship_id', 'scope_notes', 'start_at', 'end_at']
+
+    def validate_relationship_id(self, value: int):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        rel = ClientVendorRelationship.objects.filter(id=value, client_tenant=tenant).first()
+        if not rel:
+            raise serializers.ValidationError('Invalid relationship for this tenant')
+        return value
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        project = self.context.get('project')
+        tenant = getattr(request, 'tenant', None) if request else None
+        rel_id = validated_data.pop('relationship_id')
+        relationship = ClientVendorRelationship.objects.get(id=rel_id)
+        project_vendor = ProjectVendor.objects.create(
+            tenant=tenant, project=project, relationship=relationship, created_by=request.user, **validated_data
+        )
+        return project_vendor
+
+
+class VendorStatusUpdateSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=ProjectVendor.STATUS_CHOICES)
+
+
+class VendorInvitationSerializer(serializers.ModelSerializer):
+    relationship_id = serializers.IntegerField(source='relationship.id', read_only=True)
+    relationship = serializers.SerializerMethodField()
+    project_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = VendorInvitation
+        fields = [
+            'id', 'project', 'project_details', 'relationship_id', 'relationship', 'invite_email', 'token', 'expires_at',
+            'status', 'invited_at', 'responded_at'
+        ]
+        read_only_fields = ['id', 'project', 'token', 'status', 'invited_at', 'responded_at']
+
+    def get_relationship(self, obj):
+        if obj.relationship:
+            return {
+                'id': obj.relationship.id,
+                'vendor_code': obj.relationship.vendor_code,
+                'vendor_organization_name': obj.relationship.vendor_tenant.organization_name if obj.relationship.vendor_tenant else None,
+            }
+        return None
+
+    def get_project_details(self, obj):
+        if obj.project:
+            return {
+                'id': obj.project.id,
+                'name': obj.project.name,
+                'description': obj.project.description,
+                'project_type': obj.project.project_type,
+                'client_name': obj.project.client_tenant.organization_name if obj.project.client_tenant else None,
+                'customer_name': obj.project.customer_name,
+                # 'circle' is a CharField on Project, not a FK
+                'circle': obj.project.circle,
+                'scope': obj.project.scope,
+            }
+        return None
+
+
+class CreateVendorInvitationSerializer(serializers.ModelSerializer):
+    relationship_id = serializers.IntegerField(write_only=True)
+    expires_in_days = serializers.IntegerField(required=False, min_value=1, max_value=90)
+
+    class Meta:
+        model = VendorInvitation
+        fields = ['relationship_id', 'expires_in_days']
+
+    def validate_relationship_id(self, value: int):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        rel = ClientVendorRelationship.objects.filter(id=value, client_tenant=tenant).first()
+        if not rel:
+            raise serializers.ValidationError('Invalid relationship for this tenant')
+        return value
+
+    def create(self, validated_data):
+        from datetime import timedelta
+        from django.utils import timezone
+        import secrets
+
+        request = self.context.get('request')
+        project = self.context.get('project')
+        tenant = getattr(request, 'tenant', None) if request else None
+        rel_id = validated_data.pop('relationship_id')
+        expires_in_days = validated_data.pop('expires_in_days', None)
+        relationship = ClientVendorRelationship.objects.get(id=rel_id)
+        token = secrets.token_urlsafe(32)
+        expires_at = None
+        if expires_in_days:
+            expires_at = timezone.now() + timedelta(days=expires_in_days)
+        # Get vendor email from relationship - either from vendor tenant or from invitation
+        vendor_email = ''
+        if relationship.vendor_tenant:
+            vendor_email = relationship.vendor_tenant.primary_contact_email
+        else:
+            # Try to get from TenantInvitation if vendor is not yet onboarded
+            try:
+                invitation_obj = TenantInvitation.objects.filter(
+                    client_tenant=tenant,
+                    vendor_code=relationship.vendor_code
+                ).first()
+                if invitation_obj:
+                    vendor_email = invitation_obj.email
+            except:
+                pass
+        
+        invitation = VendorInvitation.objects.create(
+            tenant=tenant, project=project, relationship=relationship, token=token,
+            invited_by=request.user, expires_at=expires_at, invite_email=vendor_email,
+        )
+        return invitation

@@ -37,6 +37,8 @@ import ProjectDesignPage from "./pages/ProjectDesignPage";
 import ProjectDesignHistoryPage from "./pages/ProjectDesignHistoryPage";
 import SitesPage from "./pages/SitesPage";
 import ProjectInventoryPage from "./pages/ProjectInventoryPage";
+import ProjectVendorsPage from "./pages/ProjectVendorsPage";
+import VendorInvitationPreviewPage from "./pages/VendorInvitationPreviewPage";
 import TasksPage from "./pages/TasksPage";
 import EquipmentPage from "./pages/EquipmentPage";
 import TeamsPage from "./pages/TeamsPage";
@@ -343,6 +345,18 @@ const AppInner: React.FC = () => {
             </ProtectedRoute>
           }
         />
+
+        <Route
+          path="/projects/:id/vendors"
+          element={
+            <ProtectedRoute>
+              <ProjectVendorsPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Vendor Invitation Routes (Public) */}
+        <Route path="/projects/invitations/:token" element={<VendorInvitationPreviewPage />} />
 
         <Route
           path="/projects/:id/design/history"

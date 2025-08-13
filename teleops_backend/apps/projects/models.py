@@ -325,3 +325,108 @@ class ProjectSiteInventory(models.Model):
                 except Exception:
                     self.equipment_material_code = ''
         super().save(*args, **kwargs)
+
+
+# -----------------------------
+# Phase 4 - Project Vendor Management
+# -----------------------------
+
+
+class ProjectVendor(models.Model):
+    """Links a vendor (via ClientVendorRelationship) to a project with operational status.
+
+    - A relationship represents the org-level client↔vendor link.
+    - This model is scoped to a project and controls participation status.
+    """
+
+    STATUS_CHOICES = (
+        ('active', 'Active'),
+        ('hold', 'On Hold'),
+        ('suspended', 'Suspended'),
+        ('removed', 'Removed'),
+    )
+
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='project_vendors')
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='project_vendors')
+    # Org-level relationship between client tenant and vendor tenant (already implemented elsewhere)
+    relationship = models.ForeignKey('tenants.ClientVendorRelationship', on_delete=models.PROTECT, related_name='project_links')
+    # Once the vendor accepts, we can store the vendor tenant id for quick joins
+    vendor_tenant = models.ForeignKey('tenants.Tenant', on_delete=models.SET_NULL, null=True, blank=True, related_name='as_vendor_project_links')
+
+    scope_notes = models.TextField(blank=True)
+    start_at = models.DateTimeField(null=True, blank=True)
+    end_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='active')
+
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='created_project_vendors')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'project_vendors'
+        verbose_name = _('Project Vendor')
+        verbose_name_plural = _('Project Vendors')
+        ordering = ['-created_at']
+        constraints = [
+            # Only one non-removed record per (project, relationship)
+            models.UniqueConstraint(
+                fields=['project', 'relationship'],
+                condition=~models.Q(status='removed'),
+                name='uniq_active_project_vendor_per_relationship',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['tenant', 'project']),
+            models.Index(fields=['relationship']),
+            models.Index(fields=['vendor_tenant']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self) -> str:
+        return f"project={self.project_id} relationship={self.relationship_id} status={self.status}"
+
+
+class VendorInvitation(models.Model):
+    """Invitation sent to a vendor organization to join a specific project.
+
+    Invitation is created by the client tenant for a (project, relationship) pair and
+    uses a single-use token for acceptance.
+    """
+
+    INVITE_STATUS = (
+        ('pending', 'Pending'),
+        ('accepted', 'Accepted'),
+        ('declined', 'Declined'),
+        ('revoked', 'Revoked'),
+        ('expired', 'Expired'),
+        ('discarded', 'Discarded'),
+    )
+
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='vendor_invitations')
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='vendor_invitations')
+    relationship = models.ForeignKey('tenants.ClientVendorRelationship', on_delete=models.PROTECT, related_name='vendor_invitations')
+
+    invite_email = models.EmailField(max_length=255)
+    token = models.CharField(max_length=64, unique=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=INVITE_STATUS, default='pending')
+
+    invited_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='sent_vendor_invitations')
+    invited_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
+    accepted_by_user = models.ForeignKey('apps_users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='accepted_vendor_invitations')
+
+    class Meta:
+        db_table = 'vendor_invitations'
+        verbose_name = _('Vendor Invitation')
+        verbose_name_plural = _('Vendor Invitations')
+        ordering = ['-invited_at']
+        indexes = [
+            models.Index(fields=['tenant', 'project']),
+            models.Index(fields=['relationship']),
+            models.Index(fields=['status']),
+            models.Index(fields=['expires_at']),
+        ]
+
+    def __str__(self) -> str:
+        return f"project={self.project_id} email={self.invite_email} status={self.status}"

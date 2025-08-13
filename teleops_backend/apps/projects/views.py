@@ -7,7 +7,7 @@ from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
 
-from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite, ProjectInventoryPlan, ProjectSiteInventory
+from .models import Project, ProjectDesign, ProjectDesignVersion, DesignItem, ProjectSite, ProjectInventoryPlan, ProjectSiteInventory, ProjectVendor, VendorInvitation
 from apps.sites.models import Site
 from .serializers import (
     ProjectSerializer, ProjectDetailSerializer, ProjectCreateSerializer,
@@ -597,6 +597,116 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if page is not None:
             return self.get_paginated_response(ProjectSiteInventorySerializer(page, many=True).data)
         return Response(ProjectSiteInventorySerializer(qs, many=True).data)
+
+    # -----------------------------
+    # Phase 4 - Project Vendor Management
+    # -----------------------------
+
+    @action(detail=True, methods=['get', 'post'], url_path='vendors')
+    def vendors(self, request, pk=None):
+        project = self.get_object()
+        if request.method.lower() == 'get':
+            qs = ProjectVendor.objects.filter(project=project).order_by('-created_at')
+            page = self.paginate_queryset(qs)
+            from .serializers import ProjectVendorSerializer
+            if page is not None:
+                return self.get_paginated_response(ProjectVendorSerializer(page, many=True).data)
+            return Response(ProjectVendorSerializer(qs, many=True).data)
+        # POST -> create vendor
+        from .serializers import CreateProjectVendorSerializer, ProjectVendorSerializer
+        ser = CreateProjectVendorSerializer(data=request.data, context={'request': request, 'project': project})
+        ser.is_valid(raise_exception=True)
+        obj = ser.save()
+        return Response(ProjectVendorSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path='vendors/(?P<vendor_id>[^/.]+)/status')
+    def update_vendor_status(self, request, pk=None, vendor_id=None):
+        project = self.get_object()
+        from .serializers import VendorStatusUpdateSerializer, ProjectVendorSerializer
+        pv = ProjectVendor.objects.filter(project=project, id=vendor_id).first()
+        if not pv:
+            return Response({'error': 'Vendor not found'}, status=status.HTTP_404_NOT_FOUND)
+        ser = VendorStatusUpdateSerializer(data=request.data)
+        ser.is_valid(raise_exception=True)
+        pv.status = ser.validated_data['status']
+        pv.updated_at = timezone.now()
+        pv.save(update_fields=['status', 'updated_at'])
+        return Response(ProjectVendorSerializer(pv).data)
+
+    @action(detail=True, methods=['get', 'post'], url_path='vendor-invitations')
+    def vendor_invitations(self, request, pk=None):
+        project = self.get_object()
+        if request.method.lower() == 'get':
+            from .serializers import VendorInvitationSerializer
+            # Do not show accepted invitations in the invitations list
+            qs = VendorInvitation.objects.filter(project=project).exclude(status='accepted').order_by('-invited_at')
+            page = self.paginate_queryset(qs)
+            if page is not None:
+                return self.get_paginated_response(VendorInvitationSerializer(page, many=True).data)
+            return Response(VendorInvitationSerializer(qs, many=True).data)
+        from .serializers import CreateVendorInvitationSerializer, VendorInvitationSerializer
+        ser = CreateVendorInvitationSerializer(data=request.data, context={'request': request, 'project': project})
+        ser.is_valid(raise_exception=True)
+        obj = ser.save()
+        return Response(VendorInvitationSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='vendor-invitations/(?P<invite_id>[^/.]+)/resend')
+    def resend_vendor_invitation(self, request, pk=None, invite_id=None):
+        project = self.get_object()
+        inv = VendorInvitation.objects.filter(project=project, id=invite_id, status='pending').first()
+        if not inv:
+            return Response({'error': 'Invitation not found or not resendable'}, status=status.HTTP_404_NOT_FOUND)
+        # Here we would send email again; for now, just bump invited_at to throttleable now
+        inv.invited_at = timezone.now()
+        inv.save(update_fields=['invited_at'])
+        from .serializers import VendorInvitationSerializer
+        return Response(VendorInvitationSerializer(inv).data)
+
+    @action(detail=True, methods=['post'], url_path='vendor-invitations/(?P<invite_id>[^/.]+)/discard')
+    def discard_vendor_invitation(self, request, pk=None, invite_id=None):
+        project = self.get_object()
+        inv = VendorInvitation.objects.filter(project=project, id=invite_id).first()
+        if not inv:
+            return Response({'error': 'Invitation not found'}, status=status.HTTP_404_NOT_FOUND)
+        inv.status = 'discarded'
+        inv.responded_at = timezone.now()
+        inv.save(update_fields=['status', 'responded_at'])
+        from .serializers import VendorInvitationSerializer
+        return Response(VendorInvitationSerializer(inv).data)
+
+
+class VendorInvitationPublicViewSet(viewsets.ViewSet):
+    permission_classes = []  # token-gated; we will validate token manually
+
+    def preview(self, request, token=None):
+        inv = VendorInvitation.objects.filter(token=token).first()
+        if not inv:
+            return Response({'error': 'Invalid token'}, status=status.HTTP_404_NOT_FOUND)
+        from .serializers import VendorInvitationSerializer
+        return Response(VendorInvitationSerializer(inv).data)
+
+    def accept(self, request, token=None):
+        inv = VendorInvitation.objects.filter(token=token, status='pending').first()
+        if not inv:
+            return Response({'error': 'Invalid or non-pending token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Activate vendor link
+        pv, _created = ProjectVendor.objects.get_or_create(
+            tenant=inv.tenant,
+            project=inv.project,
+            relationship=inv.relationship,
+            defaults={'created_by': inv.invited_by, 'status': 'active'},
+        )
+        inv.status = 'accepted'
+        inv.responded_at = timezone.now()
+        inv.save(update_fields=['status', 'responded_at'])
+        return Response({'ok': True})
+
+    def decline(self, request, token=None):
+        inv = VendorInvitation.objects.filter(token=token, status='pending').first()
+        inv.status = 'declined'
+        inv.responded_at = timezone.now()
+        inv.save(update_fields=['status', 'responded_at'])
+        return Response({'ok': True})
 
     @action(detail=True, methods=['post'], url_path='inventory/dismantle/upload')
     def dismantle_bulk_upload(self, request, pk=None):

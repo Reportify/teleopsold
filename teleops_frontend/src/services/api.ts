@@ -76,6 +76,24 @@ export const API_ENDPOINTS = {
       DISMANTLE_UPLOAD: (projectId: string, planId?: string | number) => `/projects/${projectId}/inventory/dismantle/upload/${planId ? `?plan_id=${planId}` : ""}`,
       DISMANTLE_TEMPLATE: (projectId: string) => `/projects/${projectId}/inventory/dismantle/template/`,
     },
+    VENDORS: {
+      LIST: (projectId: string) => `/projects/${projectId}/vendors/`,
+      CREATE: (projectId: string) => `/projects/${projectId}/vendors/`,
+      UPDATE_STATUS: (projectId: string, vendorId: string | number) => `/projects/${projectId}/vendors/${vendorId}/status/`,
+    },
+    VENDOR_INVITES: {
+      LIST: (projectId: string) => `/projects/${projectId}/vendor-invitations/`,
+      CREATE: (projectId: string) => `/projects/${projectId}/vendor-invitations/`,
+      RESEND: (projectId: string, inviteId: string | number) => `/projects/${projectId}/vendor-invitations/${inviteId}/resend/`,
+      DISCARD: (projectId: string, inviteId: string | number) => `/projects/${projectId}/vendor-invitations/${inviteId}/discard/`,
+    },
+  },
+  PUBLIC: {
+    VENDOR_INVITES: {
+      PREVIEW: (token: string) => `/projects/invitations/${token}/`,
+      ACCEPT: (token: string) => `/projects/invitations/${token}/accept/`,
+      DECLINE: (token: string) => `/projects/invitations/${token}/decline/`,
+    },
   },
   SITES: {
     LIST: "/sites/",

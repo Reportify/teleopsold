@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ProjectViewSet
+from .views import ProjectViewSet, VendorInvitationPublicViewSet
 
 # Create router for ViewSets
 router = DefaultRouter()
@@ -10,11 +10,10 @@ router.register(r'', ProjectViewSet, basename='project')
 
 # Define URL patterns
 urlpatterns = [
-    # Include router URLs
     path('', include(router.urls)),
-    
-    # Additional custom endpoints can be added here
-    # Example: path('projects/export/', ExportProjectsView.as_view(), name='export-projects'),
+    path('invitations/<str:token>/', VendorInvitationPublicViewSet.as_view({'get': 'preview'}), name='vendor-invite-preview'),
+    path('invitations/<str:token>/accept/', VendorInvitationPublicViewSet.as_view({'post': 'accept'}), name='vendor-invite-accept'),
+    path('invitations/<str:token>/decline/', VendorInvitationPublicViewSet.as_view({'post': 'decline'}), name='vendor-invite-decline'),
 ]
 
 # Named URL patterns for easy reverse lookups
