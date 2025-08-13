@@ -45,6 +45,64 @@ class ProjectDetailSerializer(ProjectSerializer):
         fields = ProjectSerializer.Meta.fields
     
 
+class VendorProjectDetailSerializer(serializers.ModelSerializer):
+    """Slim project detail for vendors (associated projects).
+
+    Exposes only non-sensitive basics and derived client name.
+    """
+
+    client_tenant_name = serializers.CharField(source='client_tenant.organization_name', read_only=True)
+    role = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = [
+            'id', 'name', 'description', 'project_type', 'status',
+            'client_tenant_name', 'customer_name', 'circle', 'activity',
+            'start_date', 'end_date', 'scope', 'role'
+        ]
+
+    def get_role(self, obj):
+        return 'vendor'
+
+
+class AccessibleProjectSerializer(serializers.Serializer):
+    """Unified serializer for listing projects a user can access (owner or vendor).
+
+    This intentionally returns a slim view usable for both roles and includes a
+    'role' field indicating whether the current tenant is the Owner or Vendor.
+    """
+
+    id = serializers.IntegerField()
+    name = serializers.CharField()
+    description = serializers.CharField(required=False, allow_blank=True)
+    project_type = serializers.CharField()
+    status = serializers.CharField()
+    client_tenant_name = serializers.CharField(required=False, allow_blank=True)
+    customer_name = serializers.CharField(required=False, allow_blank=True)
+    circle = serializers.CharField(required=False, allow_blank=True)
+    start_date = serializers.DateField(required=False, allow_null=True)
+    end_date = serializers.DateField(required=False, allow_null=True)
+    scope = serializers.CharField(required=False, allow_blank=True)
+    role = serializers.ChoiceField(choices=[('owner', 'Owner'), ('vendor', 'Vendor')])
+
+    @staticmethod
+    def from_project(project: Project, role: str):
+        return {
+            'id': project.id,
+            'name': project.name,
+            'description': project.description or '',
+            'project_type': project.project_type,
+            'status': project.status,
+            'client_tenant_name': getattr(project.client_tenant, 'organization_name', None),
+            'customer_name': project.customer_name,
+            'circle': project.circle,
+            'start_date': project.start_date,
+            'end_date': project.end_date,
+            'scope': project.scope,
+            'role': role,
+        }
+
 
 class ProjectCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating new projects (Phase 1)"""
@@ -442,12 +500,13 @@ class DismantleBulkUploadSerializer(serializers.Serializer):
 class ProjectVendorSerializer(serializers.ModelSerializer):
     relationship_id = serializers.IntegerField(source='relationship.id', read_only=True)
     relationship_vendor_code = serializers.CharField(source='relationship.vendor_code', read_only=True)
+    relationship_vendor_organization_name = serializers.CharField(source='relationship.vendor_tenant.organization_name', read_only=True, allow_null=True)
     vendor_tenant_id = serializers.IntegerField(source='vendor_tenant.id', read_only=True)
 
     class Meta:
         model = ProjectVendor
         fields = [
-            'id', 'project', 'relationship_id', 'relationship_vendor_code', 'vendor_tenant_id',
+            'id', 'project', 'relationship_id', 'relationship_vendor_code', 'relationship_vendor_organization_name', 'vendor_tenant_id',
             'scope_notes', 'start_at', 'end_at', 'status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'project']

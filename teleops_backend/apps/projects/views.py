@@ -15,6 +15,7 @@ from .serializers import (
     ProjectDesignVersionSerializer, CreateDesignVersionRequestSerializer, CreateDesignItemRequestSerializer,
     DesignItemSerializer, ProjectSiteSerializer, LinkSitesRequestSerializer, ImportProjectSitesUploadSerializer,
     ProjectInventoryPlanSerializer, CreateProjectInventoryPlanSerializer, ProjectSiteInventorySerializer, DismantleBulkUploadSerializer,
+    AccessibleProjectSerializer,
 )
 from apps.equipment.models import EquipmentInventoryItem
 from core.permissions.tenant_permissions import TenantScopedPermission
@@ -34,14 +35,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_queryset(self):
-        """Filter projects by tenant and exclude soft-deleted records"""
+        """Default queryset: tenant-owned projects only.
+
+        Note: Vendors accessing a specific project by ID may not have this
+        project in the tenant-owned list. The retrieve() method below handles
+        vendor access explicitly when appropriate.
+        """
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
             return Project.objects.none()
 
         return (
             Project.objects
-            .filter(tenant=tenant, deleted_at__isnull=True)
+            .filter(tenant=tenant, deleted_at__isnull=True, client_tenant=tenant)
             .annotate(site_count=models.Count('project_sites', filter=models.Q(project_sites__is_active=True)))
             .select_related('client_tenant', 'created_by')
         )
@@ -144,6 +150,86 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({'error': err}, status=status.HTTP_400_BAD_REQUEST)
         logger.info(f"Project {project.name} cancelled by {request.user.email}")
         return Response(ProjectSerializer(project).data)
+
+    @action(detail=False, methods=['get'], url_path='accessible')
+    def accessible(self, request):
+        """List projects accessible to the current tenant (owner + vendor).
+
+        - Owner: projects where project.client_tenant == current tenant.
+        - Vendor: projects where there exists an active ProjectVendor linked to
+          a ClientVendorRelationship whose vendor_tenant == current tenant.
+        Returns unified rows with 'role' indicating owner or vendor.
+        """
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response([], status=status.HTTP_200_OK)
+
+        # Owner projects
+        owner_qs = (
+            Project.objects
+            .filter(tenant=tenant, client_tenant=tenant, deleted_at__isnull=True)
+            .select_related('client_tenant')
+        )
+
+        owner_rows = [AccessibleProjectSerializer.from_project(p, 'owner') for p in owner_qs]
+
+        # Vendor-associated projects: via ProjectVendor linking to relationships where vendor_tenant == tenant
+        vendor_links = (
+            ProjectVendor.objects
+            .filter(status='active', relationship__vendor_tenant=tenant)
+            .select_related('project__client_tenant')
+        )
+        # Use a set to avoid duplicates
+        seen_ids = set(p['id'] for p in owner_rows)
+        vendor_rows = []
+        for link in vendor_links:
+            prj = link.project
+            if prj.deleted_at:
+                continue
+            if prj.id in seen_ids:
+                continue
+            vendor_rows.append(AccessibleProjectSerializer.from_project(prj, 'vendor'))
+
+        # Merge and order by start of recently updated/created
+        rows = owner_rows + vendor_rows
+        # Best-effort ordering by project.id desc as proxy for recency
+        rows.sort(key=lambda r: r.get('id', 0), reverse=True)
+        return Response(rows)
+
+    def retrieve(self, request, *args, **kwargs):
+        """Override retrieve to allow vendors to access basics of associated projects."""
+        tenant = getattr(request, 'tenant', None)
+        pk = kwargs.get('pk')
+        # Try owner-owned first via default get_object
+        try:
+            return super().retrieve(request, *args, **kwargs)
+        except Exception:
+            pass
+
+        # If not owner-owned, allow access if vendor is linked via active ProjectVendor
+        prj = Project.objects.filter(id=pk, deleted_at__isnull=True).select_related('client_tenant').first()
+        if not prj:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        is_associated = ProjectVendor.objects.filter(project=prj, status='active', relationship__vendor_tenant=tenant).exists()
+        if not is_associated:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        from .serializers import VendorProjectDetailSerializer
+        ser = VendorProjectDetailSerializer(prj)
+        return Response(ser.data)
+
+    def _get_project_and_role(self, request, pk):
+        tenant = getattr(request, 'tenant', None)
+        prj = Project.objects.filter(id=pk, deleted_at__isnull=True).select_related('client_tenant').first()
+        if not prj:
+            return None, None
+        if tenant and prj.client_tenant_id == getattr(tenant, 'id', None):
+            return prj, 'owner'
+        is_associated = ProjectVendor.objects.filter(project=prj, status='active', relationship__vendor_tenant=tenant).exists()
+        if is_associated:
+            return prj, 'vendor'
+        return None, None
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
@@ -604,9 +690,18 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get', 'post'], url_path='vendors')
     def vendors(self, request, pk=None):
-        project = self.get_object()
+        project, role = self._get_project_and_role(request, pk)
+        if not project:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
         if request.method.lower() == 'get':
-            qs = ProjectVendor.objects.filter(project=project).order_by('-created_at')
+            tenant = getattr(request, 'tenant', None)
+            qs = ProjectVendor.objects.filter(project=project)
+            if role == 'vendor':
+                qs = qs.filter(relationship__client_tenant=tenant)
+            else:
+                # Owner only sees direct client↔vendor links, not sub-vendors created by vendors
+                qs = qs.filter(relationship__client_tenant=project.client_tenant)
+            qs = qs.order_by('-created_at')
             page = self.paginate_queryset(qs)
             from .serializers import ProjectVendorSerializer
             if page is not None:
@@ -621,9 +716,17 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path='vendors/(?P<vendor_id>[^/.]+)/status')
     def update_vendor_status(self, request, pk=None, vendor_id=None):
-        project = self.get_object()
+        project, role = self._get_project_and_role(request, pk)
+        if not project:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
         from .serializers import VendorStatusUpdateSerializer, ProjectVendorSerializer
-        pv = ProjectVendor.objects.filter(project=project, id=vendor_id).first()
+        tenant = getattr(request, 'tenant', None)
+        qs = ProjectVendor.objects.filter(project=project, id=vendor_id)
+        if role == 'vendor':
+            qs = qs.filter(relationship__client_tenant=tenant)
+        else:
+            qs = qs.filter(relationship__client_tenant=project.client_tenant)
+        pv = qs.first()
         if not pv:
             return Response({'error': 'Vendor not found'}, status=status.HTTP_404_NOT_FOUND)
         ser = VendorStatusUpdateSerializer(data=request.data)
@@ -635,11 +738,19 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get', 'post'], url_path='vendor-invitations')
     def vendor_invitations(self, request, pk=None):
-        project = self.get_object()
+        project, role = self._get_project_and_role(request, pk)
+        if not project:
+            return Response({'error': 'Not found'}, status=status.HTTP_404_NOT_FOUND)
         if request.method.lower() == 'get':
             from .serializers import VendorInvitationSerializer
             # Do not show accepted invitations in the invitations list
-            qs = VendorInvitation.objects.filter(project=project).exclude(status='accepted').order_by('-invited_at')
+            tenant = getattr(request, 'tenant', None)
+            qs = VendorInvitation.objects.filter(project=project).exclude(status='accepted')
+            if role == 'vendor':
+                qs = qs.filter(relationship__client_tenant=tenant)
+            else:
+                qs = qs.filter(relationship__client_tenant=project.client_tenant)
+            qs = qs.order_by('-invited_at')
             page = self.paginate_queryset(qs)
             if page is not None:
                 return self.get_paginated_response(VendorInvitationSerializer(page, many=True).data)

@@ -125,7 +125,7 @@ const ProjectVendorsPage: React.FC = () => {
               <TableBody>
                 {vendors.map((r) => (
                   <TableRow key={r.id} hover>
-                    <TableCell>{r.relationship_vendor_code || r.relationship_id}</TableCell>
+                    <TableCell>{r.relationship_vendor_organization_name || r.relationship_id}</TableCell>
                     <TableCell>{r.scope_notes || "-"}</TableCell>
                     <TableCell>{statusChip(r.status)}</TableCell>
                     <TableCell align="right">

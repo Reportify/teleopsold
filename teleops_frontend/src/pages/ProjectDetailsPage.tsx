@@ -13,6 +13,7 @@ const ProjectDetailsPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
   const navigate = useNavigate();
   const [project, setProject] = useState<Project | null>(null);
+  const [role, setRole] = useState<"owner" | "vendor" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clientName, setClientName] = useState<string>("");
@@ -31,6 +32,13 @@ const ProjectDetailsPage: React.FC = () => {
         setLoading(true);
         const data = await projectService.retrieve(id);
         setProject(data);
+        if ((data as any).role) {
+          setRole((data as any).role as "owner" | "vendor");
+        } else {
+          // infer owner role when client_tenant equals current tenant
+          const current = getCurrentTenant();
+          setRole(String(current?.id) === String((data as any).client_tenant) ? "owner" : "vendor");
+        }
 
         // Prefer backend-provided friendly name
         if ((data as any).client_tenant_name) {
@@ -58,11 +66,11 @@ const ProjectDetailsPage: React.FC = () => {
           setCircleLabel(data.circle);
         }
 
-        // Use project-linked site count from backend annotation
-        setSiteCount((data as any).site_count ?? 0);
+        // Use project-linked site count from backend annotation (owner only)
+        if (((data as any).site_count ?? null) !== null) setSiteCount((data as any).site_count);
 
         // Preload inventory count for dismantle projects
-        if ((data as any).project_type === "dismantle") {
+        if ((data as any).project_type === "dismantle" && ((data as any).role || role) !== "vendor") {
           try {
             const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)));
             // If paginated, expect results and count in headers; otherwise use length
@@ -250,24 +258,26 @@ const ProjectDetailsPage: React.FC = () => {
         </Grid>
       </Grid>
 
-      {/* Project Sites summary */}
-      <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
-        <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
-          <Box>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-              Project Sites
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              {siteCount === null ? "-" : `${siteCount} site${siteCount === 1 ? "" : "s"}`} available
-            </Typography>
-          </Box>
-          <Stack direction="row" spacing={1}>
-            <Button variant="outlined" component={Link} to={`/projects/${project.id}/sites`}>
-              Details
-            </Button>
+      {/* Project Sites summary - hide for vendor associated projects */}
+      {role !== "vendor" && (
+        <Paper variant="outlined" sx={{ p: 2, mt: 3 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
+            <Box>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Project Sites
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {siteCount === null ? "-" : `${siteCount} site${siteCount === 1 ? "" : "s"}`} available
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1}>
+              <Button variant="outlined" component={Link} to={`/projects/${project.id}/sites`}>
+                Details
+              </Button>
+            </Stack>
           </Stack>
-        </Stack>
-      </Paper>
+        </Paper>
+      )}
 
       {/* Project Vendors summary */}
       <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
@@ -288,8 +298,8 @@ const ProjectDetailsPage: React.FC = () => {
         </Stack>
       </Paper>
 
-      {/* Project Inventory summary (dismantle only) */}
-      {project.project_type === "dismantle" && (
+      {/* Project Inventory summary (dismantle only) - hide for vendor */}
+      {project.project_type === "dismantle" && role !== "vendor" && (
         <Paper variant="outlined" sx={{ p: 2, mt: 2 }}>
           <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems={{ xs: "flex-start", sm: "center" }} justifyContent="space-between">
             <Box>

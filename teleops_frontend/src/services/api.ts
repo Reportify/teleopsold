@@ -51,6 +51,7 @@ export const API_ENDPOINTS = {
   },
   PROJECTS: {
     LIST: "/projects/",
+    ACCESSIBLE: "/projects/accessible/",
     CREATE: "/projects/",
     DETAIL: (id: string) => `/projects/${id}/`,
     UPDATE: (id: string) => `/projects/${id}/`,

@@ -9,7 +9,7 @@ import { useDarkMode } from "../contexts/ThemeContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import clientService, { Client } from "../services/clientService";
 import projectService, { CreateProjectRequest } from "../services/projectService";
-import { telecomCircleApi } from "../services/api";
+import { telecomCircleApi, API_ENDPOINTS, apiHelpers } from "../services/api";
 
 const ProjectsPage: React.FC = () => {
   const { getCurrentTenant, isCorporateUser, isCircleUser } = useAuth();
@@ -57,6 +57,15 @@ const ProjectsPage: React.FC = () => {
   // Keep a ref for formatter usage in column definition
   const circlesRef = React.useRef<Array<{ value: string; label: string }>>([]);
 
+  // Helper to generate option value for both associated and self-created clients
+  const getClientOptionValue = (c: Client) => {
+    return c.client_tenant ? String(c.client_tenant) : `vendor_created:${c.client_tenant_data?.id || c.id}`;
+  };
+
+  const isVendorCreatedSelection = useMemo(() => {
+    return typeof formData.client_id === "string" && String(formData.client_id).startsWith("vendor_created:");
+  }, [formData.client_id]);
+
   const [creating, setCreating] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [selectedProject, setSelectedProject] = useState<ApiProject | null>(null);
@@ -96,10 +105,10 @@ const ProjectsPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await projectService.list();
-      // Handle pagination or plain array
-      const list = Array.isArray(data) ? data : data.results || [];
-      setProjects(list as ApiProject[]);
+      // Use unified accessible projects endpoint
+      const data = await apiHelpers.get<any>(API_ENDPOINTS.PROJECTS.ACCESSIBLE);
+      const list = Array.isArray(data) ? data : data?.results || [];
+      setProjects(list as any);
     } catch (e: any) {
       console.error("Failed to load projects", e);
       setError(e?.message || "Failed to load projects");
@@ -127,6 +136,12 @@ const ProjectsPage: React.FC = () => {
           </Typography>
         </Box>
       ),
+    },
+    {
+      id: "role",
+      label: "Role",
+      minWidth: 100,
+      format: (value: string) => <Chip label={value === "owner" ? "Owner" : "Vendor"} size="small" color={value === "owner" ? "primary" : "secondary"} />,
     },
     {
       id: "project_type",
@@ -297,14 +312,18 @@ const ProjectsPage: React.FC = () => {
         };
         await projectService.update((editingProject as any).id, updatePayload);
       } else {
+        // Build payload; allow vendor-created clients by treating ownership as self for now
         const payload: CreateProjectRequest = {
           name: formData.name,
           description: formData.description || undefined,
           project_type: formData.project_type,
-          client_id: formData.is_tenant_owner ? undefined : (formData.client_id as string | number),
-          is_tenant_owner: formData.is_tenant_owner || undefined,
+          client_id: formData.is_tenant_owner || isVendorCreatedSelection ? undefined : (formData.client_id as string | number),
+          is_tenant_owner: formData.is_tenant_owner || isVendorCreatedSelection || undefined,
           customer_is_tenant_owner: formData.customer_is_tenant_owner || undefined,
-          customer_name: formData.customer_is_tenant_owner ? undefined : formData.customer_name || undefined,
+          customer_name: formData.customer_is_tenant_owner
+            ? undefined
+            : formData.customer_name ||
+              (isVendorCreatedSelection ? clients.find((c) => getClientOptionValue(c) === formData.client_id)?.client_tenant_data?.organization_name || undefined : undefined),
           circle: formData.circle,
           activity: formData.activity,
           start_date: formData.start_date || undefined,
@@ -326,6 +345,14 @@ const ProjectsPage: React.FC = () => {
   const handleFormChange = (field: keyof typeof formData, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
+
+  // When project is owned by my organization, ensure client_id is cleared
+  useEffect(() => {
+    if (formData.is_tenant_owner && typeof formData.client_id !== "string") {
+      // keep vendor-created virtual selections; clear only numeric/tenant selections
+      setFormData((prev) => ({ ...prev, client_id: "" }));
+    }
+  }, [formData.is_tenant_owner]);
 
   return (
     <Box
@@ -492,7 +519,7 @@ const ProjectsPage: React.FC = () => {
                   }}
                 >
                   {clients.map((c) => (
-                    <MenuItem key={c.id} value={c.client_tenant}>
+                    <MenuItem key={c.id} value={getClientOptionValue(c)}>
                       {c.client_tenant_data?.organization_name || c.vendor_code || c.id}
                     </MenuItem>
                   ))}
