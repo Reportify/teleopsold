@@ -40,6 +40,11 @@ import ProjectInventoryPage from "./pages/ProjectInventoryPage";
 import ProjectVendorsPage from "./pages/ProjectVendorsPage";
 import VendorInvitationPreviewPage from "./pages/VendorInvitationPreviewPage";
 import TasksPage from "./pages/TasksPage";
+import TaskDetailsPage from "./pages/TaskDetailsPage";
+import TaskCreatePage from "./pages/TaskCreatePage";
+import TaskCreateFromProjectPage from "./pages/TaskCreateFromProjectPage";
+import FlowBuilderPage from "./pages/FlowBuilderPage";
+
 import EquipmentPage from "./pages/EquipmentPage";
 import TeamsPage from "./pages/TeamsPage";
 import WarehousePage from "./pages/WarehousePage";
@@ -381,6 +386,48 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <TasksPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/create"
+          element={
+            <ProtectedRoute>
+              <TaskCreatePage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/:id"
+          element={
+            <ProtectedRoute>
+              <TaskDetailsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/projects/:projectId/create-task"
+          element={
+            <ProtectedRoute>
+              <TaskCreateFromProjectPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Flow Builder Routes */}
+        <Route
+          path="/flows/new"
+          element={
+            <ProtectedRoute>
+              <FlowBuilderPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/flows/:flowId/edit"
+          element={
+            <ProtectedRoute>
+              <FlowBuilderPage />
             </ProtectedRoute>
           }
         />

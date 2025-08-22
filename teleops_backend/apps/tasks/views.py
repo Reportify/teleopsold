@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status, filters
+from rest_framework import viewsets, status, filters, serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -6,6 +6,8 @@ from django.db import models, transaction
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
 import logging
+from django.db.models import Q, Count, Sum
+from rest_framework.views import APIView
 
 from .models import Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate
 from .serializers import (
@@ -15,6 +17,8 @@ from .serializers import (
 )
 from core.permissions.tenant_permissions import TenantScopedPermission, TaskPermission, EquipmentVerificationPermission
 from core.pagination import StandardResultsSetPagination, LargeResultsSetPagination
+from .models import FlowTemplate, FlowInstance
+from .serializers import FlowTemplateCreateSerializer, FlowTemplateUpdateSerializer, FlowTemplateSerializer, FlowInstanceSerializer
 
 logger = logging.getLogger(__name__)
 
@@ -577,3 +581,249 @@ class TaskTemplateViewSet(viewsets.ModelViewSet):
             TaskDetailSerializer(task).data,
             status=status.HTTP_201_CREATED
         ) 
+
+
+class FlowTemplateViewSet(viewsets.ModelViewSet):
+    """ViewSet for FlowTemplate CRUD operations"""
+    serializer_class = FlowTemplateSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter flows by tenant and handle search/filtering"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return FlowTemplate.objects.none()
+        
+        queryset = FlowTemplate.objects.filter(tenant=tenant).prefetch_related(
+            'activities__assigned_sites__flow_site',
+            'sites'
+        )
+        
+        # Search functionality
+        search = self.request.query_params.get('search', None)
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) |
+                Q(description__icontains=search) |
+                Q(category__icontains=search)
+            )
+        
+        # Category filter
+        category = self.request.query_params.get('category', None)
+        if category and category != 'all':
+            queryset = queryset.filter(category=category)
+        
+        # Active filter
+        is_active = self.request.query_params.get('is_active', None)
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        
+        # Public filter
+        is_public = self.request.query_params.get('is_public', None)
+        if is_public is not None:
+            queryset = queryset.filter(is_public=is_public.lower() == 'true')
+        
+        return queryset.order_by('-created_at')
+    
+    def get_serializer_class(self):
+        """Use different serializers for create/update operations"""
+        if self.action in ['create']:
+            return FlowTemplateCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return FlowTemplateUpdateSerializer
+        return FlowTemplateSerializer
+    
+    def perform_create(self, serializer):
+        """Create the flow template and return the instance"""
+        return serializer.save()
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to return properly serialized response"""
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        instance = self.perform_create(serializer)
+        
+        # Use the default serializer to return the response
+        # This ensures proper serialization of related fields
+        response_serializer = FlowTemplateSerializer(instance, context={'request': request})
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+    
+    def perform_update(self, serializer):
+        """Update the flow template"""
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Delete the flow template and related data"""
+        instance.delete()
+
+
+class FlowTemplateSearchView(APIView):
+    """View for searching flow templates with advanced filters"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Search flow templates with various filters"""
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({
+                'success': False,
+                'message': 'Tenant context required'
+            }, status=400)
+        
+        queryset = FlowTemplate.objects.filter(tenant=tenant)
+        
+        # Search term
+        search_term = request.query_params.get('search', '')
+        if search_term:
+            queryset = queryset.filter(
+                Q(name__icontains=search_term) |
+                Q(description__icontains=search_term) |
+                Q(category__icontains=search_term)
+            )
+        
+        # Category filter
+        category = request.query_params.get('category', '')
+        if category:
+            queryset = queryset.filter(category=category)
+        
+        # Popular flows (by usage count)
+        popular = request.query_params.get('popular', 'false').lower() == 'true'
+        if popular:
+            queryset = queryset.order_by('-usage_count')
+        
+        # Limit results
+        limit = request.query_params.get('limit', 10)
+        try:
+            limit = int(limit)
+            queryset = queryset[:limit]
+        except ValueError:
+            pass
+        
+        serializer = FlowTemplateSerializer(queryset, many=True)
+        return Response({
+            'success': True,
+            'data': serializer.data,
+            'count': len(serializer.data)
+        })
+
+
+class FlowTemplateUsageView(APIView):
+    """View for managing flow template usage"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, flow_id):
+        """Increment usage count for a flow template"""
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({
+                'success': False,
+                'message': 'Tenant context required'
+            }, status=400)
+        
+        try:
+            flow_template = FlowTemplate.objects.get(
+                id=flow_id, 
+                tenant=tenant
+            )
+            flow_template.usage_count += 1
+            flow_template.save(update_fields=['usage_count'])
+            
+            return Response({
+                'success': True,
+                'message': 'Usage count updated successfully',
+                'data': FlowTemplateSerializer(flow_template).data
+            })
+        except FlowTemplate.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Flow template not found'
+            }, status=404)
+
+
+class FlowTemplateStatisticsView(APIView):
+    """View for getting flow template statistics"""
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Get statistics about flow templates"""
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({
+                'success': False,
+                'message': 'Tenant context required'
+            }, status=400)
+        
+        queryset = FlowTemplate.objects.filter(tenant=tenant)
+        
+        # Basic counts
+        total_flows = queryset.count()
+        active_flows = queryset.filter(is_active=True).count()
+        total_usage = queryset.aggregate(
+            total=Sum('usage_count')
+        )['total'] or 0
+        
+        # Category counts
+        category_counts = queryset.values('category').annotate(
+            count=Count('id')
+        ).order_by('-count')
+        
+        # Most used flows
+        most_used_flows = queryset.order_by('-usage_count')[:5]
+        most_used_data = FlowTemplateSerializer(most_used_flows, many=True).data
+        
+        # Recent flows
+        recent_flows = queryset.order_by('-created_at')[:5]
+        recent_data = FlowTemplateSerializer(recent_flows, many=True).data
+        
+        return Response({
+            'success': True,
+            'data': {
+                'totalFlows': total_flows,
+                'activeFlows': active_flows,
+                'totalUsage': total_usage,
+                'categoryCounts': {item['category']: item['count'] for item in category_counts},
+                'mostUsedFlows': most_used_data,
+                'recentFlows': recent_data
+            }
+        })
+
+
+class FlowInstanceViewSet(viewsets.ModelViewSet):
+    """ViewSet for FlowInstance CRUD operations"""
+    serializer_class = FlowInstanceSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter flow instances by tenant and related data"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return FlowInstance.objects.none()
+        
+        queryset = FlowInstance.objects.filter(
+            flow_template__tenant=tenant
+        )
+        
+        # Filter by flow template
+        flow_template = self.request.query_params.get('flow_template', None)
+        if flow_template:
+            queryset = queryset.filter(flow_template_id=flow_template)
+        
+        # Filter by task
+        task = self.request.query_params.get('task', None)
+        if task:
+            queryset = queryset.filter(task_id=task)
+        
+        # Filter by status
+        status = self.request.query_params.get('status', None)
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        return queryset.order_by('-created_at')
+    
+    def perform_create(self, serializer):
+        """Create a new flow instance"""
+        serializer.save()
+    
+    def perform_update(self, serializer):
+        """Update the flow instance"""
+        serializer.save() 

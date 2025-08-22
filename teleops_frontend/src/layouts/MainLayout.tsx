@@ -55,6 +55,8 @@ import {
   ExpandLess,
   ExpandMore,
   FiberManualRecord,
+  Task,
+  AccountTree,
 } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
@@ -138,6 +140,14 @@ const unifiedNavigationItems = [
     permission: "projects.view",
     description: "Project management",
   },
+  {
+    text: "Tasks",
+    icon: <Task />,
+    path: "/tasks",
+    permission: "tasks.view",
+    description: "Task management and execution",
+  },
+
   {
     text: "Sites",
     icon: <Business />,

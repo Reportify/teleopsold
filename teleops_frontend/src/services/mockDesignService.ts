@@ -27,7 +27,7 @@ type Store = {
   nextItemId: number;
 };
 
-const STORAGE_KEY_PREFIX = "mock_design_";
+const STORAGE_KEY_PREFIX = "project_design_";
 
 function key(projectId: string) {
   return `${STORAGE_KEY_PREFIX}${projectId}`;

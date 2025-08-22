@@ -10,6 +10,7 @@ from apps.projects.serializers import ProjectSerializer
 # Import models for default querysets
 from apps.sites.models import Site
 from apps.users.models import User
+from .models import FlowSite, FlowActivity, FlowTemplate, FlowInstance, FlowActivitySite
 
 
 class TaskSiteAssignmentSerializer(serializers.ModelSerializer):
@@ -491,3 +492,230 @@ class TaskSearchSerializer(serializers.Serializer):
                 )
         
         return data 
+
+
+class FlowSiteSerializer(serializers.ModelSerializer):
+    """Serializer for FlowSite model"""
+    site_name = serializers.CharField(source='site.site_name', read_only=True, allow_null=True)
+    site_global_id = serializers.CharField(source='site.global_id', read_only=True, allow_null=True)
+    
+    class Meta:
+        model = FlowSite
+        fields = [
+            'id', 'site', 'site_name', 'site_global_id', 'alias', 'order', 
+            'is_required', 'role'
+        ]
+
+
+class FlowActivitySiteSerializer(serializers.ModelSerializer):
+    """Serializer for FlowActivitySite model"""
+    flow_site = FlowSiteSerializer(read_only=True)
+    
+    class Meta:
+        model = FlowActivitySite
+        fields = ['id', 'flow_site', 'is_required', 'execution_order']
+
+
+class FlowActivitySerializer(serializers.ModelSerializer):
+    """Serializer for FlowActivity model"""
+    assigned_sites = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = FlowActivity
+        fields = [
+            'id', 'activity_name', 'description', 'activity_type', 
+            'sequence_order', 'dependencies', 'requires_site', 'requires_equipment',
+            'site_scope', 'parallel_execution', 'dependency_scope', 'site_coordination',
+            'assigned_sites'
+        ]
+    
+    def get_assigned_sites(self, obj):
+        """Get assigned sites for this activity"""
+        if hasattr(obj, 'assigned_sites'):
+            return FlowActivitySiteSerializer(obj.assigned_sites.all(), many=True).data
+        return []
+
+
+class FlowTemplateSerializer(serializers.ModelSerializer):
+    """Serializer for FlowTemplate model"""
+    activities = FlowActivitySerializer(many=True, read_only=True)
+    sites = FlowSiteSerializer(many=True, read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    
+    class Meta:
+        model = FlowTemplate
+        fields = [
+            'id', 'name', 'description', 'category', 'tags', 'is_active', 'is_public',
+            'usage_count', 'created_by', 'created_by_name', 'tenant_name',
+            'created_at', 'updated_at', 'activities', 'sites'
+        ]
+        read_only_fields = ['id', 'usage_count', 'created_at', 'updated_at']
+
+
+class FlowTemplateCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating FlowTemplate with activities and sites"""
+    activities = serializers.ListField(child=serializers.DictField())
+    sites = FlowSiteSerializer(many=True, required=False)
+    
+    class Meta:
+        model = FlowTemplate
+        fields = [
+            'name', 'description', 'category', 'tags', 'is_active', 'is_public',
+            'activities', 'sites'
+        ]
+    
+    def create(self, validated_data):
+        print(f"🔍 DEBUG: FlowTemplateCreateSerializer.create() called with {len(validated_data)} fields")
+        
+        activities_data = validated_data.pop('activities', [])
+        sites_data = validated_data.pop('sites', [])
+        
+        print(f"🔍 DEBUG: Found {len(activities_data)} activities and {len(sites_data)} sites")
+        
+        # Get the current user and tenant from the request
+        user = self.context['request'].user
+        tenant = getattr(self.context['request'], 'tenant', None)
+        if not tenant:
+            raise serializers.ValidationError("Tenant context required")
+        
+        print(f"🔍 DEBUG: Creating flow template for tenant: {tenant}")
+        
+        # Use transaction to ensure atomicity
+        from django.db import transaction
+        
+        with transaction.atomic():
+            # Create the flow template
+            flow_template = FlowTemplate.objects.create(
+                **validated_data,
+                tenant=tenant,
+                created_by=user
+            )
+            
+            print(f"🔍 DEBUG: Created flow template with ID: {flow_template.id}")
+            
+            # Collect all unique site aliases from activities
+            all_site_aliases = set()
+            for activity_data in activities_data:
+                assigned_sites = activity_data.get('assigned_sites', [])
+                all_site_aliases.update(assigned_sites)
+            
+            # Create sites automatically if none provided
+            created_sites = {}
+            if sites_data:
+                # Use provided sites data
+                for i, site_data in enumerate(sites_data):
+                    print(f"🔍 DEBUG: Creating site {i+1}/{len(sites_data)}: {site_data.get('alias', 'Unknown')}")
+                    site = FlowSite.objects.create(
+                        flow_template=flow_template,
+                        **site_data
+                    )
+                    created_sites[site_data.get('alias', f'site_{i}')] = site
+                    print(f"🔍 DEBUG: Created site with ID: {site.id}")
+            else:
+                # Create sites automatically from activity assignments
+                for i, site_alias in enumerate(all_site_aliases):
+                    if site_alias:  # Skip empty aliases
+                        print(f"🔍 DEBUG: Auto-creating site: {site_alias}")
+                        site = FlowSite.objects.create(
+                            flow_template=flow_template,
+                            alias=site_alias,
+                            order=i,
+                            is_required=True,
+                            role='PRIMARY'
+                        )
+                        created_sites[site_alias] = site
+                        print(f"🔍 DEBUG: Created site with ID: {site.id}")
+            
+            # Create activities with duplicate check
+            for i, activity_data in enumerate(activities_data):
+                sequence_order = activity_data.get('sequence_order')
+                print(f"🔍 DEBUG: Creating activity {i+1}/{len(activities_data)}: {activity_data.get('activity_name', 'Unknown')} with sequence_order: {sequence_order}")
+                
+                # Check if activity with this sequence_order already exists
+                if FlowActivity.objects.filter(flow_template=flow_template, sequence_order=sequence_order).exists():
+                    print(f"⚠️ WARNING: Activity with sequence_order {sequence_order} already exists for this flow template!")
+                    continue
+                
+                # Extract site assignments from the activity data
+                assigned_sites = activity_data.pop('assigned_sites', [])
+                
+                activity = FlowActivity.objects.create(
+                    flow_template=flow_template,
+                    **activity_data
+                )
+                print(f"🔍 DEBUG: Created activity with ID: {activity.id}")
+                
+                # Create site assignments for this activity
+                for site_alias in assigned_sites:
+                    if site_alias in created_sites:
+                        FlowActivitySite.objects.create(
+                            flow_activity=activity,
+                            flow_site=created_sites[site_alias],
+                            execution_order=len(activity.assigned_sites.all())
+                        )
+                        print(f"🔍 DEBUG: Assigned activity {activity.id} to site {site_alias}")
+                    else:
+                        print(f"⚠️ WARNING: Site alias '{site_alias}' not found in created sites: {list(created_sites.keys())}")
+        
+        print(f"🔍 DEBUG: FlowTemplateCreateSerializer.create() completed successfully")
+        
+        # Return the created flow template with all related data loaded
+        # This prevents RelatedManager iteration errors during serialization
+        flow_template.refresh_from_db()
+        return flow_template
+
+
+class FlowTemplateUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating FlowTemplate with activities and sites"""
+    activities = FlowActivitySerializer(many=True)
+    sites = FlowSiteSerializer(many=True, required=False)
+    
+    class Meta:
+        model = FlowTemplate
+        fields = [
+            'name', 'description', 'category', 'tags', 'is_active', 'is_public',
+            'activities', 'sites'
+        ]
+    
+    def update(self, instance, validated_data):
+        activities_data = validated_data.pop('activities', [])
+        sites_data = validated_data.pop('sites', [])
+        
+        # Update the flow template
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        
+        # Update activities - delete existing and create new ones
+        instance.activities.all().delete()
+        for activity_data in activities_data:
+            FlowActivity.objects.create(
+                flow_template=instance,
+                **activity_data
+            )
+        
+        # Update sites - delete existing and create new ones
+        instance.sites.all().delete()
+        for site_data in sites_data:
+            FlowSite.objects.create(
+                flow_template=instance,
+                **site_data
+            )
+        
+        return instance
+
+
+class FlowInstanceSerializer(serializers.ModelSerializer):
+    """Serializer for FlowInstance model"""
+    flow_template_name = serializers.CharField(source='flow_template.name', read_only=True)
+    task_title = serializers.CharField(source='task.title', read_only=True)
+    
+    class Meta:
+        model = FlowInstance
+        fields = [
+            'id', 'flow_template', 'flow_template_name', 'task', 'task_title',
+            'status', 'current_activity_index', 'completed_activities', 'failed_activities',
+            'started_at', 'completed_at', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at'] 

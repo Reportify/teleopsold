@@ -37,6 +37,14 @@ class Task(models.Model):
         ('upgrade', 'Upgrade'),
         ('testing', 'Testing'),
         ('commissioning', 'Commissioning'),
+        # Additional activity types for flow templates
+        ('rf_survey', 'RF Survey'),
+        ('emf_survey', 'EMF Survey'),
+        ('rfi_survey', 'RFI Survey'),
+        ('transportation', 'Transportation'),
+        ('packaging', 'Packaging'),
+        ('deviation_email', 'Deviation Email'),
+        ('rsa', 'RSA'),
     )
     
     EQUIPMENT_VERIFICATION_STATUS = (
@@ -674,3 +682,186 @@ class TaskTemplate(models.Model):
         self.save(update_fields=['usage_count'])
         
         return task 
+
+
+class FlowTemplate(models.Model):
+    """Flow template for reusable workflow patterns"""
+    FLOW_CATEGORY = (
+        ('DISMANTLING', 'Dismantling'),
+        ('INSTALLATION', 'Installation'),
+        ('MAINTENANCE', 'Maintenance'),
+        ('SURVEY', 'Survey'),
+        ('LOGISTICS', 'Logistics'),
+        ('COMMISSIONING', 'Commissioning'),
+        ('CUSTOM', 'Custom'),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='flow_templates')
+    
+    # Basic information
+    name = models.CharField(max_length=255)
+    description = models.TextField()
+    category = models.CharField(max_length=20, choices=FLOW_CATEGORY, default='CUSTOM')
+    tags = models.JSONField(default=list, blank=True)
+    
+    # Flow configuration
+    is_active = models.BooleanField(default=True)
+    is_public = models.BooleanField(default=False, help_text="Whether this flow can be used by other tenants")
+    
+    # Usage tracking
+    usage_count = models.IntegerField(default=0)
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.SET_NULL, null=True, related_name='created_flows')
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'flow_templates'
+        ordering = ['-created_at']
+        unique_together = ['tenant', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.tenant.name})"
+
+
+class FlowActivity(models.Model):
+    """Individual activity within a flow template"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='activities')
+    
+    # Activity details
+    activity_name = models.CharField(max_length=255)
+    description = models.TextField()
+    activity_type = models.CharField(max_length=50, choices=Task.TASK_TYPE)
+    
+    # Sequence and dependencies
+    sequence_order = models.IntegerField()
+    dependencies = models.JSONField(default=list, help_text="List of activity IDs this activity depends on")
+    
+    # Site and equipment requirements
+    requires_site = models.BooleanField(default=True)
+    requires_equipment = models.BooleanField(default=False)
+    
+    # Multi-site support
+    site_scope = models.CharField(
+        max_length=20, 
+        choices=[
+            ('SINGLE', 'Single Site'),
+            ('MULTIPLE', 'Multiple Sites'),
+            ('ALL', 'All Sites'),
+        ],
+        default='SINGLE'
+    )
+    parallel_execution = models.BooleanField(default=False, help_text="Can this activity run in parallel across sites")
+    dependency_scope = models.CharField(
+        max_length=20,
+        choices=[
+            ('SITE_LOCAL', 'Site Local'),
+            ('CROSS_SITE', 'Cross Site'),
+            ('GLOBAL', 'Global'),
+        ],
+        default='SITE_LOCAL'
+    )
+    site_coordination = models.BooleanField(default=False, help_text="Requires coordination between sites")
+
+    class Meta:
+        db_table = 'flow_activities'
+        ordering = ['sequence_order']
+        unique_together = ['flow_template', 'sequence_order']
+
+    def __str__(self):
+        return f"{self.activity_name} (Flow: {self.flow_template.name})"
+
+
+class FlowSite(models.Model):
+    """Site configuration within a flow template"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='sites')
+    
+    # Site reference (optional for flow templates)
+    site = models.ForeignKey('sites.Site', on_delete=models.SET_NULL, null=True, blank=True, related_name='flow_templates')
+    
+    # Flow-specific site configuration
+    alias = models.CharField(max_length=100, blank=True, help_text="Custom name for this site in the flow")
+    order = models.IntegerField(default=0, help_text="Order of this site in the flow")
+    
+    # Site-specific settings
+    is_required = models.BooleanField(default=True, help_text="Whether this site is required for the flow")
+    role = models.CharField(
+        max_length=20,
+        choices=[
+            ('PRIMARY', 'Primary'),
+            ('SECONDARY', 'Secondary'),
+            ('COORDINATION', 'Coordination'),
+        ],
+        default='PRIMARY'
+    )
+
+    class Meta:
+        db_table = 'flow_sites'
+        ordering = ['order']
+        unique_together = ['flow_template', 'site']
+
+    def __str__(self):
+        return f"{self.site.site_name} in {self.flow_template.name}"
+
+
+class FlowActivitySite(models.Model):
+    """Many-to-many relationship between activities and sites in a flow"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    flow_activity = models.ForeignKey(FlowActivity, on_delete=models.CASCADE, related_name='assigned_sites')
+    flow_site = models.ForeignKey(FlowSite, on_delete=models.CASCADE, related_name='assigned_activities')
+    
+    # Activity-specific site settings
+    is_required = models.BooleanField(default=True, help_text="Whether this site is required for this activity")
+    execution_order = models.IntegerField(default=0, help_text="Order of execution for this site in the activity")
+    
+    class Meta:
+        db_table = 'flow_activity_sites'
+        unique_together = ['flow_activity', 'flow_site']
+        ordering = ['execution_order']
+
+    def __str__(self):
+        return f"{self.flow_activity.activity_name} -> {self.flow_site.alias}"
+
+
+class FlowInstance(models.Model):
+    """Instance of a flow template being executed for a specific task"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # References
+    flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='instances')
+    task = models.ForeignKey(Task, on_delete=models.SET_NULL, null=True, blank=True, related_name='flow_instances')
+    
+    # Instance state
+    status = models.CharField(
+        max_length=20,
+        choices=[
+            ('PENDING', 'Pending'),
+            ('IN_PROGRESS', 'In Progress'),
+            ('COMPLETED', 'Completed'),
+            ('FAILED', 'Failed'),
+            ('CANCELLED', 'Cancelled'),
+        ],
+        default='PENDING'
+    )
+    
+    # Progress tracking
+    current_activity_index = models.IntegerField(default=0)
+    completed_activities = models.JSONField(default=list)
+    failed_activities = models.JSONField(default=list)
+    
+    # Timestamps
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'flow_instances'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.flow_template.name} for {self.task.title}" 

@@ -140,11 +140,34 @@ export class AuthService {
   private static clearTokens(): void {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
+    // Clear user-specific data including flow templates
+    localStorage.removeItem("flowTemplates");
+    // Clear all user-specific application data
+    this.clearProjectDesignData();
   }
 
   // Clear tenant context
   private static clearTenantContext(): void {
     localStorage.removeItem(TENANT_CONTEXT_KEY);
+  }
+
+  // Clear all user-specific application data
+  private static clearProjectDesignData(): void {
+    const keysToRemove: string[] = [];
+    // Iterate through all localStorage keys
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (
+        key &&
+        (key.startsWith("project_design_") || // Project design data
+          key === "mock_inventory" || // Inventory data
+          key === "rememberMe") // Remember me preference
+      ) {
+        keysToRemove.push(key);
+      }
+    }
+    // Remove all user-specific data keys
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
   }
 
   // Check if token is expired (basic check)
@@ -381,6 +404,10 @@ export class AuthService {
   static clearInternalTokens(): void {
     localStorage.removeItem(INTERNAL_TOKEN_KEY);
     localStorage.removeItem(INTERNAL_REFRESH_TOKEN_KEY);
+    // Clear user-specific data including flow templates
+    localStorage.removeItem("flowTemplates");
+    // Clear all user-specific application data
+    this.clearProjectDesignData();
   }
 
   private static storeInternalUser(user: any): void {

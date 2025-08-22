@@ -111,6 +111,16 @@ export const API_ENDPOINTS = {
     UPDATE: (id: string) => `/tasks/${id}/`,
     DELETE: (id: string) => `/tasks/${id}/`,
     EQUIPMENT_VERIFICATION: (id: string) => `/tasks/${id}/equipment-verification/`,
+    FLOWS: {
+      LIST: "/tasks/flow-templates/",
+      CREATE: "/tasks/flow-templates/",
+      DETAIL: (id: string) => `/tasks/flow-templates/${id}/`,
+      UPDATE: (id: string) => `/tasks/flow-templates/${id}/`,
+      DELETE: (id: string) => `/tasks/flow-templates/${id}/`,
+      SEARCH: "/tasks/flow-templates/search/",
+      USAGE: (id: string) => `/tasks/flow-templates/${id}/usage/`,
+      STATISTICS: "/tasks/flow-templates/statistics/",
+    },
   },
   EQUIPMENT: {
     ITEMS: {
