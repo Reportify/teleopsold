@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     TaskViewSet, TaskCommentViewSet, TaskTemplateViewSet,
     FlowTemplateViewSet, FlowInstanceViewSet, FlowTemplateSearchView,
-    FlowTemplateUsageView, FlowTemplateStatisticsView
+    FlowTemplateUsageView, FlowTemplateStatisticsView, CreateTaskFromFlowView
 )
 
 # Create router and register viewsets
@@ -23,4 +23,7 @@ urlpatterns = [
     path('flow-templates/search/', FlowTemplateSearchView.as_view(), name='flow-template-search'),
     path('flow-templates/<uuid:flow_id>/usage/', FlowTemplateUsageView.as_view(), name='flow-template-usage'),
     path('flow-templates/statistics/', FlowTemplateStatisticsView.as_view(), name='flow-template-statistics'),
+    
+    # Task creation from flow template
+    path('create-from-flow/', CreateTaskFromFlowView.as_view(), name='create-task-from-flow'),
 ] 

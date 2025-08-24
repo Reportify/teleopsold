@@ -57,7 +57,7 @@ class CircleSiteManagementView(APIView):
             return False
     
     def get(self, request):
-        """Get all sites for the current circle tenant"""
+        """Get paginated sites for the current circle tenant with optimized queries"""
         try:
             # Check read permission
             if not self._check_permission(request.user, "read"):
@@ -73,47 +73,93 @@ class CircleSiteManagementView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get all sites for this circle tenant
-            sites = Site.objects.filter(
+            # Get pagination parameters
+            page = int(request.GET.get('page', 1))
+            page_size = min(int(request.GET.get('page_size', 50)), 200)  # Max 200 per page
+            search = request.GET.get('search', '').strip()
+            status_filter = request.GET.get('status', '').strip()
+            site_type_filter = request.GET.get('site_type', '').strip()
+            cluster_filter = request.GET.get('cluster', '').strip()
+            
+            # Base query with optimized select_related for created_by
+            base_query = Site.objects.filter(
                 tenant=tenant,
                 deleted_at__isnull=True
-            ).order_by('-created_at')
+            ).select_related('created_by')
             
-            # Calculate site statistics
-            total_sites = sites.count()
-            active_sites = sites.filter(status='active').count()
-            inactive_sites = sites.filter(status='inactive').count()
-            maintenance_sites = sites.filter(status='maintenance').count()
+            # Apply filters
+            if search:
+                from django.db.models import Q
+                base_query = base_query.filter(
+                    Q(site_name__icontains=search) |
+                    Q(site_id__icontains=search) |
+                    Q(global_id__icontains=search) |
+                    Q(town__icontains=search) |
+                    Q(cluster__icontains=search)
+                )
             
-            # Site type distribution
-            site_types = {}
-            for site_type, _ in Site.SITE_TYPE:
-                count = sites.filter(site_type=site_type).count()
-                if count > 0:
-                    site_types[site_type] = count
-            
-            # Geographic distribution
-            cities = {}
-            states = {}
-            clusters = {}
-            for site in sites:
-                # City/Town distribution (prioritize town, fallback to city)
-                location = site.town or site.city or 'Unknown'
-                cities[location] = cities.get(location, 0) + 1
+            if status_filter:
+                base_query = base_query.filter(status=status_filter)
                 
-                # State distribution  
-                state = site.state or 'Unknown'
-                states[state] = states.get(state, 0) + 1
+            if site_type_filter:
+                base_query = base_query.filter(site_type=site_type_filter)
                 
-                # Cluster/Zone distribution
-                cluster = site.cluster or 'Default Zone'
-                clusters[cluster] = clusters.get(cluster, 0) + 1
+            if cluster_filter:
+                base_query = base_query.filter(cluster=cluster_filter)
             
-            # Coverage areas (based on geographic spread)
-            coverage_radius = self._calculate_coverage_radius(sites)
-            geographic_center = self._calculate_geographic_center(sites)
+            # Get total count for pagination
+            total_count = base_query.count()
             
-            # Serialize sites data
+            # Calculate pagination
+            offset = (page - 1) * page_size
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            # Get paginated sites
+            sites = base_query.order_by('-created_at')[offset:offset + page_size]
+            
+            # Calculate statistics using database aggregation (much faster than Python loops)
+            from django.db.models import Count, Q
+            statistics_query = Site.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            
+            stats = statistics_query.aggregate(
+                total_sites=Count('id'),
+                active_sites=Count('id', filter=Q(status='active')),
+                inactive_sites=Count('id', filter=Q(status='inactive')),
+                maintenance_sites=Count('id', filter=Q(status='maintenance')),
+                sites_with_coordinates=Count('id', filter=Q(latitude__isnull=False, longitude__isnull=False)),
+                sites_without_coordinates=Count('id', filter=Q(latitude__isnull=True) | Q(longitude__isnull=True))
+            )
+            
+            # Site type distribution using database aggregation
+            site_types = dict(
+                statistics_query.values('site_type')
+                .annotate(count=Count('id'))
+                .values_list('site_type', 'count')
+            )
+            
+            # Geographic distribution using database aggregation (top 10 only)
+            cities = dict(
+                statistics_query.values('town')
+                .annotate(count=Count('id'))
+                .order_by('-count')[:10]
+                .values_list('town', 'count')
+            )
+            
+            states = dict(
+                statistics_query.values('state')
+                .annotate(count=Count('id'))
+                .order_by('-count')
+                .values_list('state', 'count')
+            )
+            
+            clusters = dict(
+                statistics_query.values('cluster')
+                .annotate(count=Count('id'))
+                .order_by('-count')
+                .values_list('cluster', 'count')
+            )
+            
+            # Serialize sites data efficiently
             sites_data = []
             for site in sites:
                 site_data = {
@@ -164,25 +210,22 @@ class CircleSiteManagementView(APIView):
             
             response_data = {
                 'sites': sites_data,
-                'statistics': {
-                    'total_sites': total_sites,
-                    'active_sites': active_sites,
-                    'inactive_sites': inactive_sites,
-                    'maintenance_sites': maintenance_sites,
-                    'sites_with_coordinates': sites.exclude(latitude__isnull=True, longitude__isnull=True).count(),
-                    'sites_without_coordinates': sites.filter(latitude__isnull=True, longitude__isnull=True).count(),
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': total_pages,
+                    'has_next': page < total_pages,
+                    'has_previous': page > 1,
                 },
+                'statistics': stats,
                 'distributions': {
                     'site_types': site_types,
-                    'cities': dict(sorted(cities.items(), key=lambda x: x[1], reverse=True)[:10]),  # Top 10 cities
-                    'states': dict(sorted(states.items(), key=lambda x: x[1], reverse=True)),
-                    'clusters': dict(sorted(clusters.items(), key=lambda x: x[1], reverse=True)),
+                    'cities': cities,  # Already limited to top 10
+                    'states': states,
+                    'clusters': clusters,
                 },
-                'geographic_analysis': {
-                    'coverage_radius_km': coverage_radius,
-                    'geographic_center': geographic_center,
-                    'total_area_covered': self._calculate_coverage_area(sites),
-                },
+                # Geographic analysis removed for performance - now handled by separate endpoint
                 'tenant_info': {
                     'id': str(tenant.id),
                     'organization_name': tenant.organization_name,
@@ -993,7 +1036,7 @@ class SiteClustersView(APIView):
     permission_classes = [IsAuthenticated, IsTenantMember]
     
     def get(self, request):
-        """Get unique clusters for the tenant"""
+        """Get unique clusters for the tenant with optimized query"""
         try:
             tenant = getattr(request, 'tenant', None)
             if not tenant:
@@ -1002,26 +1045,18 @@ class SiteClustersView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Get unique clusters
-            clusters = Site.objects.filter(
+            # Use database aggregation for efficiency with large datasets
+            from django.db.models import Count
+            cluster_data = list(
+                Site.objects.filter(
                 tenant=tenant,
-                deleted_at__isnull=True
-            ).values_list('cluster', flat=True).distinct().order_by('cluster')
-            
-            # Count sites per cluster
-            cluster_data = []
-            for cluster in clusters:
-                if cluster:  # Skip empty clusters
-                    site_count = Site.objects.filter(
-                        tenant=tenant,
-                        cluster=cluster,
-                        deleted_at__isnull=True
-                    ).count()
-                    
-                    cluster_data.append({
-                        'cluster': cluster,
-                        'site_count': site_count
-                    })
+                    deleted_at__isnull=True,
+                    cluster__isnull=False  # Exclude empty clusters
+                )
+                .values('cluster')
+                .annotate(site_count=Count('id'))
+                .order_by('cluster')
+            )
             
             return Response({
                 'clusters': cluster_data,
@@ -1043,7 +1078,7 @@ class SiteTownsView(APIView):
     permission_classes = [IsAuthenticated, IsTenantMember]
     
     def get(self, request):
-        """Get unique towns for the tenant, optionally filtered by cluster"""
+        """Get unique towns for the tenant, optionally filtered by cluster with optimized query and pagination"""
         try:
             tenant = getattr(request, 'tenant', None)
             if not tenant:
@@ -1053,42 +1088,53 @@ class SiteTownsView(APIView):
                 )
             
             cluster_filter = request.GET.get('cluster')
+            page = int(request.GET.get('page', 1))
+            page_size = min(int(request.GET.get('page_size', 100)), 500)  # Max 500 towns per page
             
-            # Base query
-            query = Site.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            # Use database aggregation for efficiency with large datasets
+            from django.db.models import Count
+            query = Site.objects.filter(
+                tenant=tenant, 
+                deleted_at__isnull=True,
+                town__isnull=False  # Exclude empty towns
+            )
             
             # Apply cluster filter if provided
-            if cluster_filter:
+            if cluster_filter and cluster_filter != 'all':
                 query = query.filter(cluster=cluster_filter)
             
-            # Get unique towns
-            towns = query.values_list('town', flat=True).distinct().order_by('town')
+            # Get town data with counts in a single optimized query
+            town_query = (
+                query.values('town')
+                .annotate(site_count=Count('id'))
+                .order_by('town')
+            )
             
-            # Count sites per town
-            town_data = []
-            for town in towns:
-                if town:  # Skip empty towns
-                    site_count_query = Site.objects.filter(
-                        tenant=tenant,
-                        town=town,
-                        deleted_at__isnull=True
-                    )
-                    
-                    # Apply cluster filter for count if provided
-                    if cluster_filter:
-                        site_count_query = site_count_query.filter(cluster=cluster_filter)
-                    
-                    site_count = site_count_query.count()
-                    
-                    town_data.append({
-                        'town': town,
-                        'site_count': site_count,
-                        'cluster': cluster_filter
-                    })
+            # Get total count for pagination
+            total_count = town_query.count()
+            
+            # Apply pagination
+            offset = (page - 1) * page_size
+            total_pages = (total_count + page_size - 1) // page_size
+            
+            town_data = list(town_query[offset:offset + page_size])
+            
+            # Add cluster info to each town if cluster filter is applied
+            if cluster_filter and cluster_filter != 'all':
+                for town in town_data:
+                    town['cluster'] = cluster_filter
             
             return Response({
                 'towns': town_data,
-                'total_towns': len(town_data),
+                'pagination': {
+                    'page': page,
+                    'page_size': page_size,
+                    'total_count': total_count,
+                    'total_pages': total_pages,
+                    'has_next': page < total_pages,
+                    'has_previous': page > 1,
+                },
+                'total_towns': total_count,
                 'cluster_filter': cluster_filter
             }, status=status.HTTP_200_OK)
             
@@ -1342,6 +1388,530 @@ class BulkSiteUploadView(APIView):
                 "error_count": error_count
             },
             "created_sites": created_sites,
-            "errors": errors[:50],  # Limit to first 50 errors
-            "has_more_errors": len(errors) > 50
-        } 
+            "errors": errors,  # Return all errors
+            "has_more_errors": False  # No more errors since we return all
+        }
+
+
+class AsyncBulkSiteUploadView(APIView):
+    """
+    Asynchronous Bulk Site Upload for Large Files
+    Handles uploads with more than 1000 rows using background processing
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
+    def post(self, request):
+        """Start asynchronous bulk upload for large files"""
+        try:
+            logger.info(f"Async bulk upload request received from user {request.user.id}")
+            
+            # Check create permission for bulk upload
+            if not self._check_permission(request.user, "create"):
+                return Response(
+                    {"detail": "You don't have permission to bulk upload sites."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            if 'file' not in request.FILES:
+                return Response(
+                    {"error": "No file uploaded"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            uploaded_file = request.FILES['file']
+            logger.info(f"Processing file: {uploaded_file.name}, size: {uploaded_file.size} bytes")
+            
+            # Check file size and row count
+            try:
+                import pandas as pd
+                if uploaded_file.name.endswith('.xlsx') or uploaded_file.name.endswith('.xls'):
+                    df = pd.read_excel(uploaded_file)
+                elif uploaded_file.name.endswith('.csv'):
+                    df = pd.read_csv(uploaded_file)
+                else:
+                    return Response(
+                        {"error": "Unsupported file format. Please upload Excel (.xlsx, .xls) or CSV (.csv) files."}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                total_rows = len(df)
+                
+                # For small files (< 1000 rows), use synchronous processing
+                if total_rows < 1000:
+                    return Response(
+                        {"error": "File has less than 1000 rows. Use the regular bulk upload endpoint."}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Create bulk upload job
+                from .models import BulkUploadJob
+                job = BulkUploadJob.objects.create(
+                    tenant=tenant,
+                    created_by=request.user,
+                    file_name=uploaded_file.name,
+                    total_rows=total_rows,
+                    status='pending'
+                )
+                
+                # Start background processing in a separate thread
+                import threading
+                thread = threading.Thread(
+                    target=self._process_large_upload_async,
+                    args=(job, df, tenant, request.user)
+                )
+                thread.daemon = True
+                thread.start()
+                
+                return Response({
+                    "message": f"Large file upload started. Processing {total_rows} sites in background.",
+                    "job_id": job.id,
+                    "status": "processing",
+                    "total_rows": total_rows,
+                    "estimated_time": f"~{total_rows // 100} minutes"
+                }, status=status.HTTP_202_ACCEPTED)
+                
+            except Exception as e:
+                logger.error(f"Error processing large upload file: {str(e)}")
+                return Response(
+                    {"error": f"Failed to process file: {str(e)}"}, 
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+            
+        except Exception as e:
+            logger.error(f"Error starting async bulk site upload: {str(e)}")
+            return Response(
+                {"error": "Failed to start upload process"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _process_large_upload_async(self, job, df, tenant, user):
+        """Process large upload asynchronously in chunks"""
+        try:
+            logger.info(f"Starting async processing for job {job.id}, {len(df)} rows")
+            job.status = 'processing'
+            job.started_at = timezone.now()
+            job.detailed_errors = []  # Initialize errors list
+            job.save()
+            
+            # Process in chunks of 100 rows
+            chunk_size = 100
+            total_chunks = (len(df) + chunk_size - 1) // chunk_size
+            logger.info(f"Processing {len(df)} rows in {total_chunks} chunks of {chunk_size}")
+            
+            all_errors = []
+            
+            for chunk_idx in range(total_chunks):
+                start_idx = chunk_idx * chunk_size
+                end_idx = min(start_idx + chunk_size, len(df))
+                chunk_df = df.iloc[start_idx:end_idx]
+                
+                # Process chunk
+                chunk_result = self._process_chunk(chunk_df, tenant, user, start_idx)
+                
+                # Collect errors from this chunk
+                if chunk_result.get('errors'):
+                    all_errors.extend(chunk_result['errors'])
+                
+                # Update job progress
+                job.processed_rows = end_idx
+                job.success_count += chunk_result['success_count']
+                job.error_count += chunk_result['error_count']
+                job.detailed_errors = all_errors  # Store all errors collected so far
+                job.save()
+                
+                # Small delay to prevent overwhelming the database
+                import time
+                time.sleep(0.1)
+            
+            # Mark job as completed
+            job.status = 'completed'
+            job.completed_at = timezone.now()
+            job.save()
+            
+            logger.info(f"Bulk upload job {job.id} completed successfully. {job.success_count} sites created, {job.error_count} errors.")
+            
+        except Exception as e:
+            logger.error(f"Error in async bulk upload job {job.id}: {str(e)}")
+            job.status = 'failed'
+            job.error_message = str(e)
+            job.completed_at = timezone.now()
+            job.save()
+    
+    def _process_chunk(self, chunk_df, tenant, user, start_idx):
+        """Process a chunk of rows"""
+        success_count = 0
+        error_count = 0
+        errors = []
+        
+        for index, row in chunk_df.iterrows():
+            try:
+                # Validate required fields
+                site_id = str(row['site_id']).strip()
+                global_id = str(row['global_id']).strip()
+                site_name = str(row['site_name']).strip()
+                town = str(row['town']).strip()
+                cluster = str(row['cluster']).strip()
+                
+                if not all([site_id, global_id, site_name, town, cluster]):
+                    errors.append({
+                        "row": index + 2,  # +2 for 1-indexed and header row
+                        "error": "Missing required field(s): site_id, global_id, site_name, town, cluster are all required"
+                    })
+                    error_count += 1
+                    continue
+                
+                # Validate coordinates
+                try:
+                    latitude = float(row['latitude'])
+                    longitude = float(row['longitude'])
+                    
+                    if not (-90 <= latitude <= 90):
+                        errors.append({
+                            "row": index + 2,
+                            "error": "Latitude must be between -90 and 90 degrees"
+                        })
+                        error_count += 1
+                        continue
+                    
+                    if not (-180 <= longitude <= 180):
+                        errors.append({
+                            "row": index + 2,
+                            "error": "Longitude must be between -180 and 180 degrees"
+                        })
+                        error_count += 1
+                        continue
+                        
+                except (ValueError, TypeError):
+                    errors.append({
+                        "row": index + 2,
+                        "error": "Invalid latitude or longitude format"
+                    })
+                    error_count += 1
+                    continue
+                
+                # Check for duplicates
+                if Site.objects.filter(tenant=tenant, site_id=site_id, deleted_at__isnull=True).exists():
+                    errors.append({
+                        "row": index + 2,
+                        "error": f"Site ID '{site_id}' already exists in this circle"
+                    })
+                    error_count += 1
+                    continue
+                
+                if Site.objects.filter(tenant=tenant, global_id=global_id, deleted_at__isnull=True).exists():
+                    errors.append({
+                        "row": index + 2,
+                        "error": f"Global ID '{global_id}' already exists in this circle"
+                    })
+                    error_count += 1
+                    continue
+                
+                # Create the site
+                Site.objects.create(
+                    tenant=tenant,
+                    created_by=user,
+                    site_id=site_id,
+                    global_id=global_id,
+                    site_name=site_name,
+                    town=town,
+                    cluster=cluster,
+                    latitude=latitude,
+                    longitude=longitude,
+                    address=str(row.get('address', '')).strip(),
+                    site_type=str(row.get('site_type', 'tower')).strip(),
+                    contact_person=str(row.get('contact_person', '')).strip(),
+                    contact_phone=str(row.get('contact_phone', '')).strip(),
+                    name=site_name,
+                    city=town,
+                    site_code=site_id,
+                    state=str(row.get('state', '')).strip(),
+                    country=str(row.get('country', 'India')).strip(),
+                    postal_code=str(row.get('postal_code', '')).strip(),
+                    description=str(row.get('description', '')).strip(),
+                    contact_email=str(row.get('contact_email', '')).strip(),
+                )
+                
+                success_count += 1
+                
+            except Exception as e:
+                errors.append({
+                    "row": index + 2,
+                    "error": f"Failed to create site: {str(e)}"
+                })
+                error_count += 1
+                logger.error(f"Error creating site in chunk: {str(e)}")
+        
+        return {
+            'success_count': success_count,
+            'error_count': error_count,
+            'errors': errors
+        }
+
+
+class BulkUploadJobStatusView(APIView):
+    """
+    Get status of bulk upload jobs
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def get(self, request, job_id=None):
+        """Get bulk upload job status"""
+        try:
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            from .models import BulkUploadJob
+            
+            if job_id:
+                # Get specific job
+                try:
+                    job = BulkUploadJob.objects.get(id=job_id, tenant=tenant)
+                    return Response({
+                        'job_id': job.id,
+                        'file_name': job.file_name,
+                        'status': job.status,
+                        'total_rows': job.total_rows,
+                        'processed_rows': job.processed_rows,
+                        'success_count': job.success_count,
+                        'error_count': job.error_count,
+                        'progress_percentage': job.progress_percentage,
+                        'started_at': job.started_at,
+                        'completed_at': job.completed_at,
+                        'duration': str(job.duration) if job.duration else None,
+                        'error_message': job.error_message,
+                        'errors': job.detailed_errors or []  # Include detailed errors
+                    })
+                except BulkUploadJob.DoesNotExist:
+                    return Response(
+                        {"error": "Job not found"}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            else:
+                # Get all jobs for tenant
+                jobs = BulkUploadJob.objects.filter(tenant=tenant).order_by('-created_at')[:10]
+                return Response({
+                    'jobs': [{
+                        'job_id': job.id,
+                        'file_name': job.file_name,
+                        'status': job.status,
+                        'total_rows': job.total_rows,
+                        'processed_rows': job.processed_rows,
+                        'progress_percentage': job.progress_percentage,
+                        'created_at': job.created_at,
+                        'completed_at': job.completed_at
+                    } for job in jobs]
+                })
+                
+        except Exception as e:
+            logger.error(f"Error getting bulk upload job status: {str(e)}")
+            return Response(
+                {"error": "Failed to get job status"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class GeographicAnalysisView(APIView):
+    """
+    Geographic Analysis for Sites
+    Provides geographic calculations and analysis on-demand
+    """
+    permission_classes = [IsAuthenticated, IsTenantMember]
+    
+    def _check_permission(self, user, action):
+        """Check if user has specific permission for sites"""
+        try:
+            if not hasattr(user, 'tenant_user_profile'):
+                return False
+                
+            profile = user.tenant_user_profile
+            rbac_service = TenantRBACService(profile.tenant)
+            
+            permissions = rbac_service.get_user_effective_permissions(profile)
+            user_permissions = permissions.get('permissions', {})
+            
+            # Check for specific action permission (exact match)
+            permission_code = f"site.{action}"
+            if permission_code in user_permissions:
+                return True
+            
+            # Check for compound permissions (e.g., site.read_create for create action)
+            for code in user_permissions.keys():
+                if code.startswith('site.'):
+                    # Extract actions from permission code
+                    if '.' in code:
+                        actions_part = code.split('.', 1)[1]  # Get part after 'site.'
+                        if action in actions_part.split('_'):
+                            return True
+            
+            return False
+        except Exception as e:
+            logger.error(f"Error checking permission {action} for user {user.id}: {str(e)}")
+            return False
+    
+    def get(self, request):
+        """Get geographic analysis for the current tenant's sites"""
+        try:
+            # Check read permission
+            if not self._check_permission(request.user, "read"):
+                return Response(
+                    {"detail": "You don't have permission to view site analysis."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+                
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response(
+                    {"error": "Tenant context not found"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Get all sites for this tenant
+            sites = Site.objects.filter(
+                tenant=tenant,
+                deleted_at__isnull=True
+            ).order_by('-created_at')
+            
+            # Calculate geographic analysis
+            coverage_radius = self._calculate_coverage_radius(sites)
+            geographic_center = self._calculate_geographic_center(sites)
+            total_area_covered = self._calculate_coverage_area(sites)
+            
+            # Get GPS statistics
+            sites_with_coords = sites.exclude(latitude__isnull=True, longitude__isnull=True)
+            total_sites = sites.count()
+            sites_with_coordinates = sites_with_coords.count()
+            sites_without_coordinates = total_sites - sites_with_coordinates
+            
+            response_data = {
+                'geographic_analysis': {
+                    'coverage_radius_km': coverage_radius,
+                    'geographic_center': geographic_center,
+                    'total_area_covered': total_area_covered,
+                },
+                'gps_statistics': {
+                    'total_sites': total_sites,
+                    'sites_with_coordinates': sites_with_coordinates,
+                    'sites_without_coordinates': sites_without_coordinates,
+                    'coverage_percentage': round((sites_with_coordinates / total_sites * 100) if total_sites > 0 else 0, 2)
+                }
+            }
+            
+            return Response(response_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"Error calculating geographic analysis: {str(e)}")
+            return Response(
+                {"error": "Failed to calculate geographic analysis"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _calculate_coverage_radius(self, sites):
+        """Calculate the radius of coverage area in kilometers"""
+        sites_with_coords = sites.exclude(latitude__isnull=True, longitude__isnull=True)
+        if sites_with_coords.count() < 2:
+            return 0
+        
+        import math
+        
+        # Find the maximum distance between any two sites
+        max_distance = 0
+        coords = [(float(site.latitude), float(site.longitude)) for site in sites_with_coords]
+        
+        for i, coord1 in enumerate(coords):
+            for coord2 in coords[i+1:]:
+                distance = self._haversine_distance(coord1[0], coord1[1], coord2[0], coord2[1])
+                max_distance = max(max_distance, distance)
+        
+        return round(max_distance / 2, 2)  # Radius is half the maximum distance
+    
+    def _calculate_geographic_center(self, sites):
+        """Calculate the geographic center of all sites"""
+        sites_with_coords = sites.exclude(latitude__isnull=True, longitude__isnull=True)
+        if not sites_with_coords.exists():
+            return None
+        
+        total_lat = sum(float(site.latitude) for site in sites_with_coords)
+        total_lng = sum(float(site.longitude) for site in sites_with_coords)
+        count = sites_with_coords.count()
+        
+        return {
+            'latitude': round(total_lat / count, 6),
+            'longitude': round(total_lng / count, 6)
+        }
+    
+    def _calculate_coverage_area(self, sites):
+        """Calculate approximate coverage area in square kilometers"""
+        sites_with_coords = sites.exclude(latitude__isnull=True, longitude__isnull=True)
+        if sites_with_coords.count() < 3:
+            return 0
+        
+        # Simple bounding box calculation
+        latitudes = [float(site.latitude) for site in sites_with_coords]
+        longitudes = [float(site.longitude) for site in sites_with_coords]
+        
+        lat_range = max(latitudes) - min(latitudes)
+        lng_range = max(longitudes) - min(longitudes)
+        
+        # Approximate area calculation (rough estimate)
+        lat_km = lat_range * 111  # 1 degree latitude ≈ 111 km
+        lng_km = lng_range * 111 * abs(sum(latitudes) / len(latitudes) / 180)  # Adjust for latitude
+        
+        return round(lat_km * lng_km, 2)
+    
+    def _haversine_distance(self, lat1, lon1, lat2, lon2):
+        """Calculate the great circle distance between two points on earth (in kilometers)"""
+        import math
+        
+        # Convert decimal degrees to radians
+        lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+        
+        # Haversine formula
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+        c = 2 * math.asin(math.sqrt(a))
+        r = 6371  # Radius of earth in kilometers
+        
+        return c * r 

@@ -9,16 +9,23 @@ import logging
 from django.db.models import Q, Count, Sum
 from rest_framework.views import APIView
 
-from .models import Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate
+from .models import (
+    Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate,
+    FlowTemplate, FlowInstance, TaskFromFlow, TaskSiteGroup, TaskSubActivity
+)
 from .serializers import (
     TaskSerializer, TaskDetailSerializer, TaskCreateSerializer,
     TaskUpdateSerializer, TaskSiteAssignmentSerializer, TaskTeamAssignmentSerializer,
-    TaskCommentSerializer, TaskTemplateSerializer, TaskStatsSerializer
+    TaskCommentSerializer, TaskTemplateSerializer, TaskStatsSerializer,
+    FlowTemplateCreateSerializer, FlowTemplateUpdateSerializer, FlowTemplateSerializer, 
+    FlowInstanceSerializer, TaskFromFlowSerializer, TaskCreationRequestSerializer
 )
 from core.permissions.tenant_permissions import TenantScopedPermission, TaskPermission, EquipmentVerificationPermission
 from core.pagination import StandardResultsSetPagination, LargeResultsSetPagination
-from .models import FlowTemplate, FlowInstance
-from .serializers import FlowTemplateCreateSerializer, FlowTemplateUpdateSerializer, FlowTemplateSerializer, FlowInstanceSerializer
+from .utils import TaskIDGenerator, TaskCreationValidator
+from django.core.exceptions import ValidationError
+from apps.projects.models import Project
+from apps.sites.models import Site
 
 logger = logging.getLogger(__name__)
 
@@ -826,4 +833,221 @@ class FlowInstanceViewSet(viewsets.ModelViewSet):
     
     def perform_update(self, serializer):
         """Update the flow instance"""
-        serializer.save() 
+        serializer.save()
+
+
+# ============================================================================
+# Task Creation from Flow Template Views
+# ============================================================================
+
+class CreateTaskFromFlowView(APIView):
+    """API view for creating tasks from flow templates"""
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request):
+        """Create tasks from a flow template for specified site groups"""
+        try:
+            # Validate request data
+            serializer = TaskCreationRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response({
+                    'success': False,
+                    'message': 'Invalid request data',
+                    'errors': serializer.errors
+                }, status=400)
+            
+            validated_data = serializer.validated_data
+            flow_template_id = validated_data['flow_template_id']
+            project_id = validated_data['project_id']
+            site_groups = validated_data['site_groups']
+            task_naming = validated_data.get('task_naming', {})
+            
+            # Get tenant context
+            tenant = getattr(request, 'tenant', None)
+            if not tenant:
+                return Response({
+                    'success': False,
+                    'message': 'Tenant context required'
+                }, status=400)
+            
+            # Get flow template
+            try:
+                flow_template = FlowTemplate.objects.get(
+                    id=flow_template_id,
+                    tenant=tenant,
+                    is_active=True
+                )
+            except FlowTemplate.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Flow template not found or inactive'
+                }, status=400)
+            
+            # Get project
+            try:
+                project = Project.objects.get(
+                    id=project_id,
+                    tenant=tenant
+                )
+            except Project.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'message': 'Project not found'
+                }, status=400)
+            
+            # Validate site groups against flow template
+            is_valid, error_msg = TaskCreationValidator.validate_site_groups(
+                site_groups, flow_template
+            )
+            if not is_valid:
+                return Response({
+                    'success': False,
+                    'message': error_msg
+                }, status=400)
+            
+            # Create tasks using transaction
+            with transaction.atomic():
+                created_tasks = []
+                total_sites = 0
+                
+                for site_group in site_groups:
+                    # Create task for this site group
+                    task = self._create_task_from_site_group(
+                        flow_template, project, site_group, task_naming, tenant, request.user
+                    )
+                    created_tasks.append(task)
+                    total_sites += len(site_group['sites'])
+                
+                # Create flow instance for tracking
+                flow_instance = FlowInstance.objects.create(
+                    flow_template=flow_template,
+                    status='PENDING'
+                )
+                
+                # Prepare response data
+                response_data = {
+                    'tasks': TaskFromFlowSerializer(created_tasks, many=True).data,
+                    'flow_instance': {
+                        'id': str(flow_instance.id),
+                        'flow_template': flow_template.name,
+                        'status': flow_instance.status
+                    },
+                    'message': f"Successfully created {len(created_tasks)} tasks",
+                    'created_count': len(created_tasks),
+                    'total_sites': total_sites
+                }
+                
+                return Response({
+                    'success': True,
+                    'data': response_data
+                }, status=201)
+                
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'An error occurred: {str(e)}'
+            }, status=500)
+    
+    def _create_task_from_site_group(self, flow_template, project, site_group, task_naming, tenant, user):
+        """Create a single task from a site group"""
+        # Generate task ID
+        client_task_id = site_group.get('client_task_id')
+        
+        # Validate client ID if provided
+        if client_task_id:
+            is_valid, error_msg = TaskIDGenerator.validate_client_id(client_task_id, tenant)
+            if not is_valid:
+                raise ValidationError(error_msg)
+        
+        # Generate task ID
+        task_id = TaskIDGenerator.generate_task_id(
+            flow_template=flow_template,
+            project=project,
+            client_id=client_task_id,
+            prefix=task_naming.get('auto_id_prefix'),
+            start_number=task_naming.get('auto_id_start'),
+            tenant=tenant
+        )
+        
+        # Create main task
+        task = TaskFromFlow.objects.create(
+            task_id=task_id,
+            client_task_id=client_task_id,
+            is_client_id_provided=bool(client_task_id),
+            task_name=f"{flow_template.name}Task",
+            description=f"Task created from flow template: {flow_template.name}",
+            flow_template=flow_template,
+            project=project,
+            tenant=tenant,
+            created_by=user,
+            status='pending',
+            priority='medium'
+        )
+        
+        # Create site group mappings
+        for i, (alias, site_id) in enumerate(site_group['sites'].items()):
+            # Get the actual site object
+            try:
+                site = Site.objects.get(id=site_id)
+            except Site.DoesNotExist:
+                raise ValidationError(f"Site with ID {site_id} not found")
+            
+            TaskSiteGroup.objects.create(
+                task_from_flow=task,
+                site=site,
+                site_alias=alias,
+                assignment_order=i,
+                is_primary=(i == 0),  # First site is primary
+                role='PRIMARY' if i == 0 else 'SECONDARY'
+            )
+        
+        # Create sub-activities for this task
+        self._create_sub_activities_for_task(task, flow_template, site_group)
+        
+        return task
+    
+    def _create_sub_activities_for_task(self, task, flow_template, site_group):
+        """Create sub-activities for a task based on flow template"""
+        # Get all activities from the flow template
+        template_activities = flow_template.activities.all().order_by('sequence_order')
+        
+        sub_task_counter = 0
+        sub_task_map = {}  # Map template sequence to sub-task ID for dependencies
+        
+        for template_activity in template_activities:
+            # Check which sites this activity is assigned to
+            for flow_site in template_activity.assigned_sites.all():
+                if flow_site.alias in site_group['sites']:
+                    # Get the actual site ID for this alias
+                    actual_site_id = site_group['sites'][flow_site.alias]
+                    
+                    # Create sub-task for this site
+                    sub_task = TaskSubActivity.objects.create(
+                        task_from_flow=task,
+                        flow_activity=template_activity,
+                        sequence_order=sub_task_counter,
+                        activity_type=template_activity.activity_type,
+                        activity_name=template_activity.activity_name,
+                        description=template_activity.description,
+                        assigned_site_id=actual_site_id,
+                        site_alias=flow_site.alias,
+                        dependencies=template_activity.dependencies,  # Keep template dependencies
+                        dependency_scope=template_activity.dependency_scope,
+                        parallel_execution=template_activity.parallel_execution,
+                        status='pending',
+                        progress_percentage=0
+                    )
+                    
+                    # Store mapping for dependency resolution
+                    sub_task_map[template_activity.sequence_order] = sub_task.id
+                    sub_task_counter += 1
+        
+        # Update dependencies to use sub-task IDs instead of template sequence
+        for sub_task in task.sub_activities.all():
+            if sub_task.dependencies:
+                updated_dependencies = []
+                for dep_sequence in sub_task.dependencies:
+                    if dep_sequence in sub_task_map:
+                        updated_dependencies.append(str(sub_task_map[dep_sequence]))
+                sub_task.dependencies = updated_dependencies
+                sub_task.save(update_fields=['dependencies']) 

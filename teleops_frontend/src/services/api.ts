@@ -61,6 +61,9 @@ export const API_ENDPOINTS = {
       LINK: (projectId: string) => `/projects/${projectId}/sites/link/`,
       UNLINK: (projectId: string, linkId: string | number) => `/projects/${projectId}/sites/${linkId}/`,
       IMPORT: (projectId: string) => `/projects/${projectId}/sites/import/`,
+      IMPORT_ASYNC: (projectId: string) => `/projects/${projectId}/sites/import-async/`,
+      IMPORT_JOBS: (projectId: string) => `/projects/${projectId}/sites/import-jobs/`,
+      IMPORT_JOB_DETAIL: (projectId: string, jobId: string | number) => `/projects/${projectId}/sites/import-jobs/${jobId}/`,
       COUNT: (projectId: string) => `/projects/${projectId}/sites/count/`,
     },
     DESIGN: {
@@ -75,6 +78,9 @@ export const API_ENDPOINTS = {
       CREATE_PLAN: (projectId: string) => `/projects/${projectId}/inventory/plan/`,
       SITE_SERIALS: (projectId: string) => `/projects/${projectId}/inventory/site-serials/`,
       DISMANTLE_UPLOAD: (projectId: string, planId?: string | number) => `/projects/${projectId}/inventory/dismantle/upload/${planId ? `?plan_id=${planId}` : ""}`,
+      DISMANTLE_UPLOAD_ASYNC: (projectId: string) => `/projects/${projectId}/inventory/dismantle/upload-async/`,
+      DISMANTLE_UPLOAD_JOBS: (projectId: string) => `/projects/${projectId}/inventory/dismantle/upload-jobs/`,
+      DISMANTLE_UPLOAD_JOB_DETAIL: (projectId: string, jobId: string | number) => `/projects/${projectId}/inventory/dismantle/upload-jobs/${jobId}/`,
       DISMANTLE_TEMPLATE: (projectId: string) => `/projects/${projectId}/inventory/dismantle/template/`,
     },
     VENDORS: {

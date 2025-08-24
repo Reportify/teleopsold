@@ -89,6 +89,11 @@ export interface FlowActivityBuilder {
   notes?: string;
   // Site assignment - can be assigned to specific sites or all sites
   assigned_sites: string[]; // Array of site IDs, empty array means "All sites"
+  // Backend compatibility fields
+  site_scope: "SINGLE" | "MULTIPLE" | "ALL";
+  parallel_execution: boolean;
+  dependency_scope: "SITE_LOCAL" | "CROSS_SITE" | "GLOBAL";
+  site_coordination: boolean;
 }
 
 // UI State for Flow Builder

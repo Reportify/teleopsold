@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Box,
@@ -67,6 +67,83 @@ const ProjectSitesPage: React.FC = () => {
   const [importError, setImportError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<any>(null);
   const [importUploading, setImportUploading] = useState(false);
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  const [jobPollingInterval, setJobPollingInterval] = useState<NodeJS.Timeout | null>(null);
+  const activeJobIdRef = useRef<number | null>(null);
+
+  // Job status polling for async uploads
+  const startJobPolling = (jobId: number) => {
+    console.log(`🚨🚨🚨 Starting job polling for job ${jobId} 🚨🚨🚨`);
+
+    // Stop any existing polling first
+    stopJobPolling();
+
+    setActiveJobId(jobId);
+    activeJobIdRef.current = jobId;
+
+    const interval = setInterval(async () => {
+      try {
+        // Double-check if we should still be polling this job
+        if (activeJobIdRef.current !== jobId) {
+          console.log(`🛑 Job ${jobId} is no longer active, stopping polling`);
+          clearInterval(interval);
+          return;
+        }
+
+        console.log(`🔄 Polling job ${jobId} status...`);
+        const jobStatus = await apiHelpers.get(API_ENDPOINTS.PROJECTS.SITES.IMPORT_JOB_DETAIL(String(id), jobId));
+        console.log(`📊 Job ${jobId} status:`, jobStatus);
+
+        // Update the import result with job status
+        setImportResult(jobStatus);
+
+        // Type assertion for jobStatus to access properties safely
+        const typedJobStatus = jobStatus as any;
+        if (typedJobStatus.status === "completed" || typedJobStatus.status === "failed") {
+          console.log(`🏁 Job ${jobId} finished with status: ${typedJobStatus.status}`);
+          console.log(`🛑 STOPPING POLLING - Job completed!`);
+
+          // Clear the interval immediately
+          clearInterval(interval);
+          setJobPollingInterval(null);
+          setActiveJobId(null);
+          activeJobIdRef.current = null;
+          setImportUploading(false);
+
+          // Refresh data but only once
+          console.log(`🔄 Refreshing data after job completion...`);
+          await loadData();
+          console.log(`✅ Data refresh completed`);
+        }
+      } catch (error) {
+        console.error(`❌ Error polling job ${jobId}:`, error);
+        // Stop polling on error to prevent infinite failed requests
+        clearInterval(interval);
+        setJobPollingInterval(null);
+        setActiveJobId(null);
+        activeJobIdRef.current = null;
+        setImportUploading(false);
+      }
+    }, 3000); // Poll every 3 seconds
+
+    setJobPollingInterval(interval);
+    console.log(`🔄 Job polling started for job ${jobId}, interval ID:`, interval);
+  };
+
+  const stopJobPolling = () => {
+    console.log(`🛑 Stopping job polling`);
+    console.log(`🛑 Current interval:`, jobPollingInterval);
+    console.log(`🛑 Current active job:`, activeJobId);
+
+    if (jobPollingInterval) {
+      clearInterval(jobPollingInterval);
+      setJobPollingInterval(null);
+      console.log(`🛑 Interval cleared`);
+    }
+    setActiveJobId(null);
+    activeJobIdRef.current = null;
+    console.log(`🛑 Job polling stopped completely`);
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -114,6 +191,13 @@ const ProjectSitesPage: React.FC = () => {
   useEffect(() => {
     loadData();
   }, [id]);
+
+  // Cleanup job polling on unmount
+  useEffect(() => {
+    return () => {
+      stopJobPolling();
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     return rows.filter((s) => {
@@ -308,8 +392,47 @@ const ProjectSitesPage: React.FC = () => {
             </Stack>
             {importError && <Alert severity="error">{importError}</Alert>}
             {importResult && (
-              <Alert severity="success">
-                Created Master: {importResult.created_master} | Linked: {importResult.linked} | Skipped: {importResult.skipped}
+              <Alert severity={importResult.status === "completed" ? "success" : importResult.status === "failed" ? "error" : importResult.status === "processing" ? "info" : "success"}>
+                {importResult.job_id ? (
+                  // Async response with job tracking
+                  <Stack spacing={1}>
+                    <Typography variant="subtitle2">
+                      <strong>
+                        {importResult.status === "completed"
+                          ? "Upload Completed!"
+                          : importResult.status === "failed"
+                          ? "Upload Failed!"
+                          : importResult.status === "processing"
+                          ? "Processing Upload..."
+                          : "Upload Started!"}
+                      </strong>
+                    </Typography>
+                    <Typography variant="body2">
+                      Job ID: {importResult.job_id} | Status: {importResult.status || "Processing"}
+                    </Typography>
+                    {importResult.total_rows > 0 && (
+                      <Typography variant="body2">
+                        Progress: {importResult.progress_percentage || 0}% ({importResult.processed_rows || 0} / {importResult.total_rows} rows)
+                      </Typography>
+                    )}
+                    {importResult.status === "completed" && (
+                      <Typography variant="body2">
+                        Created: {importResult.created_count || 0} | Linked: {importResult.linked_count || 0} | Skipped: {importResult.skipped_count || 0} | Errors: {importResult.error_count || 0}
+                      </Typography>
+                    )}
+                    {importResult.message && (
+                      <Typography variant="body2" color="text.secondary">
+                        {importResult.message}
+                      </Typography>
+                    )}
+                    {importResult.status === "processing" && activeJobId && <LinearProgress variant="determinate" value={importResult.progress_percentage || 0} />}
+                  </Stack>
+                ) : (
+                  // Sync response with direct results
+                  <Typography variant="body2">
+                    Created Master: {importResult.created_master || 0} | Linked: {importResult.linked || 0} | Skipped: {importResult.skipped || 0}
+                  </Typography>
+                )}
               </Alert>
             )}
           </Stack>
@@ -322,23 +445,76 @@ const ProjectSitesPage: React.FC = () => {
             startIcon={importUploading ? <CircularProgress size={18} color="inherit" /> : undefined}
             onClick={async () => {
               if (!importFile) return;
+
+              console.log(`🚨🚨🚨 PROJECT SITES MODAL: Upload clicked! 🚨🚨🚨`);
+              console.log(`🚨🚨🚨 File:`, importFile.name, `Size:`, importFile.size);
+
               setImportError(null);
               try {
+                // File size detection (copy from Master Sites logic)
+                const fileSizeMB = importFile.size / (1024 * 1024);
+                const fileSizeKB = importFile.size / 1024;
+
+                // Estimate rows for Excel files
+                let estimatedRows = 0;
+                if (importFile.name.endsWith(".xlsx") || importFile.name.endsWith(".xls")) {
+                  estimatedRows = Math.round(fileSizeKB * 0.8);
+                }
+
+                // Always use async for better progress tracking and user experience
+                const useAsync = true; // Force async for all uploads to show proper progress tracking
+
+                console.log(`🚨🚨🚨 File Analysis:`, {
+                  sizeMB: fileSizeMB.toFixed(2),
+                  estimatedRows,
+                  useAsync,
+                  endpoint: useAsync ? "ASYNC" : "SYNC",
+                });
+
                 const form = new FormData();
                 form.append("file", importFile);
                 setImportUploading(true);
-                const res = await apiHelpers.post<any>(API_ENDPOINTS.PROJECTS.SITES.IMPORT(String(id)), form, {
+
+                // Use appropriate endpoint
+                const endpoint = useAsync ? API_ENDPOINTS.PROJECTS.SITES.IMPORT_ASYNC(String(id)) : API_ENDPOINTS.PROJECTS.SITES.IMPORT(String(id));
+
+                console.log(`🚨🚨🚨 CALLING ENDPOINT:`, endpoint);
+
+                const res = await apiHelpers.post<any>(endpoint, form, {
                   headers: { "Content-Type": "multipart/form-data" },
+                  timeout: useAsync ? 120000 : 60000, // 2 min async, 1 min sync
                 });
+
+                console.log(`🚨🚨🚨 RESPONSE:`, res);
+                console.log(`🚨🚨🚨 RESPONSE STRUCTURE:`, {
+                  hasJobId: !!res.job_id,
+                  jobId: res.job_id,
+                  status: res.status,
+                  message: res.message,
+                  createdMaster: res.created_master,
+                  linked: res.linked,
+                  skipped: res.skipped,
+                  estimatedRows: res.estimated_rows,
+                });
+
                 setImportResult(res);
-                await loadData();
-                // Close modal on success and reset state
-                setOpenImport(false);
-                setImportFile(null);
-                setImportResult(null);
-                setImportUploading(false);
+
+                if (useAsync && res.job_id) {
+                  // Start polling for async jobs
+                  console.log(`🚨🚨🚨 Starting job polling for async upload 🚨🚨🚨`);
+                  startJobPolling(res.job_id);
+                  // Don't close modal for async uploads so user can see progress
+                } else {
+                  // Sync upload completed
+                  await loadData();
+                  setOpenImport(false);
+                  setImportFile(null);
+                  setImportResult(null);
+                  setImportUploading(false);
+                }
               } catch (e: any) {
-                setImportError(e?.message || "Failed to import file");
+                console.error(`🚨🚨🚨 MODAL UPLOAD ERROR:`, e);
+                setImportError(e?.response?.data?.error || e?.message || "Failed to import file");
                 setImportUploading(false);
               }
             }}

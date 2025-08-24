@@ -1,4 +1,4 @@
-// Task Creation Page - Drag & Drop Task Builder
+// Task Creation Page - Flow-Based Task Builder
 import React, { useState, useCallback, useEffect } from "react";
 import {
   Box,
@@ -34,14 +34,84 @@ import {
   AccordionSummary,
   AccordionDetails,
   InputAdornment,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Switch,
+  FormGroup,
+  Tooltip,
 } from "@mui/material";
-import { ArrowBack, DragIndicator, Add, Delete, Edit, LocationOn, Business, People, PlayArrow, CheckCircle, ExpandMore, Warning, Info, Search, FilterList } from "@mui/icons-material";
+import {
+  ArrowBack,
+  DragIndicator,
+  Add,
+  Delete,
+  Edit,
+  LocationOn,
+  Business,
+  People,
+  PlayArrow,
+  CheckCircle,
+  ExpandMore,
+  Warning,
+  Info,
+  Search,
+  FilterList,
+  Preview,
+  Save,
+  Refresh,
+} from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
 import { TaskType, ActivityType, AssignmentType } from "../types/task";
 import { FlowTemplate } from "../types/flow";
 import { FlowService } from "../services/flowService";
 import projectService, { Project } from "../services/projectService";
 import siteService, { ProjectSite, Site } from "../services/siteService";
+
+// New interfaces for flow-based task creation
+interface TaskFromFlowPreview {
+  task_id: string;
+  task_name: string;
+  project_name: string;
+  flow_template_name: string;
+  site_groups: TaskSiteGroupPreview[];
+  sub_activities: TaskSubActivityPreview[];
+}
+
+interface TaskSiteGroupPreview {
+  site_alias: string;
+  site_name: string;
+  site_global_id: string;
+  role: string;
+}
+
+interface TaskSubActivityPreview {
+  sequence_order: number;
+  activity_name: string;
+  activity_type: string;
+  site_alias: string;
+  dependencies: string[];
+  dependency_scope: string;
+  parallel_execution: boolean;
+}
+
+interface SiteGroupConfig {
+  sites: { [alias: string]: number }; // alias -> site_id mapping
+  client_task_id?: string;
+}
+
+interface TaskCreationConfig {
+  flow_template_id: string;
+  project_id: number;
+  site_groups: SiteGroupConfig[];
+  task_naming: {
+    auto_id_prefix?: string;
+    auto_id_start?: number;
+  };
+}
 
 // Activity Templates
 interface ActivityTemplate {
@@ -188,6 +258,18 @@ const TaskCreatePage: React.FC = () => {
   const [siteSearchTerm, setSiteSearchTerm] = useState("");
   const [siteTownFilter, setSiteTownFilter] = useState<string>("all");
   const [siteClusterFilter, setSiteClusterFilter] = useState<string>("all");
+
+  // New state for flow-based task creation
+  const [siteGroups, setSiteGroups] = useState<SiteGroupConfig[]>([]);
+  const [taskNaming, setTaskNaming] = useState({
+    auto_id_prefix: "",
+    auto_id_start: 1,
+  });
+  const [taskPreview, setTaskPreview] = useState<TaskFromFlowPreview[]>([]);
+  const [loadingTaskCreation, setLoadingTaskCreation] = useState(false);
+  const [showTaskPreview, setShowTaskPreview] = useState(false);
+
+  // Legacy task builder state (keeping for compatibility)
   const [taskBuilder, setTaskBuilder] = useState<TaskBuilder>({
     task_name: "",
     task_type: "2G_DISMANTLE",
@@ -205,7 +287,7 @@ const TaskCreatePage: React.FC = () => {
   const [editingActivity, setEditingActivity] = useState<SubActivityBuilder | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
 
-  const steps = ["Project & Basic Info", "Select Flow Template", "Select Sites", "Review & Create"];
+  const steps = ["Project & Basic Info", "Select Flow Template", "Configure Task Creation", "Review & Create"];
 
   // Load popular flow templates
   // Load initial data
@@ -487,6 +569,135 @@ const TaskCreatePage: React.FC = () => {
     }));
   };
 
+  // New functions for flow-based task creation
+  const generateSiteGroups = useCallback(() => {
+    if (!selectedFlowTemplate || !projectSites.length) return;
+
+    // Get required site aliases from flow template
+    const requiredAliases = selectedFlowTemplate.sites?.map((site) => site.alias) || [];
+
+    // Create site groups based on available sites
+    const groups: SiteGroupConfig[] = [];
+
+    // For now, create one group with all sites
+    // In the future, this could be enhanced to create multiple groups
+    const group: SiteGroupConfig = {
+      sites: {},
+    };
+
+    requiredAliases.forEach((alias) => {
+      // Find a site that matches this alias requirement
+      // For now, assign the first available site
+      const availableSite = projectSites.find((site) => !Object.values(group.sites).includes(site.id));
+
+      if (availableSite) {
+        group.sites[alias] = availableSite.id;
+      }
+    });
+
+    if (Object.keys(group.sites).length > 0) {
+      setSiteGroups([group]);
+    }
+  }, [selectedFlowTemplate, projectSites]);
+
+  const handleSiteGroupUpdate = (groupIndex: number, alias: string, siteId: number) => {
+    setSiteGroups((prev) =>
+      prev.map((group, index) => {
+        if (index === groupIndex) {
+          return {
+            ...group,
+            sites: {
+              ...group.sites,
+              [alias]: siteId,
+            },
+          };
+        }
+        return group;
+      })
+    );
+  };
+
+  const handleClientTaskIdChange = (groupIndex: number, clientId: string) => {
+    setSiteGroups((prev) =>
+      prev.map((group, index) => {
+        if (index === groupIndex) {
+          return {
+            ...group,
+            client_task_id: clientId || undefined,
+          };
+        }
+        return group;
+      })
+    );
+  };
+
+  const previewTaskCreation = async () => {
+    if (!selectedFlowTemplate || !siteGroups.length) return;
+
+    setLoadingTaskCreation(true);
+    try {
+      // This would call the backend API to preview task creation
+      // For now, we'll create a mock preview
+      const preview: TaskFromFlowPreview[] = siteGroups.map((group, index) => ({
+        task_id: group.client_task_id || `TASK${taskNaming.auto_id_start + index}`,
+        task_name: `${selectedFlowTemplate.name} Task`,
+        project_name: projects.find((p) => p.id === taskBuilder.project_id)?.name || "",
+        flow_template_name: selectedFlowTemplate.name,
+        site_groups: Object.entries(group.sites).map(([alias, siteId]) => {
+          const site = projectSites.find((s) => s.id === siteId);
+          return {
+            site_alias: alias,
+            site_name: site?.site_details?.site_name || site?.site?.name || "",
+            site_global_id: site?.site_details?.global_id || site?.site?.global_id || "",
+            role: index === 0 ? "PRIMARY" : "SECONDARY",
+          };
+        }),
+        sub_activities:
+          selectedFlowTemplate.activities?.map((activity) => ({
+            sequence_order: activity.sequence_order,
+            activity_name: activity.activity_name,
+            activity_type: activity.activity_type,
+            site_alias: "", // FlowActivity doesn't have assigned_sites in the current type
+            dependencies: activity.dependencies || [],
+            dependency_scope: "SITE_LOCAL", // Default value since FlowActivity doesn't have this
+            parallel_execution: false, // Default value since FlowActivity doesn't have this
+          })) || [],
+      }));
+
+      setTaskPreview(preview);
+      setShowTaskPreview(true);
+    } catch (error) {
+      setApiError("Failed to preview task creation");
+    } finally {
+      setLoadingTaskCreation(false);
+    }
+  };
+
+  const createTasksFromFlow = async () => {
+    if (!selectedFlowTemplate || !siteGroups.length) return;
+
+    setLoadingTaskCreation(true);
+    try {
+      const config: TaskCreationConfig = {
+        flow_template_id: selectedFlowTemplate.id,
+        project_id: taskBuilder.project_id,
+        site_groups: siteGroups,
+        task_naming: taskNaming,
+      };
+
+      // TODO: Call the backend API
+      // const response = await FlowService.createTasksFromFlow(config);
+      console.log("Creating tasks with config:", config);
+
+      // For now, just navigate back
+      navigate("/tasks");
+    } catch (error) {
+      setApiError("Failed to create tasks");
+    } finally {
+      setLoadingTaskCreation(false);
+    }
+  };
+
   const renderStepContent = (step: number) => {
     switch (step) {
       case 0:
@@ -630,12 +841,17 @@ const TaskCreatePage: React.FC = () => {
         return (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Select Sites for this Task
+              Configure Task Creation from Flow Template
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-              Choose which sites will be involved in this task. Use filters and search to find specific sites. Click on any site card to select/deselect it.
+              Configure how tasks will be created from the selected flow template. Each site group will create one main task with activities as sub-tasks.
             </Typography>
-            {!taskBuilder.project_id ? (
+
+            {!selectedFlowTemplate ? (
+              <Alert severity="info" sx={{ mb: 3 }}>
+                Please select a flow template first to configure task creation.
+              </Alert>
+            ) : !taskBuilder.project_id ? (
               <Alert severity="info" sx={{ mb: 3 }}>
                 Please select a project first to view available sites.
               </Alert>
@@ -649,294 +865,136 @@ const TaskCreatePage: React.FC = () => {
               </Alert>
             ) : (
               <Box>
-                {/* Search and Filter Controls */}
-                <Paper elevation={1} sx={{ p: 2, mb: 3 }}>
-                  <Grid container spacing={2} alignItems="center">
-                    <Grid size={{ xs: 12, md: 4 }}>
-                      <TextField
-                        fullWidth
-                        placeholder="Search sites by name, ID, or cluster..."
-                        value={siteSearchTerm}
-                        onChange={(e) => setSiteSearchTerm(e.target.value)}
-                        InputProps={{
-                          startAdornment: (
-                            <InputAdornment position="start">
-                              <Search />
-                            </InputAdornment>
-                          ),
-                        }}
-                      />
+                {/* Flow Template Info */}
+                <Card sx={{ mb: 3, bgcolor: "primary.50" }}>
+                  <CardContent>
+                    <Typography variant="h6" color="primary" gutterBottom>
+                      Flow Template: {selectedFlowTemplate.name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Category: {selectedFlowTemplate.category} • Required Sites: {selectedFlowTemplate.sites?.map((s) => s.alias).join(", ")} • Activities:{" "}
+                      {selectedFlowTemplate.activities?.length || 0}
+                    </Typography>
+                  </CardContent>
+                </Card>
+
+                {/* Task Naming Configuration */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Task Naming Configuration
+                    </Typography>
+                    <Grid container spacing={2}>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          fullWidth
+                          label="Auto-ID Prefix (optional)"
+                          placeholder="e.g., MWD, 2GD"
+                          value={taskNaming.auto_id_prefix}
+                          onChange={(e) => setTaskNaming((prev) => ({ ...prev, auto_id_prefix: e.target.value }))}
+                          helperText="Prefix for auto-generated task IDs"
+                        />
+                      </Grid>
+                      <Grid size={{ xs: 12, md: 6 }}>
+                        <TextField
+                          fullWidth
+                          type="number"
+                          label="Starting Number"
+                          value={taskNaming.auto_id_start}
+                          onChange={(e) => setTaskNaming((prev) => ({ ...prev, auto_id_start: parseInt(e.target.value) || 1 }))}
+                          helperText="Starting number for auto-generated task IDs"
+                        />
+                      </Grid>
                     </Grid>
-                    <Grid size={{ xs: 12, md: 3 }}>
-                      <FormControl fullWidth>
-                        <InputLabel>Town Filter</InputLabel>
-                        <Select
-                          value={siteTownFilter}
-                          onChange={(e) => {
-                            const newTownFilter = e.target.value;
-                            setSiteTownFilter(newTownFilter);
-                            // Reset cluster filter if town filter changes to avoid incompatible combinations
-                            if (newTownFilter !== "all") {
-                              setSiteClusterFilter("all");
-                            }
-                          }}
-                          label="Town Filter"
-                        >
-                          <MenuItem value="all">
-                            All Towns (
-                            {(() => {
-                              // If cluster filter is active, count only sites from that cluster
-                              if (siteClusterFilter !== "all") {
-                                return projectSites.filter((ps) => {
-                                  const siteData = ps.site_details || ps.site;
-                                  if (!siteData) return false;
-                                  const siteCluster = siteData.cluster || siteData.circle || siteData.zone;
-                                  return siteCluster === siteClusterFilter;
-                                }).length;
-                              }
-                              // If no cluster filter, show total sites
-                              return projectSites.length;
-                            })()}
-                            )
-                          </MenuItem>
-                          {Array.from(
-                            new Set(
-                              projectSites
-                                .filter((ps) => {
-                                  // If cluster filter is active, only show towns from that cluster
-                                  if (siteClusterFilter !== "all") {
-                                    const siteData = ps.site_details || ps.site;
-                                    if (!siteData) return false;
-                                    const siteCluster = siteData.cluster || siteData.circle || siteData.zone;
-                                    return siteCluster === siteClusterFilter;
-                                  }
-                                  return true;
-                                })
-                                .map((ps) => (ps.site_details || ps.site)?.town || (ps.site_details || ps.site)?.address)
-                                .filter(Boolean)
-                            )
-                          )
-                            .sort()
-                            .map((town) => {
-                              const count = projectSites.filter((ps) => {
-                                const siteData = ps.site_details || ps.site;
-                                if (!siteData) return false;
-                                const siteTown = siteData.town || siteData.address;
-                                const siteCluster = siteData.cluster || siteData.circle || siteData.zone;
-                                // Count sites that match both town and cluster filter (if active)
-                                const matchesTown = siteTown === town;
-                                const matchesCluster = siteClusterFilter === "all" || siteCluster === siteClusterFilter;
-                                return matchesTown && matchesCluster;
-                              }).length;
-                              return (
-                                <MenuItem key={town} value={town}>
-                                  {town} ({count})
-                                </MenuItem>
-                              );
-                            })}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 3 }}>
-                      <FormControl fullWidth>
-                        <InputLabel>Cluster Filter</InputLabel>
-                        <Select
-                          value={siteClusterFilter}
-                          onChange={(e) => {
-                            const newClusterFilter = e.target.value;
-                            setSiteClusterFilter(newClusterFilter);
-                            // Reset town filter if cluster filter changes to avoid incompatible combinations
-                            if (newClusterFilter !== "all") {
-                              setSiteTownFilter("all");
-                            }
-                          }}
-                          label="Cluster Filter"
-                        >
-                          <MenuItem value="all">
-                            All Clusters (
-                            {(() => {
-                              // If town filter is active, count only sites from that town
-                              if (siteTownFilter !== "all") {
-                                return projectSites.filter((ps) => {
-                                  const siteData = ps.site_details || ps.site;
-                                  if (!siteData) return false;
-                                  const siteTown = siteData.town || siteData.address;
-                                  return siteTown === siteTownFilter;
-                                }).length;
-                              }
-                              // If no town filter, show total sites
-                              return projectSites.length;
-                            })()}
-                            )
-                          </MenuItem>
-                          {Array.from(
-                            new Set(
-                              projectSites
-                                .filter((ps) => {
-                                  // If town filter is active, only show clusters from that town
-                                  if (siteTownFilter !== "all") {
-                                    const siteData = ps.site_details || ps.site;
-                                    if (!siteData) return false;
-                                    const siteTown = siteData.town || siteData.address;
-                                    return siteTown === siteTownFilter;
-                                  }
-                                  return true;
-                                })
-                                .map((ps) => (ps.site_details || ps.site)?.cluster || (ps.site_details || ps.site)?.circle || (ps.site_details || ps.site)?.zone)
-                                .filter(Boolean)
-                            )
-                          )
-                            .sort()
-                            .map((cluster) => {
-                              const count = projectSites.filter((ps) => {
-                                const siteData = ps.site_details || ps.site;
-                                if (!siteData) return false;
-                                const siteCluster = siteData.cluster || siteData.circle || siteData.zone;
-                                const siteTown = siteData.town || siteData.address;
-                                // Count sites that match both cluster and town filter (if active)
-                                const matchesCluster = siteCluster === cluster;
-                                const matchesTown = siteTownFilter === "all" || siteTown === siteTownFilter;
-                                return matchesCluster && matchesTown;
-                              }).length;
-                              return (
-                                <MenuItem key={cluster} value={cluster}>
-                                  {cluster} ({count})
-                                </MenuItem>
-                              );
-                            })}
-                        </Select>
-                      </FormControl>
-                    </Grid>
-                    <Grid size={{ xs: 12, md: 2 }}>
-                      <Button
-                        variant="outlined"
-                        startIcon={<FilterList />}
-                        onClick={() => {
-                          setSiteSearchTerm("");
-                          setSiteTownFilter("all");
-                          setSiteClusterFilter("all");
-                        }}
-                        fullWidth
-                      >
-                        Clear Filters
+                  </CardContent>
+                </Card>
+
+                {/* Site Group Configuration */}
+                <Card sx={{ mb: 3 }}>
+                  <CardContent>
+                    <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                      <Typography variant="h6">Site Group Configuration</Typography>
+                      <Button variant="outlined" startIcon={<Refresh />} onClick={generateSiteGroups} disabled={!selectedFlowTemplate || !projectSites.length}>
+                        Generate Site Groups
                       </Button>
-                    </Grid>
-                  </Grid>
-                </Paper>
+                    </Box>
 
-                {/* Sites Grid - Two Column Layout */}
-                {getFilteredProjectSites().length === 0 ? (
-                  <Alert severity="info" sx={{ mb: 3 }}>
-                    {projectSites.length === 0 ? "No sites found for this project." : "No sites match the current filters."}
-                  </Alert>
-                ) : (
-                  <Grid container spacing={2}>
-                    {getFilteredProjectSites()
-                      .map((projectSite) => {
-                        // Handle both API and mock data structures
-                        const siteData = projectSite.site_details || projectSite.site;
-                        if (!siteData) return null; // Skip if no site data
-
-                        const siteName = siteData.site_name || siteData.name || "";
-                        const globalId = siteData.global_id || siteData.id;
-                        const siteId = siteData.site_id || "";
-                        const cluster = siteData.cluster || siteData.circle || siteData.zone || "N/A";
-                        const role = projectSite.role || (projectSite.is_active ? "primary" : "far_end");
-                        const status = siteData.status || (projectSite.is_active ? "active" : "inactive");
-                        const town = siteData.town || siteData.address || "N/A";
-
-                        return (
-                          <Grid size={{ xs: 12, md: 6 }} key={projectSite.id}>
-                            <Paper
-                              elevation={1}
-                              sx={{
-                                p: 2,
-                                border: taskBuilder.sites.find((s) => s.id === siteData.id.toString())?.selected ? "2px solid #1976d2" : "1px solid #e0e0e0",
-                                borderRadius: 2,
-                                cursor: "pointer",
-                                transition: "all 0.2s ease",
-                                "&:hover": {
-                                  elevation: 3,
-                                  borderColor: "#1976d2",
-                                  backgroundColor: "#fafafa",
-                                },
-                              }}
-                              onClick={() => handleSiteToggle(siteData.id.toString())}
-                            >
-                              <Box sx={{ display: "flex", alignItems: "flex-start", gap: 2 }}>
-                                {/* Checkbox */}
-                                <Checkbox
-                                  checked={taskBuilder.sites.find((s) => s.id === siteData.id.toString())?.selected || false}
-                                  onChange={(e) => {
-                                    e.stopPropagation();
-                                    handleSiteToggle(siteData.id.toString());
-                                  }}
-                                  color="primary"
-                                  sx={{ mt: 0.5 }}
+                    {siteGroups.length === 0 ? (
+                      <Alert severity="info">Click "Generate Site Groups" to automatically configure site assignments based on the flow template requirements.</Alert>
+                    ) : (
+                      siteGroups.map((group, groupIndex) => (
+                        <Accordion key={groupIndex} defaultExpanded sx={{ mb: 2 }}>
+                          <AccordionSummary expandIcon={<ExpandMore />}>
+                            <Typography variant="subtitle1">Site Group {groupIndex + 1}</Typography>
+                          </AccordionSummary>
+                          <AccordionDetails>
+                            <Grid container spacing={2}>
+                              {/* Client Task ID */}
+                              <Grid size={{ xs: 12 }}>
+                                <TextField
+                                  fullWidth
+                                  label="Client Task ID (optional)"
+                                  placeholder="e.g., CLIENT-001"
+                                  value={group.client_task_id || ""}
+                                  onChange={(e) => handleClientTaskIdChange(groupIndex, e.target.value)}
+                                  helperText="Provide a client-specific task ID, or leave blank for auto-generation"
                                 />
+                              </Grid>
 
-                                {/* Site Content */}
-                                <Box sx={{ flex: 1 }}>
-                                  {/* Site Information */}
-                                  <Box sx={{ mb: 1.5 }}>
-                                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 0.5 }}>
-                                      {siteName}
-                                    </Typography>
-                                    <Typography variant="body2" color="text.secondary" sx={{ mb: 0.25 }}>
-                                      ID: {siteId}
-                                    </Typography>
-                                    <Typography variant="body2" color="text.secondary">
-                                      Global: {globalId}
-                                    </Typography>
-                                  </Box>
-                                </Box>
+                              {/* Site Assignments */}
+                              {selectedFlowTemplate.sites?.map((flowSite) => (
+                                <Grid size={{ xs: 12, md: 6 }} key={flowSite.alias}>
+                                  <FormControl fullWidth>
+                                    <InputLabel>{flowSite.alias} Site</InputLabel>
+                                    <Select
+                                      value={group.sites[flowSite.alias] || ""}
+                                      onChange={(e) => handleSiteGroupUpdate(groupIndex, flowSite.alias, e.target.value as number)}
+                                      label={`${flowSite.alias} Site`}
+                                    >
+                                      <MenuItem value="">
+                                        <em>Select a site</em>
+                                      </MenuItem>
+                                      {projectSites.map((projectSite) => {
+                                        const siteData = projectSite.site_details || projectSite.site;
+                                        if (!siteData) return null;
 
-                                {/* Location & GPS Coordinates */}
-                                <Box sx={{ display: "flex", flexDirection: "column", gap: 1, alignItems: "flex-end", minWidth: 120 }}>
-                                  {/* Location */}
-                                  <Box sx={{ textAlign: "right" }}>
-                                    <Box sx={{ display: "flex", alignItems: "center", gap: 1, justifyContent: "flex-end", mb: 0.5 }}>
-                                      <LocationOn color="primary" fontSize="small" />
-                                      <Typography variant="body2" color="text.secondary">
-                                        {town}
-                                      </Typography>
-                                    </Box>
-                                    <Typography variant="body2" color="text.secondary">
-                                      Cluster: {cluster}
-                                    </Typography>
-                                  </Box>
+                                        return (
+                                          <MenuItem key={projectSite.id} value={projectSite.id}>
+                                            <Box>
+                                              <Typography variant="body2">{siteData.site_name || siteData.name || siteData.id}</Typography>
+                                              <Typography variant="caption" color="text.secondary">
+                                                {siteData.global_id || siteData.id} • {siteData.cluster || siteData.circle || "N/A"}
+                                              </Typography>
+                                            </Box>
+                                          </MenuItem>
+                                        );
+                                      })}
+                                    </Select>
+                                  </FormControl>
+                                </Grid>
+                              ))}
+                            </Grid>
+                          </AccordionDetails>
+                        </Accordion>
+                      ))
+                    )}
+                  </CardContent>
+                </Card>
 
-                                  {/* GPS Coordinates */}
-                                  <Box sx={{ textAlign: "right" }}>
-                                    {siteData.latitude && siteData.longitude ? (
-                                      <Typography variant="body2" color="text.secondary">
-                                        {siteData.latitude.toFixed(6)}, {siteData.longitude.toFixed(6)}
-                                      </Typography>
-                                    ) : (
-                                      <Typography variant="body2" color="text.secondary">
-                                        GPS: Not available
-                                      </Typography>
-                                    )}
-                                  </Box>
-                                </Box>
-                              </Box>
-                            </Paper>
-                          </Grid>
-                        );
-                      })
-                      .filter(Boolean)}
-                  </Grid>
-                )}
+                {/* Preview Button */}
+                <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
+                  <Button
+                    variant="contained"
+                    size="large"
+                    startIcon={<Preview />}
+                    onClick={previewTaskCreation}
+                    disabled={!siteGroups.length || siteGroups.some((group) => Object.keys(group.sites).length === 0)}
+                    loading={loadingTaskCreation}
+                  >
+                    Preview Task Creation
+                  </Button>
+                </Box>
               </Box>
-            )}
-            {taskBuilder.sites.filter((s) => s.selected).length > 0 && (
-              <Alert severity="success" sx={{ mt: 2 }}>
-                <strong>{taskBuilder.sites.filter((s) => s.selected).length} site(s) selected</strong> for this task. Sites:{" "}
-                {taskBuilder.sites
-                  .filter((s) => s.selected)
-                  .map((s) => s.site_name)
-                  .join(", ")}
-              </Alert>
             )}
           </Box>
         );
@@ -945,75 +1003,107 @@ const TaskCreatePage: React.FC = () => {
         return (
           <Box>
             <Typography variant="h6" gutterBottom>
-              Review Task Configuration
+              Review & Create Tasks from Flow Template
             </Typography>
-            <Grid container spacing={3}>
-              <Grid size={{ xs: 12, md: 6 }}>
-                <Card sx={{ mb: 2 }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Task Details
-                    </Typography>
-                    <Typography>
-                      <strong>Name:</strong> {taskBuilder.task_name}
-                    </Typography>
-                    <Typography>
-                      <strong>Project:</strong> {taskBuilder.project_name}
-                    </Typography>
-                    <Typography>
-                      <strong>Client:</strong> {taskBuilder.client_name}
-                    </Typography>
-                    <Typography>
-                      <strong>Type:</strong> {taskBuilder.task_type.replace("_", " ")}
-                    </Typography>
-                    <Typography>
-                      <strong>Priority:</strong> {taskBuilder.priority}
-                    </Typography>
-                    <Typography>
-                      <strong>Estimated Duration:</strong> {taskBuilder.estimated_total_hours} hours
-                    </Typography>
-                  </CardContent>
-                </Card>
 
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Selected Sites
-                    </Typography>
-                    {taskBuilder.sites
-                      .filter((s) => s.selected)
-                      .map((site) => (
-                        <Box key={site.id} sx={{ mb: 1 }}>
-                          <Typography variant="body2">
-                            <LocationOn fontSize="small" sx={{ mr: 1, verticalAlign: "middle" }} />
-                            {site.site_name} ({site.site_role})
+            {!selectedFlowTemplate ? (
+              <Alert severity="info">Please select a flow template first to review task creation.</Alert>
+            ) : !siteGroups.length ? (
+              <Alert severity="info">Please configure site groups in the previous step to review task creation.</Alert>
+            ) : (
+              <Grid container spacing={3}>
+                {/* Flow Template Summary */}
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Card sx={{ mb: 2 }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom color="primary">
+                        Flow Template Summary
+                      </Typography>
+                      <Typography>
+                        <strong>Template:</strong> {selectedFlowTemplate.name}
+                      </Typography>
+                      <Typography>
+                        <strong>Category:</strong> {selectedFlowTemplate.category}
+                      </Typography>
+                      <Typography>
+                        <strong>Required Sites:</strong> {selectedFlowTemplate.sites?.map((s) => s.alias).join(", ")}
+                      </Typography>
+                      <Typography>
+                        <strong>Activities:</strong> {selectedFlowTemplate.activities?.length || 0}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                {/* Project Summary */}
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <Card sx={{ mb: 2 }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom color="primary">
+                        Project Summary
+                      </Typography>
+                      <Typography>
+                        <strong>Project:</strong> {projects.find((p) => p.id === taskBuilder.project_id)?.name}
+                      </Typography>
+                      <Typography>
+                        <strong>Client:</strong> {projects.find((p) => p.id === taskBuilder.project_id)?.client_tenant_name || projects.find((p) => p.id === taskBuilder.project_id)?.customer_name}
+                      </Typography>
+                      <Typography>
+                        <strong>Task Naming:</strong> {taskNaming.auto_id_prefix ? `${taskNaming.auto_id_prefix}${taskNaming.auto_id_start}` : "Auto-generated"}
+                      </Typography>
+                    </CardContent>
+                  </Card>
+                </Grid>
+
+                {/* Site Groups Summary */}
+                <Grid size={{ xs: 12 }}>
+                  <Card sx={{ mb: 2 }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom color="primary">
+                        Site Groups Configuration
+                      </Typography>
+                      {siteGroups.map((group, index) => (
+                        <Box key={index} sx={{ mb: 2, p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
+                          <Typography variant="subtitle1" gutterBottom>
+                            Site Group {index + 1}
+                            {group.client_task_id && <Chip label={`Client ID: ${group.client_task_id}`} size="small" color="primary" sx={{ ml: 1 }} />}
                           </Typography>
+                          <Grid container spacing={2}>
+                            {Object.entries(group.sites).map(([alias, siteId]) => {
+                              const site = projectSites.find((s) => s.id === siteId);
+                              const siteData = site?.site_details || site?.site;
+
+                              return (
+                                <Grid size={{ xs: 12, md: 6 }} key={alias}>
+                                  <Typography variant="body2">
+                                    <strong>{alias}:</strong> {siteData?.site_name || siteData?.name || siteData?.id || "Unknown Site"}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {siteData?.global_id || siteData?.id} • {siteData?.cluster || siteData?.circle || "N/A"}
+                                  </Typography>
+                                </Grid>
+                              );
+                            })}
+                          </Grid>
                         </Box>
                       ))}
-                  </CardContent>
-                </Card>
-              </Grid>
+                    </CardContent>
+                  </Card>
+                </Grid>
 
-              <Grid size={{ xs: 12, md: 6 }}>
-                <Card>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>
-                      Workflow Summary
-                    </Typography>
-                    {taskBuilder.sub_activities.map((activity, index) => (
-                      <Box key={activity.id} sx={{ mb: 2, p: 1, border: 1, borderColor: "divider", borderRadius: 1 }}>
-                        <Typography variant="subtitle2">
-                          {index + 1}. {activity.name}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          {activity.activity_type} • {activity.estimated_hours}h • {activity.assignment_type.replace("_", " ")}
-                        </Typography>
-                      </Box>
-                    ))}
-                  </CardContent>
-                </Card>
+                {/* Action Buttons */}
+                <Grid size={{ xs: 12 }}>
+                  <Box sx={{ display: "flex", justifyContent: "center", gap: 2 }}>
+                    <Button variant="outlined" startIcon={<Preview />} onClick={previewTaskCreation} disabled={loadingTaskCreation}>
+                      Preview Tasks
+                    </Button>
+                    <Button variant="contained" size="large" startIcon={<Save />} onClick={createTasksFromFlow} disabled={loadingTaskCreation} loading={loadingTaskCreation}>
+                      Create Tasks from Flow
+                    </Button>
+                  </Box>
+                </Grid>
               </Grid>
-            </Grid>
+            )}
           </Box>
         );
 
@@ -1043,9 +1133,9 @@ const TaskCreatePage: React.FC = () => {
       case 1:
         return selectedFlowTemplate !== null;
       case 2:
-        return taskBuilder.sites.some((s) => s.selected);
+        return siteGroups.length > 0 && siteGroups.every((group) => Object.keys(group.sites).length > 0);
       case 3:
-        return true; // Review step
+        return selectedFlowTemplate !== null && siteGroups.length > 0;
       default:
         return false;
     }
@@ -1175,6 +1265,108 @@ const TaskCreatePage: React.FC = () => {
           <Button onClick={() => setEditDialogOpen(false)}>Cancel</Button>
           <Button variant="contained" onClick={handleSaveActivity}>
             Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Task Preview Dialog */}
+      <Dialog open={showTaskPreview} onClose={() => setShowTaskPreview(false)} maxWidth="lg" fullWidth>
+        <DialogTitle>
+          <Typography variant="h6">Task Creation Preview</Typography>
+          <Typography variant="body2" color="text.secondary">
+            Review the tasks that will be created from the flow template
+          </Typography>
+        </DialogTitle>
+        <DialogContent>
+          {taskPreview.map((task, index) => (
+            <Card key={index} sx={{ mb: 3 }}>
+              <CardContent>
+                <Typography variant="h6" gutterBottom>
+                  {task.task_name} - {task.task_id}
+                </Typography>
+
+                <Grid container spacing={2} sx={{ mb: 2 }}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Project:</strong> {task.project_name}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Flow Template:</strong> {task.flow_template_name}
+                    </Typography>
+                  </Grid>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Site Groups:</strong> {task.site_groups.length}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      <strong>Sub-activities:</strong> {task.sub_activities.length}
+                    </Typography>
+                  </Grid>
+                </Grid>
+
+                {/* Site Groups */}
+                <Typography variant="subtitle2" gutterBottom>
+                  Site Groups:
+                </Typography>
+                <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Alias</TableCell>
+                        <TableCell>Site Name</TableCell>
+                        <TableCell>Global ID</TableCell>
+                        <TableCell>Role</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {task.site_groups.map((siteGroup, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{siteGroup.site_alias}</TableCell>
+                          <TableCell>{siteGroup.site_name}</TableCell>
+                          <TableCell>{siteGroup.site_global_id}</TableCell>
+                          <TableCell>{siteGroup.role}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+
+                {/* Sub-activities */}
+                <Typography variant="subtitle2" gutterBottom>
+                  Sub-activities:
+                </Typography>
+                <TableContainer component={Paper} variant="outlined">
+                  <Table size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>Order</TableCell>
+                        <TableCell>Activity</TableCell>
+                        <TableCell>Type</TableCell>
+                        <TableCell>Site Alias</TableCell>
+                        <TableCell>Dependencies</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {task.sub_activities.map((activity, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>{activity.sequence_order}</TableCell>
+                          <TableCell>{activity.activity_name}</TableCell>
+                          <TableCell>{activity.activity_type}</TableCell>
+                          <TableCell>{activity.site_alias || "All Sites"}</TableCell>
+                          <TableCell>{activity.dependencies.length > 0 ? activity.dependencies.join(", ") : "None"}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              </CardContent>
+            </Card>
+          ))}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowTaskPreview(false)}>Close</Button>
+          <Button variant="contained" onClick={createTasksFromFlow} loading={loadingTaskCreation}>
+            Create Tasks
           </Button>
         </DialogActions>
       </Dialog>

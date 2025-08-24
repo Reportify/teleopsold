@@ -1,4 +1,4 @@
-// Circle Site Management Page for Circle Tenants
+// Site Management Page for Tenants
 import React, { useState, useEffect, useRef } from "react";
 import {
   Box,
@@ -38,6 +38,7 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Pagination,
 } from "@mui/material";
 import {
   Add,
@@ -142,6 +143,13 @@ interface CreateSiteForm {
   contact_phone: string;
 }
 
+interface SiteFilters {
+  search?: string;
+  status?: string;
+  site_type?: string;
+  cluster?: string;
+}
+
 const SitesPage: React.FC = () => {
   const { getCurrentTenant } = useAuth();
   const { darkMode } = useDarkMode();
@@ -212,32 +220,127 @@ const SitesPage: React.FC = () => {
   const [clusters, setClusters] = useState<Array<{ cluster: string; site_count: number }>>([]);
   const [towns, setTowns] = useState<Array<{ town: string; site_count: number }>>([]);
   const [clusterFilter, setClusterFilter] = useState("all");
+  const [geographicAnalysisLoading, setGeographicAnalysisLoading] = useState(false);
+  const [jobStatusInterval, setJobStatusInterval] = useState<NodeJS.Timeout | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollingTimeout, setPollingTimeout] = useState<NodeJS.Timeout | null>(null);
+  const activeJobIdRef = useRef<number | null>(null);
+  const pollCountRef = useRef<number>(0);
+
+  // Add CSS animation for spinning loader
+  React.useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
+  // Debug loading state changes
+  React.useEffect(() => {
+    console.log("🔒 Loading state changed to:", loading);
+  }, [loading]);
 
   // Ref to track if loading is in progress
   const loadingSitesRef = useRef(false);
   const loadingClustersRef = useRef(false);
   const loadingTownsRef = useRef(false);
 
-  // Load circle sites with deduplication
-  const loadCircleSites = async () => {
+  // Pagination state with caching
+  const [pagination, setPagination] = useState({
+    page: 1,
+    page_size: 50,
+    total_count: 0,
+    total_pages: 0,
+    has_next: false,
+    has_previous: false,
+  });
+
+  // Cache for paginated site data
+  const [cachedPages, setCachedPages] = useState<{
+    [key: string]: CircleSite[];
+  }>({});
+
+  // Current filter signature for cache invalidation
+  const [currentFilters, setCurrentFilters] = useState<SiteFilters>({});
+
+  // Generate cache key for filters + page combination
+  const getCacheKey = (page: number, filters: SiteFilters) => {
+    return `page_${page}_${JSON.stringify(filters)}`;
+  };
+
+  // Check if filters have changed (for cache invalidation)
+  const filtersChanged = (newFilters: SiteFilters) => {
+    return JSON.stringify(newFilters) !== JSON.stringify(currentFilters);
+  };
+
+  // Load circle sites with pagination and caching
+  const loadCircleSites = async (page = 1, filters: SiteFilters = {}, forceRefresh = false) => {
     if (loadingSitesRef.current) {
       console.log("🚫 Sites already loading, skipping...");
       return;
     }
 
+    // Check if filters changed - if so, clear cache
+    if (filtersChanged(filters)) {
+      console.log("🔄 Filters changed, clearing cache");
+      setCachedPages({});
+      setCurrentFilters(filters);
+    }
+
+    // Check cache first (unless forcing refresh)
+    const cacheKey = getCacheKey(page, filters);
+    if (!forceRefresh && cachedPages[cacheKey]) {
+      console.log("✅ Loading from cache:", { page, cacheKey });
+      setSites(cachedPages[cacheKey]);
+      setPagination((prev) => ({ ...prev, page }));
+      return; // No API call needed!
+    }
+
     try {
       loadingSitesRef.current = true;
       setLoading(true);
-      console.log("🔄 Loading sites data...");
+      console.log("🌐 Loading sites from API...", { page, filters });
 
-      const response = await api.get("/sites/");
+      // Build query parameters
+      const params = new URLSearchParams();
+      params.append("page", page.toString());
+      params.append("page_size", "50"); // Fixed page size
+
+      // Add filters if provided
+      if (filters.search) params.append("search", filters.search);
+      if (filters.status && filters.status !== "all") params.append("status", filters.status);
+      if (filters.site_type && filters.site_type !== "all") params.append("site_type", filters.site_type);
+      if (filters.cluster && filters.cluster !== "all") params.append("cluster", filters.cluster);
+
+      // Use a longer timeout for sites data loading, especially after bulk uploads
+      const response = await api.get(`/sites/?${params.toString()}`, {
+        timeout: 30000, // 30 seconds timeout (reduced from 90s since we're using pagination)
+      });
 
       if (response.data) {
-        setSites(response.data.sites || []);
+        const sitesData = response.data.sites || [];
+
+        // Update current page display
+        setSites(sitesData);
         setStatistics(response.data.statistics || {});
         setDistributions(response.data.distributions || {});
-        setGeographicAnalysis(response.data.geographic_analysis || {});
-        console.log("✅ Sites data loaded successfully:", response.data.sites?.length, "sites");
+        setPagination(response.data.pagination || {});
+
+        // Cache the loaded page
+        setCachedPages((prev) => ({
+          ...prev,
+          [cacheKey]: sitesData,
+        }));
+
+        console.log("✅ Sites data loaded successfully:", sitesData.length, "sites on page", page, "(cached)");
       }
     } catch (error: any) {
       console.error("❌ Error loading circle sites:", error);
@@ -265,7 +368,9 @@ const SitesPage: React.FC = () => {
     try {
       loadingClustersRef.current = true;
       console.log("🔄 Loading clusters data...");
-      const response = await api.get("/sites/clusters/");
+      const response = await api.get("/sites/clusters/", {
+        timeout: 15000, // 15 seconds timeout for clusters
+      });
       if (response.data) {
         setClusters(response.data.clusters || []);
         console.log("✅ Clusters loaded:", response.data.clusters?.length, "clusters");
@@ -277,7 +382,206 @@ const SitesPage: React.FC = () => {
     }
   };
 
-  // Load towns for filtering (optionally filtered by cluster)
+  // Check job status for large uploads
+  const checkJobStatus = async (jobId: number) => {
+    // Increment poll count
+    pollCountRef.current += 1;
+    console.log(`🔍 Checking job status for job ${jobId} (poll #${pollCountRef.current}, isPolling: ${isPolling})`);
+    console.log(`📊 Current uploadResults:`, uploadResults);
+
+    // Check if this is still the active job
+    if (activeJobIdRef.current !== jobId) {
+      console.log("🛑 Job ID mismatch, stopping polling for this job");
+      return;
+    }
+
+    // Safety check: stop if we've polled too many times
+    if (pollCountRef.current > 100) {
+      console.log("🛑 Maximum poll count reached, stopping automatically");
+      stopJobStatusPolling();
+      return;
+    }
+
+    try {
+      const response = await api.get(`/sites/bulk-upload-jobs/${jobId}/`);
+
+      if (response.data) {
+        const jobData = response.data;
+
+        // Update upload results with current job status
+        // Calculate progress percentage if not provided by backend
+        const calculatedProgress = jobData.progress_percentage || (jobData.total_rows > 0 ? Math.round((jobData.processed_rows / jobData.total_rows) * 100) : 0);
+
+        setUploadResults((prev: any) => ({
+          ...prev,
+          message: `Processing: ${jobData.processed_rows}/${jobData.total_rows} rows completed`,
+          summary: {
+            total_rows: jobData.total_rows,
+            success_count: jobData.success_count,
+            error_count: jobData.error_count,
+          },
+          status: jobData.status,
+          progress_percentage: calculatedProgress,
+        }));
+
+        // If job is completed, stop polling and refresh sites data
+        if (jobData.status === "completed") {
+          console.log("✅ Job completed, stopping polling");
+          stopJobStatusPolling();
+
+          // Show completion message first
+          setUploadResults((prev: any) => ({
+            ...prev,
+            message: `Upload completed! ${jobData.success_count} sites created, ${jobData.error_count} errors.`,
+            status: "completed",
+            errors: jobData.errors || [], // Include errors from backend
+          }));
+
+          // Set loading to false when async job completes
+          setLoading(false);
+
+          // Wait a moment for backend to finish processing, then refresh sites
+          setTimeout(async () => {
+            try {
+              console.log("🔄 Refreshing sites data after bulk upload completion...");
+              const filters: SiteFilters = {
+                search: searchTerm,
+                status: statusFilter,
+                site_type: siteTypeFilter,
+                cluster: clusterFilter,
+              };
+              // Clear cache since new data was uploaded
+              setCachedPages({});
+              await loadCircleSites(pagination.page, filters, true); // Force refresh after bulk upload
+            } catch (error) {
+              console.error("❌ Error refreshing sites after bulk upload:", error);
+              // Don't fail the upload completion - just log the error
+            }
+          }, 2000); // Wait 2 seconds for backend to finish
+
+          // Only auto-close dialog if there are NO errors
+          if (jobData.error_count === 0) {
+            setTimeout(() => {
+              setBulkUploadDialogOpen(false);
+              setUploadFile(null);
+              setUploadResults(null);
+            }, 5000); // Increased to 5 seconds to allow sites refresh
+          }
+          // If there are errors, keep dialog open so user can view them
+        } else if (jobData.status === "failed") {
+          console.log("❌ Job failed, stopping polling");
+          stopJobStatusPolling();
+          setUploadResults((prev: any) => ({
+            ...prev,
+            message: `Upload failed: ${jobData.error_message}`,
+            status: "failed",
+          }));
+
+          // Set loading to false when async job fails
+          setLoading(false);
+        }
+      }
+    } catch (error) {
+      console.error("Error checking job status:", error);
+      // On error, stop polling to prevent infinite retries
+      stopJobStatusPolling();
+      // Set loading to false on error
+      setLoading(false);
+    }
+  };
+
+  // Stop job status polling
+  const stopJobStatusPolling = () => {
+    console.log("🛑 Stopping job status polling");
+    if (jobStatusInterval) {
+      clearInterval(jobStatusInterval);
+      setJobStatusInterval(null);
+    }
+    if (pollingTimeout) {
+      clearTimeout(pollingTimeout);
+      setPollingTimeout(null);
+    }
+    setIsPolling(false);
+    activeJobIdRef.current = null;
+    pollCountRef.current = 0;
+  };
+
+  // Start job status polling
+  const startJobStatusPolling = (jobId: number) => {
+    console.log(`🚀 Starting job status polling for job ${jobId}`);
+
+    // Clear any existing interval
+    if (jobStatusInterval) {
+      clearInterval(jobStatusInterval);
+    }
+
+    // Set polling flag and active job ID
+    setIsPolling(true);
+    activeJobIdRef.current = jobId;
+
+    // Start polling every 5 seconds
+    const interval = setInterval(() => {
+      // Only poll if this is still the active job
+      if (activeJobIdRef.current === jobId) {
+        checkJobStatus(jobId);
+      } else {
+        console.log("🛑 Polling stopped for inactive job");
+        clearInterval(interval);
+      }
+    }, 5000);
+    setJobStatusInterval(interval);
+
+    // Set a timeout to stop polling after 30 minutes (safety measure)
+    const timeout = setTimeout(() => {
+      console.log("⏰ Polling timeout reached, stopping automatically");
+      stopJobStatusPolling();
+    }, 30 * 60 * 1000); // 30 minutes
+    setPollingTimeout(timeout);
+
+    // Check immediately - but use a small delay to ensure state is updated
+    setTimeout(() => {
+      console.log("🔍 Making first immediate check for job status...");
+      checkJobStatus(jobId);
+    }, 100);
+  };
+
+  // Load geographic analysis on-demand
+  const loadGeographicAnalysis = async () => {
+    if (geographicAnalysisLoading) {
+      console.log("🚫 Geographic analysis already loading, skipping...");
+      return;
+    }
+
+    try {
+      setGeographicAnalysisLoading(true);
+      console.log("🔄 Loading geographic analysis...");
+
+      const response = await api.get("/sites/geographic-analysis/");
+
+      if (response.data) {
+        setGeographicAnalysis(response.data.geographic_analysis || {});
+        // Update statistics with GPS data
+        setStatistics((prev) => ({
+          ...prev,
+          sites_with_coordinates: response.data.gps_statistics?.sites_with_coordinates || 0,
+          sites_without_coordinates: response.data.gps_statistics?.sites_without_coordinates || 0,
+        }));
+        console.log("✅ Geographic analysis loaded successfully");
+      }
+    } catch (error: any) {
+      console.error("❌ Error loading geographic analysis:", error);
+      // Don't fail silently - provide user feedback
+      if (error?.response?.status === 403) {
+        console.error("Permission denied - check authentication");
+      } else if (error?.response?.status === 500) {
+        console.error("Server error - backend issue");
+      }
+    } finally {
+      setGeographicAnalysisLoading(false);
+    }
+  };
+
+  // Load towns for filtering (optionally filtered by cluster) with pagination
   const loadTowns = async (cluster?: string) => {
     if (loadingTownsRef.current) {
       console.log("🚫 Towns already loading, skipping...");
@@ -286,12 +590,25 @@ const SitesPage: React.FC = () => {
 
     try {
       loadingTownsRef.current = true;
-      const url = cluster && cluster !== "all" ? `/sites/towns/?cluster=${encodeURIComponent(cluster)}` : "/sites/towns/";
-      console.log("🔄 Loading towns data...", cluster ? `for cluster: ${cluster}` : "all towns");
-      const response = await api.get(url);
+
+      // Build URL with pagination parameters (load only first 100 towns for dropdown)
+      const params = new URLSearchParams();
+      params.append("page", "1");
+      params.append("page_size", "100"); // Limit to first 100 towns for dropdown
+      if (cluster && cluster !== "all") {
+        params.append("cluster", cluster);
+      }
+
+      const url = `/sites/towns/?${params.toString()}`;
+      console.log("🔄 Loading towns data...", cluster ? `for cluster: ${cluster}` : "all towns", "(first 100)");
+
+      const response = await api.get(url, {
+        timeout: 15000, // 15 seconds timeout for towns
+      });
+
       if (response.data) {
         setTowns(response.data.towns || []);
-        console.log("✅ Towns loaded:", response.data.towns?.length, "towns");
+        console.log("✅ Towns loaded:", response.data.towns?.length, "towns", response.data.pagination ? `(page 1 of ${response.data.pagination.total_pages})` : "");
       }
     } catch (error) {
       console.error("❌ Error loading towns:", error);
@@ -358,7 +675,7 @@ const SitesPage: React.FC = () => {
 
     const loadData = async () => {
       try {
-        if (isMounted) await loadCircleSites();
+        if (isMounted) await loadCircleSites(1); // Load first page
         if (isMounted) await loadClusters();
         if (isMounted) await loadTowns();
       } catch (error) {
@@ -378,8 +695,35 @@ const SitesPage: React.FC = () => {
       loadingSitesRef.current = false;
       loadingClustersRef.current = false;
       loadingTownsRef.current = false;
+      // Cleanup job status interval
+      if (jobStatusInterval) {
+        clearInterval(jobStatusInterval);
+      }
+      // Cleanup polling timeout
+      if (pollingTimeout) {
+        clearTimeout(pollingTimeout);
+      }
+      // Stop polling if active
+      if (isPolling) {
+        setIsPolling(false);
+      }
     };
   }, []);
+
+  // Handle filter changes with debouncing
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      const filters: SiteFilters = {
+        search: searchTerm,
+        status: statusFilter,
+        site_type: siteTypeFilter,
+        cluster: clusterFilter,
+      };
+      loadCircleSites(1, filters); // Reset to page 1 when filters change
+    }, 500); // 500ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, statusFilter, siteTypeFilter, clusterFilter]);
 
   // Update towns when cluster filter changes (with debounce)
   useEffect(() => {
@@ -428,7 +772,15 @@ const SitesPage: React.FC = () => {
       setCreateDialogOpen(false);
 
       // Reload sites
-      await loadCircleSites();
+      const filters: SiteFilters = {
+        search: searchTerm,
+        status: statusFilter,
+        site_type: siteTypeFilter,
+        cluster: clusterFilter,
+      };
+      // Clear cache since new site was created
+      setCachedPages({});
+      await loadCircleSites(pagination.page, filters, true); // Force refresh after create
     } catch (error: any) {
       console.error("Error creating site:", error);
       // Handle error display
@@ -447,30 +799,95 @@ const SitesPage: React.FC = () => {
       const formData = new FormData();
       formData.append("file", uploadFile);
 
-      const response = await api.post("/sites/bulk-upload/", formData, {
+      // Check file size and estimate row count for large files
+      const fileSizeMB = uploadFile.size / (1024 * 1024);
+
+      // For Excel files, estimate row count based on file size
+      // Excel files are typically ~1KB per row, so estimate rows from file size
+      let estimatedRows = 0;
+      if (uploadFile.name.endsWith(".xlsx") || uploadFile.name.endsWith(".xls")) {
+        estimatedRows = Math.round((uploadFile.size / 1024) * 0.8); // Estimate 0.8 rows per KB
+      }
+
+      // Use async endpoint for files > 1MB OR estimated > 500 rows OR > 100KB (conservative approach)
+      const isLargeFile = fileSizeMB > 1 || estimatedRows > 500 || uploadFile.size > 100 * 1024;
+
+      // Use appropriate endpoint based on file size and estimated rows
+      const endpoint = isLargeFile ? "/sites/bulk-upload-async/" : "/sites/bulk-upload/";
+
+      console.log(`📤 Uploading ${uploadFile.name} (${fileSizeMB.toFixed(2)}MB, ~${estimatedRows} estimated rows) using ${isLargeFile ? "async" : "sync"} endpoint`);
+      console.log(`📊 File details:`, {
+        name: uploadFile.name,
+        size: uploadFile.size,
+        sizeMB: fileSizeMB,
+        estimatedRows: estimatedRows,
+        isLargeFile: isLargeFile,
+        endpoint: endpoint,
+      });
+
+      const response = await api.post(endpoint, formData, {
         headers: {
           "Content-Type": "multipart/form-data",
         },
       });
 
-      setUploadResults(response.data);
-      await loadCircleSites(); // Refresh data
+      if (isLargeFile && response.status === 202) {
+        console.log("🔄 Async job started, setting initial state...");
+        console.log("🔒 Loading state before setting results:", loading);
 
-      // Auto-close dialog if upload was completely successful (no errors)
-      if (response.data && !response.data.error && response.data.summary?.error_count === 0) {
-        // Show success message briefly, then close dialog
-        setTimeout(() => {
-          setBulkUploadDialogOpen(false);
-          setUploadFile(null);
-          setUploadResults(null);
-        }, 2000); // Close after 2 seconds to let user see success message
+        // Large file - show job tracking
+        const initialResults = {
+          message: `Starting bulk upload of ${response.data.total_rows} sites...`,
+          job_id: response.data.job_id,
+          status: "processing",
+          summary: {
+            total_rows: response.data.total_rows,
+            success_count: 0,
+            error_count: 0,
+          },
+          isAsyncJob: true,
+        };
+
+        console.log("📝 Setting initial upload results:", initialResults);
+        setUploadResults(initialResults);
+
+        // Start polling for job status immediately
+        startJobStatusPolling(response.data.job_id);
+
+        // Keep loading state active for async jobs - don't set loading to false here
+        // Loading will be set to false when the job completes in checkJobStatus
+        console.log("🔒 Loading state after setting results (should still be true):", loading);
+      } else {
+        // Small file - show immediate results
+        setUploadResults(response.data);
+        const filters: SiteFilters = {
+          search: searchTerm,
+          status: statusFilter,
+          site_type: siteTypeFilter,
+          cluster: clusterFilter,
+        };
+        // Clear cache since new data was uploaded
+        setCachedPages({});
+        await loadCircleSites(pagination.page, filters, true); // Force refresh after upload
+
+        // Auto-close dialog only if upload was completely successful (no errors)
+        if (response.data && !response.data.error && response.data.summary?.error_count === 0) {
+          setTimeout(() => {
+            setBulkUploadDialogOpen(false);
+            setUploadFile(null);
+            setUploadResults(null);
+          }, 2000);
+        }
+        // If there are errors, keep dialog open so user can view them
+
+        // Only set loading to false for small files
+        setLoading(false);
       }
     } catch (error: any) {
       console.error("Error uploading file:", error);
       setUploadResults({
         error: error.response?.data?.error || "Upload failed",
       });
-    } finally {
       setLoading(false);
     }
   };
@@ -479,28 +896,30 @@ const SitesPage: React.FC = () => {
   const handleDeleteSite = async (siteId: number) => {
     try {
       await api.delete(`/sites/${siteId}/`);
-      await loadCircleSites(); // Refresh data
+      const filters: SiteFilters = {
+        search: searchTerm,
+        status: statusFilter,
+        site_type: siteTypeFilter,
+        cluster: clusterFilter,
+      };
+      // Clear cache since site was deleted
+      setCachedPages({});
+      await loadCircleSites(pagination.page, filters, true); // Force refresh after delete
     } catch (error) {
       console.error("Error deleting site:", error);
     }
   };
 
-  // Filter sites based on search and filters
-  const filteredSites = sites.filter((site) => {
-    const matchesSearch =
-      site.site_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      site.site_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      site.global_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      site.town.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      site.cluster.toLowerCase().includes(searchTerm.toLowerCase());
-
-    const matchesStatus = statusFilter === "all" || site.status === statusFilter;
-    const matchesSiteType = siteTypeFilter === "all" || site.site_type === siteTypeFilter;
-    const matchesCluster = clusterFilter === "all" || site.cluster === clusterFilter;
-    const matchesLocation = locationFilter === "all" || site.state === locationFilter || site.town === locationFilter;
-
-    return matchesSearch && matchesStatus && matchesSiteType && matchesCluster && matchesLocation;
-  });
+  // Handle pagination
+  const handlePageChange = (newPage: number) => {
+    const filters: SiteFilters = {
+      search: searchTerm,
+      status: statusFilter,
+      site_type: siteTypeFilter,
+      cluster: clusterFilter,
+    };
+    loadCircleSites(newPage, filters);
+  };
 
   // Helper functions
   const getStatusColor = (status: string) => {
@@ -546,10 +965,10 @@ const SitesPage: React.FC = () => {
         <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
           <Box>
             <Typography variant="h4" sx={{ fontWeight: 600, mb: 1 }}>
-              Circle Site Management
+              Site Management
             </Typography>
             <Typography variant="body2" color="text.secondary">
-              Master site data for {currentTenant?.organization_name} - {currentTenant?.circle_name}
+              Master site data for {currentTenant?.organization_name}
             </Typography>
           </Box>
           <Stack direction="row" spacing={2}>
@@ -583,26 +1002,29 @@ const SitesPage: React.FC = () => {
 
         {/* Statistics Cards */}
         <Grid container spacing={3} sx={{ mb: 4 }}>
-          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <StatsCard title="Total Sites" value={statistics.total_sites} subtitle={`${statistics.active_sites} active`} icon={Business} color="primary" />
           </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <StatsCard title="Active Sites" value={statistics.active_sites} subtitle="Currently operational" icon={CheckCircle} color="success" />
           </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
+          <Grid size={{ xs: 12, sm: 6, md: 4 }}>
             <StatsCard title="GPS Coordinates" value={statistics.sites_with_coordinates} subtitle={`${statistics.sites_without_coordinates} missing`} icon={GpsFixed} color="info" />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
-            <StatsCard title="Coverage Radius" value={`${geographicAnalysis.coverage_radius_km}km`} subtitle="Geographic spread" icon={TravelExplore} color="secondary" />
-          </Grid>
-          <Grid size={{ xs: 12, sm: 6, md: 2 }}>
-            <StatsCard title="Coverage Area" value={`${geographicAnalysis.total_area_covered}km²`} subtitle="Approximate area" icon={Map} color="warning" />
           </Grid>
         </Grid>
 
         {/* Tabs */}
         <Card sx={{ mb: 3 }}>
-          <Tabs value={activeTab} onChange={(e, newValue) => setActiveTab(newValue)}>
+          <Tabs
+            value={activeTab}
+            onChange={(e, newValue) => {
+              setActiveTab(newValue);
+              // Load geographic analysis when Geographic Analysis tab is clicked
+              if (newValue === 1) {
+                loadGeographicAnalysis();
+              }
+            }}
+          >
             <Tab label="Site Directory" />
             <Tab label="Geographic Analysis" />
             <Tab label="Distribution Analytics" />
@@ -669,6 +1091,11 @@ const SitesPage: React.FC = () => {
                       <InputLabel>Town</InputLabel>
                       <Select value={locationFilter} onChange={(e) => setLocationFilter(e.target.value)} label="Town">
                         <MenuItem value="all">All Towns</MenuItem>
+                        {towns.length > 0 && (
+                          <MenuItem disabled sx={{ fontSize: "0.75rem", fontStyle: "italic" }}>
+                            Showing first {towns.length} towns
+                          </MenuItem>
+                        )}
                         {towns.map((town) => (
                           <MenuItem key={town.town} value={town.town}>
                             {town.town} ({town.site_count})
@@ -678,7 +1105,20 @@ const SitesPage: React.FC = () => {
                     </FormControl>
                   </Grid>
                   <Grid size={{ xs: 12, md: 2 }}>
-                    <Button fullWidth variant="outlined" startIcon={<Refresh />} onClick={loadCircleSites}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      startIcon={<Refresh />}
+                      onClick={() => {
+                        const filters: SiteFilters = {
+                          search: searchTerm,
+                          status: statusFilter,
+                          site_type: siteTypeFilter,
+                          cluster: clusterFilter,
+                        };
+                        loadCircleSites(pagination.page, filters, true); // Force refresh
+                      }}
+                    >
                       Refresh
                     </Button>
                   </Grid>
@@ -704,7 +1144,7 @@ const SitesPage: React.FC = () => {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {filteredSites.map((site) => (
+                      {sites.map((site) => (
                         <TableRow key={site.id} hover>
                           <TableCell>
                             <Box>
@@ -779,7 +1219,7 @@ const SitesPage: React.FC = () => {
                           </TableCell>
                         </TableRow>
                       ))}
-                      {filteredSites.length === 0 && (
+                      {sites.length === 0 && !loading && (
                         <TableRow>
                           <TableCell colSpan={6} align="center" sx={{ py: 4 }}>
                             <Typography variant="body2" color="text.secondary">
@@ -791,6 +1231,23 @@ const SitesPage: React.FC = () => {
                     </TableBody>
                   </Table>
                 </TableContainer>
+
+                {/* Pagination Controls */}
+                {pagination.total_count > 0 && (
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mt: 2 }}>
+                    <Box>
+                      <Typography variant="body2" color="text.secondary">
+                        Showing {(pagination.page - 1) * pagination.page_size + 1} to {Math.min(pagination.page * pagination.page_size, pagination.total_count)} of {pagination.total_count} sites
+                      </Typography>
+                      {Object.keys(cachedPages).length > 0 && (
+                        <Typography variant="caption" color="success.main" sx={{ display: "block", mt: 0.5 }}>
+                          📄 {Object.keys(cachedPages).length} page(s) cached for faster navigation
+                        </Typography>
+                      )}
+                    </Box>
+                    <Pagination count={pagination.total_pages} page={pagination.page} onChange={(e, page) => handlePageChange(page)} color="primary" size="medium" showFirstButton showLastButton />
+                  </Box>
+                )}
               </CardContent>
             </Card>
           </>
@@ -799,79 +1256,104 @@ const SitesPage: React.FC = () => {
         {activeTab === 1 && (
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 3 }}>
-                Geographic Analysis
-              </Typography>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
+                <Typography variant="h6">Geographic Analysis</Typography>
+                <Button variant="outlined" size="small" startIcon={<Refresh />} onClick={loadGeographicAnalysis} disabled={geographicAnalysisLoading}>
+                  {geographicAnalysisLoading ? "Loading..." : "Refresh Analysis"}
+                </Button>
+              </Box>
 
-              <Grid container spacing={3}>
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <Paper sx={{ p: 3 }}>
-                    <Typography variant="subtitle1" sx={{ mb: 2, display: "flex", alignItems: "center" }}>
-                      <MyLocation sx={{ mr: 1 }} />
-                      Coverage Metrics
+              {geographicAnalysisLoading ? (
+                <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
+                  <Stack spacing={2} alignItems="center">
+                    <LinearProgress sx={{ width: 200 }} />
+                    <Typography variant="body2" color="text.secondary">
+                      Calculating geographic analysis...
                     </Typography>
-                    <Stack spacing={2}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography variant="body2">Coverage Radius:</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {geographicAnalysis.coverage_radius_km} km
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography variant="body2">Total Area:</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {geographicAnalysis.total_area_covered} km²
-                        </Typography>
-                      </Box>
-                      {geographicAnalysis.geographic_center && (
-                        <>
-                          <Divider />
+                  </Stack>
+                </Box>
+              ) : Object.keys(geographicAnalysis).length === 0 ? (
+                <Box sx={{ display: "flex", justifyContent: "center", p: 4 }}>
+                  <Stack spacing={2} alignItems="center">
+                    <Typography variant="body2" color="text.secondary">
+                      Click "Refresh Analysis" to load geographic data
+                    </Typography>
+                    <Button variant="contained" size="small" onClick={loadGeographicAnalysis}>
+                      Load Analysis
+                    </Button>
+                  </Stack>
+                </Box>
+              ) : (
+                <Grid container spacing={3}>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper sx={{ p: 3 }}>
+                      <Typography variant="subtitle1" sx={{ mb: 2, display: "flex", alignItems: "center" }}>
+                        <MyLocation sx={{ mr: 1 }} />
+                        Coverage Metrics
+                      </Typography>
+                      <Stack spacing={2}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2">Coverage Radius:</Typography>
                           <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            Geographic Center:
+                            {geographicAnalysis.coverage_radius_km} km
                           </Typography>
-                          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                            <Typography variant="body2">Latitude:</Typography>
-                            <Typography variant="body2">{geographicAnalysis.geographic_center.latitude.toFixed(6)}</Typography>
-                          </Box>
-                          <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                            <Typography variant="body2">Longitude:</Typography>
-                            <Typography variant="body2">{geographicAnalysis.geographic_center.longitude.toFixed(6)}</Typography>
-                          </Box>
-                        </>
-                      )}
-                    </Stack>
-                  </Paper>
-                </Grid>
+                        </Box>
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2">Total Area:</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {geographicAnalysis.total_area_covered} km²
+                          </Typography>
+                        </Box>
+                        {geographicAnalysis.geographic_center && (
+                          <>
+                            <Divider />
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                              Geographic Center:
+                            </Typography>
+                            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                              <Typography variant="body2">Latitude:</Typography>
+                              <Typography variant="body2">{geographicAnalysis.geographic_center.latitude.toFixed(6)}</Typography>
+                            </Box>
+                            <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                              <Typography variant="body2">Longitude:</Typography>
+                              <Typography variant="body2">{geographicAnalysis.geographic_center.longitude.toFixed(6)}</Typography>
+                            </Box>
+                          </>
+                        )}
+                      </Stack>
+                    </Paper>
+                  </Grid>
 
-                <Grid size={{ xs: 12, md: 6 }}>
-                  <Paper sx={{ p: 3 }}>
-                    <Typography variant="subtitle1" sx={{ mb: 2, display: "flex", alignItems: "center" }}>
-                      <GpsFixed sx={{ mr: 1 }} />
-                      GPS Data Quality
-                    </Typography>
-                    <Stack spacing={2}>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography variant="body2">Sites with GPS:</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {statistics.sites_with_coordinates} / {statistics.total_sites}
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography variant="body2">Coverage %:</Typography>
-                        <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                          {statistics.total_sites > 0 ? Math.round((statistics.sites_with_coordinates / statistics.total_sites) * 100) : 0}%
-                        </Typography>
-                      </Box>
-                      <Box sx={{ display: "flex", justifyContent: "space-between" }}>
-                        <Typography variant="body2">Missing GPS:</Typography>
-                        <Typography variant="body2" color="error" sx={{ fontWeight: 600 }}>
-                          {statistics.sites_without_coordinates}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                  </Paper>
+                  <Grid size={{ xs: 12, md: 6 }}>
+                    <Paper sx={{ p: 3 }}>
+                      <Typography variant="subtitle1" sx={{ mb: 2, display: "flex", alignItems: "center" }}>
+                        <GpsFixed sx={{ mr: 1 }} />
+                        GPS Data Quality
+                      </Typography>
+                      <Stack spacing={2}>
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2">Sites with GPS:</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {statistics.sites_with_coordinates} / {statistics.total_sites}
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2">Coverage %:</Typography>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {statistics.total_sites > 0 ? Math.round((statistics.sites_with_coordinates / statistics.total_sites) * 100) : 0}%
+                          </Typography>
+                        </Box>
+                        <Box sx={{ display: "flex", justifyContent: "space-between" }}>
+                          <Typography variant="body2">Missing GPS:</Typography>
+                          <Typography variant="body2" color="error" sx={{ fontWeight: 600 }}>
+                            {statistics.sites_without_coordinates}
+                          </Typography>
+                        </Box>
+                      </Stack>
+                    </Paper>
+                  </Grid>
                 </Grid>
-              </Grid>
+              )}
             </CardContent>
           </Card>
         )}
@@ -1212,7 +1694,71 @@ const SitesPage: React.FC = () => {
                 <Box sx={{ mt: 2 }}>
                   {uploadResults.error ? (
                     <Alert severity="error">{uploadResults.error}</Alert>
+                  ) : uploadResults.isAsyncJob ? (
+                    // Large file upload with progress tracking
+                    <Alert severity="info">
+                      <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+                        {uploadResults.status === "processing" && (
+                          <Box
+                            sx={{
+                              width: 20,
+                              height: 20,
+                              border: "2px solid #1976d2",
+                              borderTop: "2px solid transparent",
+                              borderRadius: "50%",
+                              animation: "spin 1s linear infinite",
+                              mr: 1,
+                            }}
+                          />
+                        )}
+                        <Typography variant="subtitle2">{uploadResults.message}</Typography>
+                      </Box>
+
+                      {uploadResults.status === "processing" && (
+                        <>
+                          <LinearProgress
+                            variant="determinate"
+                            value={uploadResults.progress_percentage || 0}
+                            sx={{
+                              mb: 1,
+                              height: 8,
+                              borderRadius: 4,
+                              "& .MuiLinearProgress-bar": {
+                                borderRadius: 4,
+                              },
+                            }}
+                          />
+                          <Typography variant="caption" color="text.secondary">
+                            Progress: {uploadResults.progress_percentage || 0}% ({uploadResults.summary?.success_count + uploadResults.summary?.error_count}/{uploadResults.summary?.total_rows} rows
+                            processed)
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                            Processing in background... This may take a few minutes for large files.
+                          </Typography>
+                        </>
+                      )}
+
+                      {uploadResults.status === "completed" && (
+                        <Box>
+                          <Typography variant="body2" color="success.main">
+                            ✅ {uploadResults.message}
+                          </Typography>
+                          {uploadResults.summary?.error_count > 0 && (
+                            <Typography variant="caption" color="warning.main" sx={{ display: "block", mt: 1 }}>
+                              ⚠️ Upload completed with {uploadResults.summary.error_count} errors. Please review the errors below.
+                            </Typography>
+                          )}
+                        </Box>
+                      )}
+
+                      {uploadResults.status === "failed" && (
+                        <Typography variant="body2" color="error.main">
+                          ❌ {uploadResults.message}
+                        </Typography>
+                      )}
+                    </Alert>
                   ) : (
+                    // Small file upload with immediate results
                     <Alert severity={uploadResults.summary?.error_count === 0 ? "success" : "warning"}>
                       {uploadResults.summary?.error_count === 0 ? (
                         <>
@@ -1232,24 +1778,30 @@ const SitesPage: React.FC = () => {
                     </Alert>
                   )}
 
-                  {uploadResults.errors && uploadResults.errors.length > 0 && (
+                  {/* Show errors section for both sync and async uploads */}
+                  {((uploadResults.errors && uploadResults.errors.length > 0) || uploadResults.summary?.error_count > 0) && (
                     <Accordion sx={{ mt: 2 }}>
                       <AccordionSummary expandIcon={<ExpandMore />}>
-                        <Typography>View Errors ({uploadResults.errors.length})</Typography>
+                        <Typography>View Errors ({uploadResults.errors?.length || uploadResults.summary?.error_count || 0})</Typography>
                       </AccordionSummary>
                       <AccordionDetails>
-                        <Stack spacing={1}>
-                          {uploadResults.errors.slice(0, 10).map((error: any, index: number) => (
-                            <Typography key={index} variant="body2" color="error">
-                              Row {error.row}: {error.error}
-                            </Typography>
-                          ))}
-                          {uploadResults.errors.length > 10 && (
-                            <Typography variant="caption" color="text.secondary">
-                              ... and {uploadResults.errors.length - 10} more errors
-                            </Typography>
-                          )}
-                        </Stack>
+                        <Box sx={{ maxHeight: 400, overflow: "auto" }}>
+                          <Stack spacing={1}>
+                            {uploadResults.errors && uploadResults.errors.length > 0 ? (
+                              uploadResults.errors.map((error: any, index: number) => (
+                                <Typography key={index} variant="body2" color="error">
+                                  Row {error.row}: {error.error}
+                                </Typography>
+                              ))
+                            ) : (
+                              <Typography variant="body2" color="text.secondary">
+                                {uploadResults.summary?.error_count > 0
+                                  ? `${uploadResults.summary.error_count} errors occurred during upload. Detailed error information is not available.`
+                                  : "No detailed error information available."}
+                              </Typography>
+                            )}
+                          </Stack>
+                        </Box>
                       </AccordionDetails>
                     </Accordion>
                   )}
@@ -1260,16 +1812,23 @@ const SitesPage: React.FC = () => {
           <DialogActions>
             <Button
               onClick={() => {
+                // Stop any active polling when dialog is closed
+                if (isPolling) {
+                  console.log("🛑 Dialog closed, stopping polling");
+                  stopJobStatusPolling();
+                }
                 setBulkUploadDialogOpen(false);
                 setUploadFile(null);
                 setUploadResults(null);
               }}
             >
-              Cancel
+              {uploadResults?.status === "completed" && uploadResults?.summary?.error_count > 0 ? "Close" : "Cancel"}
             </Button>
-            <Button onClick={handleBulkUpload} variant="contained" disabled={!uploadFile || loading}>
-              {loading ? "Uploading..." : "Upload"}
-            </Button>
+            {(!uploadResults || uploadResults.status === "failed" || (!uploadResults.isAsyncJob && uploadResults.status !== "completed")) && (
+              <Button onClick={handleBulkUpload} variant="contained" disabled={!uploadFile || loading}>
+                {loading && uploadResults?.isAsyncJob ? "Processing..." : loading ? "Uploading..." : "Upload"}
+              </Button>
+            )}
           </DialogActions>
         </Dialog>
       </Box>

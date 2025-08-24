@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   Box,
@@ -27,8 +27,11 @@ import {
   ToggleButton,
   InputAdornment,
   IconButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
 } from "@mui/material";
-import { Add, CloudUpload, Refresh, Download, PlaceOutlined, SortByAlpha, FormatListNumbered, ExpandLess, ExpandMore, ContentCopy, Search } from "@mui/icons-material";
+import { Add, CloudUpload, Refresh, Download, PlaceOutlined, SortByAlpha, FormatListNumbered, ExpandLess, ExpandMore, ContentCopy, Search, ExpandMore as ExpandMoreIcon } from "@mui/icons-material";
 import { API_ENDPOINTS, apiHelpers } from "../services/api";
 
 interface SerialRow {
@@ -42,6 +45,31 @@ interface SerialRow {
   site_id_business?: string;
 }
 
+interface UploadResult {
+  // Sync upload result
+  plan_id?: number;
+  created?: number;
+  skipped?: number;
+  errors?: Array<{ row: number; error: string }>;
+  has_more_errors?: boolean;
+
+  // Async upload result
+  job_id?: number;
+  status?: string;
+  message?: string;
+  estimated_rows?: number;
+  file_name?: string;
+  total_rows?: number;
+  processed_rows?: number;
+  progress_percentage?: number;
+  created_count?: number;
+  skipped_count?: number;
+  error_count?: number;
+  error_message?: string;
+  detailed_errors?: Array<{ row?: number; error?: string; message?: string; [key: string]: any }>;
+  duration?: string;
+}
+
 const ProjectInventoryPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -53,7 +81,18 @@ const ProjectInventoryPage: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<any>(null);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+
+  // Async processing states
+  const [isAsyncUpload, setIsAsyncUpload] = useState(false);
+  const [jobId, setJobId] = useState<number | null>(null);
+  const [isPolling, setIsPolling] = useState(false);
+  const [jobStatusInterval, setJobStatusInterval] = useState<NodeJS.Timeout | null>(null);
+  const [pollingTimeout, setPollingTimeout] = useState<NodeJS.Timeout | null>(null);
+
+  // Refs for stable polling
+  const activeJobIdRef = useRef<number | null>(null);
+  const pollCountRef = useRef<number>(0);
   const [siteSort, setSiteSort] = useState<"alpha" | "qty">("alpha");
   const [expandedRadio, setExpandedRadio] = useState(true);
   const [expandedDug, setExpandedDug] = useState(true);
@@ -138,6 +177,255 @@ const ProjectInventoryPage: React.FC = () => {
     });
     return groups;
   }, [selectedSite, bySite]);
+
+  // Add CSS for custom spinner
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      if (document.head.contains(style)) {
+        document.head.removeChild(style);
+      }
+    };
+  }, []);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopJobStatusPolling();
+    };
+  }, []);
+
+  // Intelligent file size detection and upload selection
+  const handleBulkUpload = async () => {
+    if (!file || !id) return;
+
+    console.log(`🚨🚨🚨 PROJECT INVENTORY: Upload clicked! 🚨🚨🚨`);
+    console.log(`🚨🚨🚨 File:`, file.name, `Size:`, file.size);
+
+    setUploading(true);
+    setError(null);
+    setUploadResult(null);
+
+    try {
+      // Check file size and estimate row count for large files
+      const fileSizeMB = file.size / (1024 * 1024);
+      const fileSizeKB = file.size / 1024;
+
+      // For Excel files, estimate row count based on file size
+      // Excel files are typically ~1KB per row, so estimate rows from file size
+      let estimatedRows = 0;
+      if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
+        estimatedRows = Math.round(fileSizeKB * 0.8); // Estimate 0.8 rows per KB
+      }
+
+      // Always use async for better progress tracking and user experience
+      // TEMPORARY: Use sync for now due to backend 500 error on async endpoint
+      const useAsync = false; // TODO: Fix backend async endpoint and re-enable
+      console.log(`⚠️ TEMPORARY: Using sync endpoint due to backend async issues`);
+
+      console.log(`🚨🚨🚨 File Analysis:`, {
+        sizeMB: fileSizeMB.toFixed(2),
+        estimatedRows,
+        useAsync,
+        endpoint: useAsync ? "ASYNC" : "SYNC",
+      });
+
+      setIsAsyncUpload(useAsync);
+
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // Use appropriate endpoint
+      const endpoint = useAsync ? API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD_ASYNC(String(id)) : API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD(String(id));
+
+      console.log(`🚨🚨🚨 CALLING ENDPOINT:`, endpoint);
+
+      const res = await apiHelpers.post<UploadResult>(endpoint, formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: useAsync ? 120000 : 60000, // 2 min async, 1 min sync
+      });
+
+      console.log(`🚨🚨🚨 RESPONSE:`, res);
+      console.log(`🚨🚨🚨 RESPONSE STRUCTURE:`, {
+        hasJobId: !!res.job_id,
+        jobId: res.job_id,
+        status: res.status,
+        message: res.message,
+        created: res.created,
+        skipped: res.skipped,
+        estimatedRows: res.estimated_rows,
+      });
+
+      setUploadResult(res);
+
+      if (useAsync && res.job_id) {
+        // Start polling for async jobs
+        console.log(`🚨🚨🚨 Starting job polling for async upload 🚨🚨🚨`);
+        startJobStatusPolling(res.job_id);
+        // Don't close modal for async uploads so user can see progress
+      } else {
+        // Sync upload completed
+        await load();
+        setUploading(false);
+      }
+    } catch (e: any) {
+      console.error("🚨🚨🚨 INVENTORY IMPORT FAILED 🚨🚨🚨");
+      console.error("🚨🚨🚨 Error Object:", e);
+      console.error("🚨🚨🚨 Error Response:", e?.response);
+      console.error("🚨🚨🚨 Error Message:", e?.message);
+
+      // Better error message handling
+      let errorMessage = "Upload failed";
+      if (e?.response?.status === 500) {
+        errorMessage = "🚨 Server error occurred during async upload. The backend may need attention. Please contact support.";
+        console.error("🚨🚨🚨 500 ERROR: Backend async endpoint failed");
+      } else if (e?.response?.data?.error) {
+        errorMessage = e.response.data.error;
+      } else if (e?.response?.data?.detail) {
+        errorMessage = e.response.data.detail;
+      } else if (e?.message) {
+        errorMessage = e.message;
+      } else if (e?.code === "ECONNABORTED") {
+        errorMessage = "Upload timed out. The file may be too large. Please try again or contact support.";
+      }
+
+      setError(errorMessage);
+      setUploading(false);
+    }
+  };
+
+  // Start polling for job status
+  const startJobStatusPolling = (jobId: number) => {
+    console.log(`🔄 Starting polling for inventory job ${jobId}`);
+
+    // Clear any existing intervals
+    stopJobStatusPolling();
+
+    setIsPolling(true);
+    activeJobIdRef.current = jobId;
+    pollCountRef.current = 0;
+
+    // Start polling with a slight delay to ensure React state updates
+    setTimeout(() => {
+      checkJobStatus(jobId);
+    }, 100);
+
+    const interval = setInterval(() => {
+      checkJobStatus(jobId);
+    }, 2000); // Poll every 2 seconds
+
+    setJobStatusInterval(interval);
+
+    // Set a 30-minute timeout for safety
+    const timeout = setTimeout(() => {
+      console.log("⚠️ Inventory job polling timed out after 30 minutes");
+      stopJobStatusPolling();
+      setError("Upload timed out. Please check the status manually.");
+    }, 30 * 60 * 1000); // 30 minutes
+
+    setPollingTimeout(timeout);
+  };
+
+  // Stop polling
+  const stopJobStatusPolling = () => {
+    console.log("🛑 Stopping inventory job polling");
+
+    if (jobStatusInterval) {
+      clearInterval(jobStatusInterval);
+      setJobStatusInterval(null);
+    }
+
+    if (pollingTimeout) {
+      clearTimeout(pollingTimeout);
+      setPollingTimeout(null);
+    }
+
+    setIsPolling(false);
+    activeJobIdRef.current = null;
+    pollCountRef.current = 0;
+  };
+
+  // Check job status
+  const checkJobStatus = async (jobId: number) => {
+    // Prevent stale calls
+    if (activeJobIdRef.current !== jobId) {
+      console.log(`🚫 Skipping stale job status check for job ${jobId}`);
+      return;
+    }
+
+    try {
+      pollCountRef.current += 1;
+
+      // Safety check for excessive polling
+      if (pollCountRef.current > 100) {
+        console.log("⚠️ Stopping inventory job polling after 100 attempts");
+        stopJobStatusPolling();
+        setError("Polling limit reached. Please refresh to check status.");
+        return;
+      }
+
+      const jobData = await apiHelpers.get<UploadResult>(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD_JOB_DETAIL(String(id), jobId));
+
+      console.log(`📊 Inventory Job ${jobId} status: ${jobData.status} (${jobData.progress_percentage || 0}%)`);
+
+      // Enhanced logging for debugging
+      if (jobData.status === "failed") {
+        console.error(`🚨🚨🚨 INVENTORY JOB FAILED 🚨🚨🚨`);
+        console.error(`🚨 Job ID: ${jobId}`);
+        console.error(`🚨 Error Message:`, jobData.error_message);
+        console.error(`🚨 Message:`, jobData.message);
+        console.error(`🚨 Error Count:`, jobData.error_count);
+        console.error(`🚨 Detailed Errors:`, jobData.detailed_errors);
+        console.error(`🚨 Full Job Data:`, jobData);
+      }
+
+      setUploadResult((prev: any) => ({
+        ...prev,
+        ...jobData,
+        // Add fallback progress calculation
+        progress_percentage: jobData.progress_percentage || (jobData.total_rows ? Math.round(((jobData.processed_rows || 0) / jobData.total_rows) * 100) : 0),
+      }));
+
+      if (jobData.status === "completed" || jobData.status === "failed") {
+        console.log(`🏁 Inventory Job ${jobId} finished with status: ${jobData.status}`);
+
+        if (jobData.status === "failed") {
+          console.log(`🔍 Failure Analysis:`);
+          console.log(`   - Total Rows: ${jobData.total_rows}`);
+          console.log(`   - Processed Rows: ${jobData.processed_rows}`);
+          console.log(`   - Created Count: ${jobData.created_count}`);
+          console.log(`   - Error Count: ${jobData.error_count}`);
+          console.log(`   - Duration: ${jobData.duration}`);
+        }
+
+        stopJobStatusPolling();
+        setUploading(false);
+
+        if (jobData.status === "completed" && jobData.error_count === 0) {
+          // Auto-close dialog after successful async upload with no errors
+          setTimeout(() => {
+            setOpenImport(false);
+            setFile(null);
+            setUploadResult(null);
+          }, 3000);
+        }
+
+        await load(); // Refresh data
+      }
+    } catch (error) {
+      console.error("❌ Error checking inventory job status:", error);
+      stopJobStatusPolling();
+      setError("Failed to check upload status");
+      setUploading(false);
+    }
+  };
 
   return (
     <Box sx={{ p: 3 }}>
@@ -351,7 +639,21 @@ const ProjectInventoryPage: React.FC = () => {
       </Grid>
 
       {/* Bulk Upload Modal */}
-      <Dialog open={openImport} onClose={() => setOpenImport(false)} fullWidth maxWidth="sm">
+      <Dialog
+        open={openImport}
+        onClose={() => {
+          if (isPolling) {
+            stopJobStatusPolling();
+          }
+          setOpenImport(false);
+          setFile(null);
+          setUploadResult(null);
+          setError(null);
+        }}
+        fullWidth
+        maxWidth="md"
+        disableEscapeKeyDown={uploading}
+      >
         <DialogTitle>Upload Dismantle Plan</DialogTitle>
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
@@ -359,63 +661,291 @@ const ProjectInventoryPage: React.FC = () => {
               Excel/CSV with columns: Site ID, Radio, Radio Serial, DXU, DXU Serial
             </Typography>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
-              <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} disabled={uploading} />
             </Stack>
-            {error && <Alert severity="error">{error}</Alert>}
-            {summary && (
-              <Alert severity={summary?.errors && summary.errors.length ? "warning" : "success"}>
-                Created: {summary.created} | Skipped: {summary.skipped}
-                {summary?.errors && summary.errors.length > 0 && (
+
+            {/* Progress Indicator */}
+            {uploading && (
+              <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  {isAsyncUpload ? "Processing Large File..." : "Uploading..."}
+                </Typography>
+                {isAsyncUpload && (
+                  <Typography variant="body2" color="info.main" sx={{ mb: 1 }}>
+                    ⚡ Large file detected - using background processing to prevent timeouts
+                  </Typography>
+                )}
+
+                {uploadResult?.status === "processing" && (
                   <>
-                    <br />
-                    First errors:
-                    <ul style={{ marginTop: 4 }}>
-                      {summary.errors.slice(0, 5).map((e: any, idx: number) => (
-                        <li key={idx}>
-                          Row {e.row}: {e.error}
-                        </li>
-                      ))}
-                    </ul>
+                    <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+                      <Box
+                        sx={{
+                          width: 20,
+                          height: 20,
+                          border: "2px solid #1976d2",
+                          borderTop: "2px solid transparent",
+                          borderRadius: "50%",
+                          animation: "spin 1s linear infinite",
+                          mr: 1,
+                        }}
+                      />
+                      <Typography variant="subtitle2">{uploadResult.message || "Processing in background..."}</Typography>
+                    </Box>
+
+                    <LinearProgress
+                      variant={uploadResult.progress_percentage ? "determinate" : "indeterminate"}
+                      value={uploadResult.progress_percentage || 0}
+                      sx={{
+                        mb: 1,
+                        height: 8,
+                        borderRadius: 4,
+                        "& .MuiLinearProgress-bar": {
+                          borderRadius: 4,
+                        },
+                      }}
+                    />
+
+                    <Typography variant="caption" color="text.secondary">
+                      {uploadResult.progress_percentage
+                        ? `Progress: ${uploadResult.progress_percentage}% (${uploadResult.processed_rows || 0}/${uploadResult.total_rows || 0} rows processed)`
+                        : "Processing in background..."}
+                    </Typography>
+
+                    <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.5 }}>
+                      Processing in background... This may take a few minutes for large files.
+                    </Typography>
                   </>
                 )}
-              </Alert>
+
+                {!uploadResult?.progress_percentage && (
+                  <>
+                    <Box
+                      sx={{
+                        display: "inline-block",
+                        width: 16,
+                        height: 16,
+                        border: "2px solid #f3f3f3",
+                        borderTop: "2px solid #3498db",
+                        borderRadius: "50%",
+                        animation: "spin 1s linear infinite",
+                        mr: 1,
+                      }}
+                    />
+                    <LinearProgress sx={{ mb: 1 }} />
+                  </>
+                )}
+              </Paper>
+            )}
+
+            {error && <Alert severity="error">{error}</Alert>}
+
+            {/* Upload Results */}
+            {uploadResult && !uploading && (
+              <Paper variant="outlined" sx={{ p: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 2 }}>
+                  Import Summary
+                </Typography>
+
+                {/* Success metrics */}
+                <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
+                  <Chip label={`Created: ${uploadResult.created || uploadResult.created_count || 0}`} color="success" variant="outlined" />
+                  <Chip label={`Skipped: ${uploadResult.skipped || uploadResult.skipped_count || 0}`} color="info" variant="outlined" />
+                  {((uploadResult.error_count && uploadResult.error_count > 0) || (uploadResult.errors && uploadResult.errors.length > 0)) && (
+                    <Chip label={`Errors: ${uploadResult.error_count || uploadResult.errors?.length || 0}`} color="error" variant="outlined" />
+                  )}
+                </Stack>
+
+                {/* Status indicator for async uploads */}
+                {uploadResult.status && (
+                  <Alert
+                    severity={uploadResult.status === "completed" ? "success" : uploadResult.status === "failed" ? "error" : uploadResult.status === "processing" ? "info" : "warning"}
+                    sx={{ mb: 2 }}
+                  >
+                    <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                      Status: {uploadResult.status.charAt(0).toUpperCase() + uploadResult.status.slice(1)}
+                    </Typography>
+
+                    {uploadResult.status === "completed" && uploadResult.error_count === 0 && (
+                      <Typography variant="body2" color="success.main">
+                        ✅ Import completed successfully!
+                      </Typography>
+                    )}
+
+                    {uploadResult.status === "completed" && (uploadResult.error_count || 0) > 0 && (
+                      <Typography variant="body2" color="warning.main">
+                        ⚠️ Import completed with {uploadResult.error_count || 0} errors. Review errors below.
+                      </Typography>
+                    )}
+
+                    {uploadResult.status === "failed" && (
+                      <Stack spacing={1} sx={{ mt: 1 }}>
+                        <Typography variant="body2" color="error.main">
+                          ❌ Import failed to complete
+                        </Typography>
+
+                        {uploadResult.error_message && (
+                          <Typography variant="body2" sx={{ fontStyle: "italic" }}>
+                            Error: {uploadResult.error_message}
+                          </Typography>
+                        )}
+
+                        {uploadResult.message && uploadResult.message !== uploadResult.error_message && (
+                          <Typography variant="body2" sx={{ fontStyle: "italic" }}>
+                            Details: {uploadResult.message}
+                          </Typography>
+                        )}
+
+                        {uploadResult.detailed_errors && uploadResult.detailed_errors.length > 0 && (
+                          <Typography variant="body2" color="text.secondary">
+                            📋 {uploadResult.detailed_errors.length} detailed error(s) available below
+                          </Typography>
+                        )}
+
+                        {!uploadResult.error_message && !uploadResult.message && !uploadResult.detailed_errors && (
+                          <Typography variant="body2" color="text.secondary">
+                            ⚠️ No specific error details available. Check backend logs for more information.
+                          </Typography>
+                        )}
+                      </Stack>
+                    )}
+
+                    {uploadResult.status === "processing" && (
+                      <Typography variant="body2" color="info.main">
+                        🔄 Processing {uploadResult.total_rows} rows... ({uploadResult.progress_percentage || 0}% complete)
+                      </Typography>
+                    )}
+                  </Alert>
+                )}
+
+                {/* Error details - handles both sync errors and async detailed_errors */}
+                {((uploadResult.errors && uploadResult.errors.length > 0) || (uploadResult.detailed_errors && uploadResult.detailed_errors.length > 0)) && (
+                  <Accordion sx={{ mb: 2 }}>
+                    <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                      <Typography variant="subtitle2" color="error">
+                        📋 Import Errors ({(uploadResult.errors?.length || 0) + (uploadResult.detailed_errors?.length || 0)})
+                      </Typography>
+                    </AccordionSummary>
+                    <AccordionDetails>
+                      <Box sx={{ maxHeight: 400, overflow: "auto" }}>
+                        {/* Display sync errors */}
+                        {uploadResult.errors &&
+                          uploadResult.errors.map((error, index) => (
+                            <Alert key={`sync-error-${index}`} severity="error" sx={{ mb: 1 }}>
+                              <Typography variant="body2">
+                                <strong>Row {error.row}:</strong> {error.error}
+                              </Typography>
+                            </Alert>
+                          ))}
+
+                        {/* Display async detailed errors */}
+                        {uploadResult.detailed_errors &&
+                          uploadResult.detailed_errors.map((error, index) => (
+                            <Alert key={`async-error-${index}`} severity="error" sx={{ mb: 1 }}>
+                              <Typography variant="body2">
+                                {error.row ? (
+                                  <>
+                                    <strong>Row {error.row}:</strong> {error.error || error.message || JSON.stringify(error)}
+                                  </>
+                                ) : (
+                                  <>{error.error || error.message || JSON.stringify(error)}</>
+                                )}
+                              </Typography>
+                            </Alert>
+                          ))}
+
+                        {/* Show if no detailed errors are available but job failed */}
+                        {uploadResult.status === "failed" && !uploadResult.errors?.length && !uploadResult.detailed_errors?.length && (
+                          <Alert severity="warning" sx={{ mb: 1 }}>
+                            <Typography variant="body2">
+                              ⚠️ <strong>Upload failed but no detailed errors are available.</strong>
+                              <br />
+                              This could indicate:
+                              <br />
+                              • File format issues (invalid Excel/CSV structure)
+                              <br />
+                              • Missing required columns
+                              <br />
+                              • Server processing error
+                              <br />
+                              • Database connection issues
+                              <br />
+                              <br />
+                              💡 <strong>Suggestions:</strong>
+                              <br />
+                              • Check that your file has the required columns: Site ID, Radio, Radio Serial, DXU, DXU Serial
+                              <br />
+                              • Ensure the file is a valid Excel (.xlsx/.xls) or CSV format
+                              <br />
+                              • Try with a smaller sample file first
+                              <br />• Contact support if the issue persists
+                            </Typography>
+                          </Alert>
+                        )}
+                      </Box>
+
+                      {(uploadResult.has_more_errors || (uploadResult.detailed_errors && uploadResult.detailed_errors.length >= 50)) && (
+                        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+                          📝 Note: Only showing first 50 errors. Check backend logs for complete error details.
+                        </Typography>
+                      )}
+                    </AccordionDetails>
+                  </Accordion>
+                )}
+
+                <Stack direction="row" spacing={1} sx={{ mt: 2 }}>
+                  <Button variant="contained" onClick={() => window.location.reload()} disabled={uploadResult.status === "processing"}>
+                    Refresh Page
+                  </Button>
+                  {uploadResult.status !== "processing" && (
+                    <Button
+                      variant="outlined"
+                      onClick={() => {
+                        setFile(null);
+                        setUploadResult(null);
+                        setError(null);
+                      }}
+                    >
+                      Upload Another File
+                    </Button>
+                  )}
+                </Stack>
+              </Paper>
             )}
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setOpenImport(false)}>Close</Button>
           <Button
-            variant="contained"
-            disabled={!file || uploading}
-            startIcon={uploading ? <CircularProgress size={18} color="inherit" /> : undefined}
-            onClick={async () => {
-              if (!file) return;
-              setError(null);
-              setUploading(true);
-              try {
-                const form = new FormData();
-                form.append("file", file);
-                const res = await apiHelpers.post<any>(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD(String(id)), form, {
-                  headers: { "Content-Type": "multipart/form-data" },
-                  timeout: 180000,
-                });
-                setSummary(res);
-                await load();
-                // Keep modal open if there are errors so user can read them
-                if (!(res?.errors && res.errors.length)) {
-                  setOpenImport(false);
-                  setFile(null);
-                  setSummary(null);
-                }
-              } catch (e: any) {
-                setError(e?.message || "Upload failed");
-              } finally {
-                setUploading(false);
+            onClick={() => {
+              if (isPolling) {
+                stopJobStatusPolling();
               }
+              setOpenImport(false);
+              setFile(null);
+              setUploadResult(null);
+              setError(null);
             }}
           >
-            {uploading ? "Uploading…" : "Upload"}
+            Close
           </Button>
+          <Button variant="contained" disabled={!file || uploading} startIcon={uploading ? <CircularProgress size={18} color="inherit" /> : undefined} onClick={handleBulkUpload}>
+            {uploading ? (isAsyncUpload ? "Processing..." : "Uploading...") : "Upload"}
+          </Button>
+          {/* Show "Close" button when upload completes with errors */}
+          {uploadResult && ((uploadResult.error_count && uploadResult.error_count > 0) || (uploadResult.errors && uploadResult.errors.length > 0)) && !uploading && (
+            <Button
+              variant="outlined"
+              color="error"
+              onClick={() => {
+                setOpenImport(false);
+                setFile(null);
+                setUploadResult(null);
+                setError(null);
+              }}
+            >
+              Close & Review
+            </Button>
+          )}
         </DialogActions>
       </Dialog>
     </Box>

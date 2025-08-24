@@ -693,6 +693,7 @@ class FlowTemplate(models.Model):
         ('SURVEY', 'Survey'),
         ('LOGISTICS', 'Logistics'),
         ('COMMISSIONING', 'Commissioning'),
+        ('RELOCATION', 'Relocation'),
         ('CUSTOM', 'Custom'),
     )
 
@@ -864,4 +865,153 @@ class FlowInstance(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.flow_template.name} for {self.task.title}" 
+        return f"{self.flow_template.name} for {self.task.title}"
+
+
+class TaskFromFlow(models.Model):
+    """Main task created from a flow template for a site group"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    
+    # Task ID fields
+    task_id = models.CharField(max_length=50, help_text="Business task identifier")
+    client_task_id = models.CharField(max_length=100, null=True, blank=True, help_text="Client's internal task ID")
+    is_client_id_provided = models.BooleanField(default=False, help_text="Whether client provided the task ID")
+    
+    # Basic information
+    task_name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='created_tasks')
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='flow_tasks')
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='flow_tasks')
+    
+    # Task-level status and priority
+    status = models.CharField(max_length=25, choices=Task.TASK_STATUS, default='pending')
+    priority = models.CharField(max_length=20, choices=Task.TASK_PRIORITY, default='medium')
+    
+    # Scheduling
+    due_date = models.DateTimeField(null=True, blank=True)
+    scheduled_start = models.DateTimeField(null=True, blank=True)
+    scheduled_end = models.DateTimeField(null=True, blank=True)
+    
+    # User tracking
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.SET_NULL, null=True, related_name='created_flow_tasks')
+    assigned_to = models.ForeignKey('apps_users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_flow_tasks')
+    supervisor = models.ForeignKey('apps_users.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='supervised_flow_tasks')
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'tasks_from_flow'
+        unique_together = [
+            ['tenant', 'task_id'],
+            ['tenant', 'client_task_id']
+        ]
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.task_id} - {self.task_name}"
+
+    def save(self, *args, **kwargs):
+        # Ensure client_task_id uniqueness check
+        if self.client_task_id:
+            self.is_client_id_provided = True
+        super().save(*args, **kwargs)
+
+
+class TaskSiteGroup(models.Model):
+    """Maps site groups to tasks"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_from_flow = models.ForeignKey(TaskFromFlow, on_delete=models.CASCADE, related_name='site_groups')
+    site = models.ForeignKey('sites.Site', on_delete=models.CASCADE, related_name='flow_task_groups')
+    site_alias = models.CharField(max_length=50, help_text="Site alias from flow template (e.g., 'Near-end', 'Far-end')")
+    assignment_order = models.IntegerField(default=0, help_text="Order within the site group")
+    
+    # Site-specific settings
+    is_primary = models.BooleanField(default=False, help_text="Whether this is the primary site for the task")
+    role = models.CharField(
+        max_length=20,
+        choices=[
+            ('PRIMARY', 'Primary'),
+            ('SECONDARY', 'Secondary'),
+            ('COORDINATION', 'Coordination'),
+        ],
+        default='SECONDARY'
+    )
+
+    class Meta:
+        db_table = 'task_site_groups'
+        unique_together = ['task_from_flow', 'site_alias']
+        ordering = ['assignment_order']
+
+    def __str__(self):
+        return f"{self.site_alias} ({self.site.site_name}) in {self.task_from_flow.task_id}"
+
+
+class TaskSubActivity(models.Model):
+    """Sub-tasks (activities) within a main task"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_from_flow = models.ForeignKey(TaskFromFlow, on_delete=models.CASCADE, related_name='sub_activities')
+    flow_activity = models.ForeignKey(FlowActivity, on_delete=models.CASCADE, related_name='task_instances')
+    
+    # Sub-task details
+    sequence_order = models.IntegerField(help_text="Local sequence order within this task")
+    activity_type = models.CharField(max_length=50, choices=Task.TASK_TYPE)
+    activity_name = models.CharField(max_length=255)
+    description = models.TextField()
+    
+    # Site assignment
+    assigned_site = models.ForeignKey('sites.Site', on_delete=models.CASCADE, related_name='sub_activities')
+    site_alias = models.CharField(max_length=50, help_text="Site alias from flow template")
+    
+    # Dependencies and coordination
+    dependencies = models.JSONField(default=list, help_text="List of sub-task IDs this depends on")
+    dependency_scope = models.CharField(
+        max_length=20,
+        choices=[
+            ('SITE_LOCAL', 'Site Local'),
+            ('CROSS_SITE', 'Cross Site'),
+            ('GLOBAL', 'Global'),
+        ],
+        default='SITE_LOCAL'
+    )
+    parallel_execution = models.BooleanField(default=False, help_text="Can this activity run in parallel")
+    
+    # Status tracking
+    status = models.CharField(max_length=25, choices=Task.TASK_STATUS, default='pending')
+    actual_start = models.DateTimeField(null=True, blank=True)
+    actual_end = models.DateTimeField(null=True, blank=True)
+    
+    # Progress tracking
+    progress_percentage = models.IntegerField(default=0, validators=[MinValueValidator(0), MinValueValidator(100)])
+    notes = models.TextField(blank=True, help_text="Additional notes for this sub-activity")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'task_sub_activities'
+        ordering = ['sequence_order']
+        unique_together = ['task_from_flow', 'sequence_order']
+
+    def __str__(self):
+        return f"{self.activity_name} ({self.site_alias}) in {self.task_from_flow.task_id}"
+
+    def update_progress(self, percentage):
+        """Update progress percentage for this sub-activity"""
+        self.progress_percentage = max(0, min(100, percentage))
+        self.save(update_fields=['progress_percentage', 'updated_at'])
+
+    def update_status(self, new_status):
+        """Update status and handle timestamps"""
+        old_status = self.status
+        self.status = new_status
+        
+        if new_status == 'in_progress' and old_status != 'in_progress':
+            self.actual_start = timezone.now()
+        elif new_status in ['completed', 'failed'] and old_status not in ['completed', 'failed']:
+            self.actual_end = timezone.now()
+        
+        self.save(update_fields=['status', 'actual_start', 'actual_end', 'updated_at']) 

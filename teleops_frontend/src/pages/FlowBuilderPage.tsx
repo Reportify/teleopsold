@@ -330,6 +330,11 @@ const FlowBuilderPage: React.FC = () => {
             parallel_group: activity.parallel_execution ? "parallel" : undefined,
             notes: "",
             assigned_sites: [], // Will be populated based on site_scope and description
+            // Backend compatibility fields
+            site_scope: (activity.site_scope as "SINGLE" | "MULTIPLE" | "ALL") || "SINGLE",
+            parallel_execution: activity.parallel_execution || false,
+            dependency_scope: (activity.dependency_scope as "SITE_LOCAL" | "CROSS_SITE" | "GLOBAL") || "SITE_LOCAL",
+            site_coordination: activity.site_coordination || false,
           }));
 
           // Extract site information from the backend sites
@@ -469,6 +474,11 @@ const FlowBuilderPage: React.FC = () => {
           dependencies: [],
           // Assign to currently selected site or "All sites" if none selected
           assigned_sites: builderState.selectedSiteId ? [builderState.selectedSiteId] : [],
+          // Backend compatibility fields with smart defaults
+          site_scope: builderState.selectedSiteId ? "SINGLE" : "ALL",
+          parallel_execution: false,
+          dependency_scope: "SITE_LOCAL", // Default to SITE_LOCAL, will be updated based on dependencies
+          site_coordination: false,
         };
         setFlowBuilder((prev) => ({
           ...prev,
@@ -534,6 +544,75 @@ const FlowBuilderPage: React.FC = () => {
     }
   }, [dependencyActivity]);
 
+  // Helper function to get site alias from site ID
+  const getSiteAlias = useCallback((siteId: string, sites: FlowSite[]): string | null => {
+    const site = sites.find((s) => s.id === siteId);
+    return site ? site.alias : null;
+  }, []);
+
+  // Helper function to determine if cross-site dependencies form a coordinated workflow
+  const checkIfCoordinatedWorkflow = useCallback(
+    (currentActivity: FlowActivityBuilder, dependencies: string[], allActivities: FlowActivityBuilder[]): boolean => {
+      // Get all dependent activities
+      const dependentActivities = dependencies.map((depId) => allActivities.find((a) => a.id === depId)).filter(Boolean) as FlowActivityBuilder[];
+
+      if (dependentActivities.length === 0) return false;
+
+      // Check if this is a coordinated multi-site workflow
+      // Coordinated means: activities that form a logical sequence across sites
+
+      // 1. Check if this is a simple "wait for all sites to complete a phase" pattern
+      // This is the most common case for multi-site workflows
+      const currentSequence = currentActivity.sequence_order;
+      const depSequences = dependentActivities.map((dep) => dep.sequence_order);
+
+      // If current activity comes after all dependencies, it's likely coordinated
+      const maxDepSequence = Math.max(...depSequences);
+      if (currentSequence > maxDepSequence) {
+        // Current activity waits for dependencies to complete = coordinated = CROSS_SITE
+        return true;
+      }
+
+      // 2. Check if dependencies are from the same sequence order (parallel execution)
+      const uniqueDepSequences = new Set(depSequences);
+      if (uniqueDepSequences.size === 1) {
+        // All dependencies are from the same sequence = coordinated = CROSS_SITE
+        return true;
+      }
+
+      // 3. Check if this forms a logical workflow sequence
+      // (e.g., dismantling → transportation → installation across sites)
+      const minDepSequence = Math.min(...depSequences);
+      if (currentSequence > minDepSequence && currentSequence <= maxDepSequence + 2) {
+        // Current activity is part of a logical sequence = coordinated = CROSS_SITE
+        return true;
+      }
+
+      // 4. Only set to GLOBAL if it's truly a complex, unrelated workflow
+      // (e.g., target site waiting for source site in relocation)
+      const hasUnrelatedContext = dependentActivities.some((dep) => {
+        // Check if dependency is from a completely different workflow context
+        // For example: source vs target sites in relocation
+        const depSiteAlias = getSiteAlias(dep.assigned_sites[0], flowBuilder.sites);
+        const currentSiteAlias = getSiteAlias(currentActivity.assigned_sites[0], flowBuilder.sites);
+
+        // If one is "Source" and one is "Target", it's GLOBAL
+        if (depSiteAlias?.includes("Source") && currentSiteAlias?.includes("Target")) return true;
+        if (depSiteAlias?.includes("Target") && currentSiteAlias?.includes("Source")) return true;
+
+        return false;
+      });
+
+      if (hasUnrelatedContext) {
+        return false; // This will result in GLOBAL scope
+      }
+
+      // Default to coordinated (CROSS_SITE) for most multi-site workflows
+      return true;
+    },
+    [flowBuilder.sites, getSiteAlias]
+  );
+
   const handleToggleDependency = useCallback(
     (dependencyId: string) => {
       if (dependencyActivity) {
@@ -541,11 +620,54 @@ const FlowBuilderPage: React.FC = () => {
           if (!prev) return null;
           const currentDependencies = prev.dependencies || [];
           const newDependencies = currentDependencies.includes(dependencyId) ? currentDependencies.filter((id) => id !== dependencyId) : [...currentDependencies, dependencyId];
-          return { ...prev, dependencies: newDependencies };
+
+          // Determine the appropriate dependency scope based on the dependencies
+          let newDependencyScope: "SITE_LOCAL" | "CROSS_SITE" | "GLOBAL" = "SITE_LOCAL";
+
+          if (newDependencies.length > 0) {
+            // Check if any dependency is from a different site
+            const hasCrossSiteDependency = newDependencies.some((depId) => {
+              const depActivity = flowBuilder.activities.find((a) => a.id === depId);
+              if (!depActivity) return false;
+
+              // If current activity has no assigned sites, it's GLOBAL
+              if (prev.assigned_sites.length === 0) return true;
+
+              // If dependency has no assigned sites, it's GLOBAL
+              if (depActivity.assigned_sites.length === 0) return true;
+
+              // Check if dependency is from a different site
+              const currentSites = new Set(prev.assigned_sites);
+              const depSites = new Set(depActivity.assigned_sites);
+
+              // If there's no overlap in sites, it's a cross-site dependency
+              const hasOverlap = Array.from(currentSites).some((siteId) => depSites.has(siteId));
+              return !hasOverlap;
+            });
+
+            if (hasCrossSiteDependency) {
+              // Determine if it's CROSS_SITE (coordinated) or GLOBAL (complex workflow)
+              const isCoordinatedMultiSiteWorkflow = checkIfCoordinatedWorkflow(prev, newDependencies, flowBuilder.activities);
+
+              if (isCoordinatedMultiSiteWorkflow) {
+                newDependencyScope = "CROSS_SITE";
+              } else {
+                newDependencyScope = "GLOBAL";
+              }
+            } else if (newDependencies.length > 1) {
+              newDependencyScope = "CROSS_SITE";
+            }
+          }
+
+          return {
+            ...prev,
+            dependencies: newDependencies,
+            dependency_scope: newDependencyScope,
+          };
         });
       }
     },
-    [dependencyActivity]
+    [dependencyActivity, flowBuilder.activities, checkIfCoordinatedWorkflow, getSiteAlias]
   );
 
   const handleSaveFlow = useCallback(async () => {
@@ -553,7 +675,7 @@ const FlowBuilderPage: React.FC = () => {
       // Validate sequence orders are unique
       const sequenceOrders = flowBuilder.activities.map((a) => a.sequence_order);
       const uniqueSequenceOrders = new Set(sequenceOrders);
-      if (sequenceOrders.length !== uniqueSequenceOrders.size) {
+      if (sequenceOrders.length !== Array.from(uniqueSequenceOrders).length) {
         alert("Error: Duplicate sequence orders detected. Please ensure each activity has a unique sequence order.");
         return;
       }
@@ -617,8 +739,8 @@ const FlowBuilderPage: React.FC = () => {
             return site ? site.alias : "Unknown Site";
           }),
           parallel_execution: activity.parallel_group ? true : false,
-          dependency_scope: "SITE_LOCAL", // Default value
-          site_coordination: false, // Default value
+          dependency_scope: activity.dependency_scope, // Use the actual dependency scope
+          site_coordination: activity.site_coordination || false, // Use the actual site coordination setting
         })),
         // Frontend sites are abstract placeholders for flow organization
         // They don't need to be stored in the backend database
@@ -1168,9 +1290,18 @@ const FlowBuilderPage: React.FC = () => {
                                           .filter(Boolean)
                                           .join(", ")}`}
                                         size="small"
-                                        color="primary"
+                                        color={activity.dependency_scope === "GLOBAL" ? "error" : activity.dependency_scope === "CROSS_SITE" ? "warning" : "primary"}
                                         variant="outlined"
-                                        sx={{ fontSize: "0.7rem", height: 20 }}
+                                        sx={{
+                                          fontSize: "0.7rem",
+                                          height: 20,
+                                          borderColor: activity.dependency_scope === "GLOBAL" ? "#f44336" : activity.dependency_scope === "CROSS_SITE" ? "#ff9800" : "#1976d2",
+                                          "& .MuiChip-label": {
+                                            px: 1,
+                                            color: activity.dependency_scope === "GLOBAL" ? "#f44336" : activity.dependency_scope === "CROSS_SITE" ? "#ff9800" : "#1976d2",
+                                          },
+                                        }}
+                                        title={`Dependency Scope: ${activity.dependency_scope}`}
                                       />
                                     )}
                                   </Box>
@@ -1433,6 +1564,17 @@ const FlowBuilderPage: React.FC = () => {
                   }}
                 />
               )}
+              {/* Dependency Scope Indicator */}
+              <Chip
+                label={`Scope: ${dependencyActivity.dependency_scope}`}
+                size="small"
+                sx={{
+                  ml: 1,
+                  fontSize: "0.7rem",
+                  backgroundColor: dependencyActivity.dependency_scope === "GLOBAL" ? "#f44336" : dependencyActivity.dependency_scope === "CROSS_SITE" ? "#ff9800" : "#4caf50",
+                  color: "white",
+                }}
+              />
             </>
           )}
         </DialogTitle>
@@ -1456,6 +1598,21 @@ const FlowBuilderPage: React.FC = () => {
             </strong>
             " can start.
           </Typography>
+
+          {/* Dependency Scope Explanation */}
+          <Box sx={{ mb: 3, p: 2, backgroundColor: "#f5f5f5", borderRadius: 1 }}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 600 }}>
+              Dependency Scope: {dependencyActivity?.dependency_scope}
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ fontSize: "0.875rem" }}>
+              {dependencyActivity?.dependency_scope === "SITE_LOCAL" &&
+                "Dependencies will only be checked within the same site. This activity waits for other activities at the same site to complete."}
+              {dependencyActivity?.dependency_scope === "CROSS_SITE" &&
+                "Coordinated multi-site dependencies. This activity waits for the same type of activity to complete across multiple sites before proceeding. Use this for parallel workflows where all sites need to complete a step together."}
+              {dependencyActivity?.dependency_scope === "GLOBAL" &&
+                "Complex cross-site dependencies. This activity waits for activities from different workflow phases or contexts to complete. Use this for complex workflows that span multiple site contexts and workflow phases."}
+            </Typography>
+          </Box>
           <Stack spacing={2}>
             {flowBuilder.activities
               .filter((activity) => activity.id !== dependencyActivity?.id)

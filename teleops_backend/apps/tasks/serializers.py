@@ -10,7 +10,7 @@ from apps.projects.serializers import ProjectSerializer
 # Import models for default querysets
 from apps.sites.models import Site
 from apps.users.models import User
-from .models import FlowSite, FlowActivity, FlowTemplate, FlowInstance, FlowActivitySite
+from .models import FlowSite, FlowActivity, FlowTemplate, FlowInstance, FlowActivitySite, TaskFromFlow, TaskSiteGroup, TaskSubActivity
 
 
 class TaskSiteAssignmentSerializer(serializers.ModelSerializer):
@@ -718,4 +718,126 @@ class FlowInstanceSerializer(serializers.ModelSerializer):
             'status', 'current_activity_index', 'completed_activities', 'failed_activities',
             'started_at', 'completed_at', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at'] 
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+# ============================================================================
+# Task Creation from Flow Template Serializers
+# ============================================================================
+
+class TaskSiteGroupSerializer(serializers.ModelSerializer):
+    """Serializer for TaskSiteGroup model"""
+    site_name = serializers.CharField(source='site.site_name', read_only=True)
+    site_global_id = serializers.CharField(source='site.site_global_id', read_only=True)
+    
+    class Meta:
+        model = TaskSiteGroup
+        fields = [
+            'id', 'site', 'site_alias', 'assignment_order', 'is_primary', 'role',
+            'site_name', 'site_global_id'
+        ]
+        read_only_fields = ['id']
+
+
+class TaskSubActivitySerializer(serializers.ModelSerializer):
+    """Serializer for TaskSubActivity model"""
+    site_name = serializers.CharField(source='assigned_site.site_name', read_only=True)
+    site_global_id = serializers.CharField(source='assigned_site.site_global_id', read_only=True)
+    
+    class Meta:
+        model = TaskSubActivity
+        fields = [
+            'id', 'sequence_order', 'activity_type', 'activity_name', 'description',
+            'assigned_site', 'site_alias', 'dependencies', 'dependency_scope',
+            'parallel_execution', 'status', 'actual_start', 'actual_end',
+            'progress_percentage', 'notes', 'created_at', 'updated_at',
+            'site_name', 'site_global_id'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class TaskFromFlowSerializer(serializers.ModelSerializer):
+    """Serializer for TaskFromFlow model"""
+    flow_template_name = serializers.CharField(source='flow_template.name', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    assigned_to_name = serializers.CharField(source='assigned_to.get_full_name', read_only=True)
+    supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True)
+    
+    # Related data
+    site_groups = TaskSiteGroupSerializer(many=True, read_only=True)
+    sub_activities = TaskSubActivitySerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = TaskFromFlow
+        fields = [
+            'id', 'task_id', 'client_task_id', 'is_client_id_provided',
+            'task_name', 'description', 'flow_template', 'flow_template_name',
+            'project', 'project_name', 'status', 'priority', 'due_date',
+            'scheduled_start', 'scheduled_end', 'created_by', 'created_by_name',
+            'assigned_to', 'assigned_to_name', 'supervisor', 'supervisor_name',
+            'created_at', 'updated_at', 'site_groups', 'sub_activities'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class TaskCreationRequestSerializer(serializers.Serializer):
+    """Serializer for task creation request validation"""
+    flow_template_id = serializers.UUIDField()
+    project_id = serializers.UUIDField()
+    site_groups = serializers.ListField(
+        child=serializers.DictField(),
+        min_length=1
+    )
+    task_naming = serializers.DictField(required=False)
+    
+    def validate_site_groups(self, value):
+        """Validate site groups structure"""
+        for i, group in enumerate(value):
+            if 'sites' not in group:
+                raise serializers.ValidationError(
+                    f"Site group {i+1} missing 'sites' field"
+                )
+            
+            sites = group['sites']
+            if not isinstance(sites, dict) or not sites:
+                raise serializers.ValidationError(
+                    f"Site group {i+1} 'sites' must be a non-empty dictionary"
+                )
+            
+            # Validate each site mapping
+            for alias, site_id in sites.items():
+                if not alias or not str(alias).strip():
+                    raise serializers.ValidationError(
+                        f"Site group {i+1} has invalid alias: {alias}"
+                    )
+                if not site_id or not str(site_id).strip():
+                    raise serializers.ValidationError(
+                        f"Site group {i+1}, alias '{alias}' has invalid site ID: {site_id}"
+                    )
+        
+        return value
+    
+    def validate_task_naming(self, value):
+        """Validate task naming configuration"""
+        if not value:
+            return value
+        
+        valid_conventions = ['AUTO', 'CLIENT_ID', 'HYBRID']
+        convention = value.get('convention', 'AUTO')
+        
+        if convention not in valid_conventions:
+            raise serializers.ValidationError(
+                f"Invalid naming convention. Must be one of: {valid_conventions}"
+            )
+        
+        return value
+
+
+class TaskCreationResponseSerializer(serializers.Serializer):
+    """Serializer for task creation response"""
+    tasks = TaskFromFlowSerializer(many=True)
+    flow_instance = serializers.DictField()  # Will be enhanced later
+    message = serializers.CharField(default="Tasks created successfully")
+    created_count = serializers.IntegerField()
+    total_sites = serializers.IntegerField() 

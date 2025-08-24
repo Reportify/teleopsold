@@ -3,11 +3,14 @@ from .views import (
     CircleSiteManagementView,
     CircleSiteDetailView,
     BulkSiteUploadView,
+    AsyncBulkSiteUploadView,
+    BulkUploadJobStatusView,
     SiteTemplateDownloadView,
     SiteExportView,
     SiteRestoreView,
     SiteClustersView,
-    SiteTownsView
+    SiteTownsView,
+    GeographicAnalysisView
 )
 
 app_name = 'sites'
@@ -20,10 +23,14 @@ urlpatterns = [
     
     # Bulk Operations
     path('bulk-upload/', BulkSiteUploadView.as_view(), name='bulk_site_upload'),
+    path('bulk-upload-async/', AsyncBulkSiteUploadView.as_view(), name='async_bulk_site_upload'),
+    path('bulk-upload-jobs/', BulkUploadJobStatusView.as_view(), name='bulk_upload_jobs'),
+    path('bulk-upload-jobs/<int:job_id>/', BulkUploadJobStatusView.as_view(), name='bulk_upload_job_detail'),
     path('template/', SiteTemplateDownloadView.as_view(), name='site_template'),
     path('export/', SiteExportView.as_view(), name='site_export'),
     
     # Data Utilities
     path('clusters/', SiteClustersView.as_view(), name='site_clusters'),
     path('towns/', SiteTownsView.as_view(), name='site_towns'),
+    path('geographic-analysis/', GeographicAnalysisView.as_view(), name='site_geographic_analysis'),
 ] 

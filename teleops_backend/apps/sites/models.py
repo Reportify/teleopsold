@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
 
 
 class Site(models.Model):
@@ -125,3 +126,51 @@ class Site(models.Model):
         
         if self.longitude is not None and not (-180 <= self.longitude <= 180):
             raise ValidationError("Longitude must be between -180 and 180 degrees") 
+
+
+class BulkUploadJob(models.Model):
+    """
+    Model to track bulk upload jobs for large file uploads
+    """
+    JOB_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='bulk_upload_jobs')
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='bulk_upload_jobs')
+    file_name = models.CharField(max_length=255)
+    total_rows = models.IntegerField(default=0)
+    processed_rows = models.IntegerField(default=0)
+    success_count = models.IntegerField(default=0)
+    error_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, choices=JOB_STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True, null=True)
+    detailed_errors = models.JSONField(blank=True, null=True, help_text="Detailed error list for each failed row")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'sites_bulk_upload_job'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Bulk Upload {self.id} - {self.file_name} ({self.status})"
+    
+    @property
+    def progress_percentage(self):
+        if self.total_rows == 0:
+            return 0
+        return round((self.processed_rows / self.total_rows) * 100, 2)
+    
+    @property
+    def duration(self):
+        if not self.started_at:
+            return None
+        end_time = self.completed_at or timezone.now()
+        return end_time - self.started_at 

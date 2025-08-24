@@ -430,3 +430,112 @@ class VendorInvitation(models.Model):
 
     def __str__(self) -> str:
         return f"project={self.project_id} email={self.invite_email} status={self.status}"
+
+
+# -----------------------------
+# Project Sites Bulk Import Job Tracking
+# -----------------------------
+
+
+class ProjectSitesBulkUploadJob(models.Model):
+    """
+    Model to track bulk upload jobs for project sites import
+    """
+    JOB_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='project_sites_bulk_upload_jobs')
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='sites_bulk_upload_jobs')
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='project_sites_bulk_upload_jobs')
+    file_name = models.CharField(max_length=255)
+    total_rows = models.IntegerField(default=0)
+    processed_rows = models.IntegerField(default=0)
+    created_master = models.IntegerField(default=0)
+    linked_count = models.IntegerField(default=0)
+    skipped_count = models.IntegerField(default=0)
+    error_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, choices=JOB_STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True, null=True)
+    detailed_errors = models.JSONField(blank=True, null=True, help_text="Detailed error list for each failed row")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'project_sites_bulk_upload_job'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Project Sites Bulk Upload {self.id} - {self.file_name} ({self.status})"
+    
+    @property
+    def progress_percentage(self):
+        if self.total_rows == 0:
+            return 0
+        return round((self.processed_rows / self.total_rows) * 100, 2)
+    
+    @property
+    def duration(self):
+        if not self.started_at:
+            return None
+        from django.utils import timezone
+        end_time = self.completed_at or timezone.now()
+        return end_time - self.started_at
+
+
+class ProjectInventoryBulkUploadJob(models.Model):
+    """
+    Model to track bulk upload jobs for project inventory (dismantle) uploads
+    """
+    JOB_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    
+    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='project_inventory_bulk_upload_jobs')
+    project = models.ForeignKey('projects.Project', on_delete=models.CASCADE, related_name='inventory_bulk_upload_jobs')
+    plan = models.ForeignKey('projects.ProjectInventoryPlan', on_delete=models.CASCADE, related_name='bulk_upload_jobs', null=True, blank=True)
+    created_by = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='project_inventory_bulk_upload_jobs')
+    file_name = models.CharField(max_length=255)
+    total_rows = models.IntegerField(default=0)
+    processed_rows = models.IntegerField(default=0)
+    created_count = models.IntegerField(default=0)
+    skipped_count = models.IntegerField(default=0)
+    error_count = models.IntegerField(default=0)
+    status = models.CharField(max_length=20, choices=JOB_STATUS_CHOICES, default='pending')
+    error_message = models.TextField(blank=True, null=True)
+    detailed_errors = models.JSONField(blank=True, null=True, help_text="Detailed error list for each failed row")
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'project_inventory_bulk_upload_job'
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"Project Inventory Bulk Upload {self.id} - {self.file_name} ({self.status})"
+    
+    @property
+    def progress_percentage(self):
+        if self.total_rows == 0:
+            return 0
+        return round((self.processed_rows / self.total_rows) * 100, 2)
+    
+    @property
+    def duration(self):
+        if not self.started_at:
+            return None
+        from django.utils import timezone
+        end_time = self.completed_at or timezone.now()
+        return end_time - self.started_at
