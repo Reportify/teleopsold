@@ -232,6 +232,37 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return prj, 'vendor'
         return None, None
 
+    def _get_project_with_vendor_access(self, pk):
+        """Get project with vendor access logic - returns project or None"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant or not pk:
+            return None
+            
+        # First try the default queryset (owner access)
+        try:
+            project = self.get_queryset().filter(id=pk).first()
+            if project:
+                return project
+        except Exception:
+            pass
+        
+        # If not found in owner queryset, check vendor access
+        prj = Project.objects.filter(id=pk, deleted_at__isnull=True).select_related('client_tenant').first()
+        if not prj:
+            return None
+            
+        # Check if user has vendor access to this project
+        is_vendor = ProjectVendor.objects.filter(
+            project=prj, 
+            status='active', 
+            relationship__vendor_tenant=tenant
+        ).exists()
+        
+        if is_vendor:
+            return prj
+            
+        return None
+
     @action(detail=False, methods=['get'])
     def stats(self, request):
         """Get project statistics for the tenant"""
@@ -659,14 +690,30 @@ class ProjectViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='inventory/site-serials')
     def list_site_serials(self, request, pk=None):
-        project = self.get_object()
+        # Use custom project retrieval with vendor access logic instead of self.get_object()
+        project = self._get_project_with_vendor_access(pk)
+        if not project:
+            return Response(
+                {'error': {'code': 'GENERIC_ERROR', 'message': 'An error occurred', 'details': {'detail': 'No Project matches the given query.'}}},
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
         plan_id = request.query_params.get('plan_id')
         project_site_id = request.query_params.get('project_site_id')
         equipment_item_id = request.query_params.get('equipment_item_id')
         search = request.query_params.get('search')
         linked = request.query_params.get('linked')  # 'true' | 'false' | None
 
-        qs = ProjectSiteInventory.objects.filter(plan__project=project, plan__tenant=getattr(request, 'tenant', None), deleted_at__isnull=True)
+        # Optimize query with select_related and proper ordering
+        qs = ProjectSiteInventory.objects.filter(
+            plan__project=project, 
+            plan__tenant=getattr(request, 'tenant', None), 
+            deleted_at__isnull=True
+        ).select_related(
+            'equipment_item', 
+            'project_site__site', 
+            'plan'
+        )
         if plan_id:
             qs = qs.filter(plan_id=plan_id)
         if project_site_id:
@@ -674,16 +721,35 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if equipment_item_id:
             qs = qs.filter(equipment_item_id=equipment_item_id)
         if search:
-            qs = qs.filter(models.Q(serial_number__icontains=search) | models.Q(equipment_model__icontains=search) | models.Q(equipment_name__icontains=search))
+            qs = qs.filter(
+                models.Q(serial_number__icontains=search) | 
+                models.Q(equipment_model__icontains=search) | 
+                models.Q(equipment_name__icontains=search) |
+                models.Q(site_id_business__icontains=search) |
+                models.Q(equipment_material_code__icontains=search)
+            )
         if linked == 'true':
             qs = qs.filter(project_site__isnull=False)
         elif linked == 'false':
             qs = qs.filter(project_site__isnull=True)
 
-        page = self.paginate_queryset(qs.order_by('-created_at'))
+        # Add debugging info for search queries
+        total_count = qs.count()
+        logger.info(f"Project {project.id} inventory search - Total records found: {total_count}, Search term: '{search}'")
+        
+        # Apply ordering and pagination
+        qs_ordered = qs.order_by('-created_at')
+        page = self.paginate_queryset(qs_ordered)
+        
         if page is not None:
-            return self.get_paginated_response(ProjectSiteInventorySerializer(page, many=True).data)
-        return Response(ProjectSiteInventorySerializer(qs, many=True).data)
+            serialized_data = ProjectSiteInventorySerializer(page, many=True).data
+            logger.info(f"Project {project.id} inventory search - Returning {len(serialized_data)} records on current page")
+            return self.get_paginated_response(serialized_data)
+        
+        # Non-paginated response
+        serialized_data = ProjectSiteInventorySerializer(qs_ordered, many=True).data
+        logger.info(f"Project {project.id} inventory search - Returning {len(serialized_data)} records (non-paginated)")
+        return Response(serialized_data)
 
     @action(detail=True, methods=['post'], url_path='inventory/dismantle/upload')
     def dismantle_bulk_upload(self, request, pk=None):
@@ -692,7 +758,13 @@ class ProjectViewSet(viewsets.ModelViewSet):
         Expected columns: Site ID (business), Radio, Radio Serial, DUG/DUX, DUG/DUX Serial.
         Up to two serials per row will be created if present.
         """
-        project = self.get_object()
+        # Use custom project retrieval with vendor access logic instead of self.get_object()
+        project = self._get_project_with_vendor_access(pk)
+        if not project:
+            return Response(
+                {'error': 'Project not found or access denied'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         upload_ser = DismantleBulkUploadSerializer(data=request.data)
         upload_ser.is_valid(raise_exception=True)
         file = request.FILES['file']
@@ -789,31 +861,59 @@ class ProjectViewSet(viewsets.ModelViewSet):
                     pairs.append((cell(row.get(dug_col)) if dug_col else '', cell(row.get(dug_serial_col)) if dug_serial_col else ''))
                 for equipment_name, serial in pairs:
                     serial_str = cell(serial).strip()
-                    if not serial_str:
-                        continue
+                    # Handle "NA" as empty serial
+                    if serial_str.upper() == 'NA':
+                        serial_str = ''
+                    
+                    # Allow equipment without serial numbers - we should still create the inventory record
+                    # Note: we still need equipment_name to be present
                     eq = resolve_equipment(cell(equipment_name).strip()) if equipment_name is not None else None
                     if not eq:
                         errors.append({'row': rownum, 'error': f'Equipment not found: {equipment_name if equipment_name else "(empty)"}'})
                         continue
 
-                    # Idempotent insert
-                    normalized = serial_str.strip().upper()
-                    # Check idempotency depending on link status
-                    if ps:
-                        exists = ProjectSiteInventory.objects.filter(
-                            plan=plan,
-                            project_site=ps,
-                            serial_normalized=normalized,
-                            deleted_at__isnull=True
-                        ).exists()
+                    # Idempotent insert - for equipment without serials, check by equipment_item instead
+                    normalized = serial_str.strip().upper() if serial_str else ''
+                    
+                    # Enhanced idempotency check - check by equipment_item + site + serial combination
+                    if serial_str:
+                        # For equipment with serial numbers, check by equipment + site + serial
+                        if ps:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site=ps,
+                                equipment_item=eq,
+                                serial_normalized=normalized,
+                                deleted_at__isnull=True
+                            ).exists()
+                        else:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site__isnull=True,
+                                site_id_business=site_business_id,
+                                equipment_item=eq,
+                                serial_normalized=normalized,
+                                deleted_at__isnull=True
+                            ).exists()
                     else:
-                        exists = ProjectSiteInventory.objects.filter(
-                            plan=plan,
-                            project_site__isnull=True,
-                            site_id_business=site_business_id,
-                            serial_normalized=normalized,
-                            deleted_at__isnull=True
-                        ).exists()
+                        # For equipment without serial numbers, check by equipment_item + site to avoid duplicates
+                        if ps:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site=ps,
+                                equipment_item=eq,
+                                serial_number='',  # Empty serial
+                                deleted_at__isnull=True
+                            ).exists()
+                        else:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site__isnull=True,
+                                site_id_business=site_business_id,
+                                equipment_item=eq,
+                                serial_number='',  # Empty serial
+                                deleted_at__isnull=True
+                            ).exists()
                     if exists:
                         skipped += 1
                         continue
@@ -1233,7 +1333,7 @@ class AsyncProjectSitesImportView(APIView):
             job.started_at = timezone.now()
             job.detailed_errors = []
             job.save()
-            
+
             import pandas as pd
             from io import BytesIO
             
@@ -1243,7 +1343,7 @@ class AsyncProjectSitesImportView(APIView):
                 df = pd.read_excel(file_stream)
             else:
                 df = pd.read_csv(file_stream)
-            
+
             # Validate required columns
             required = ['site_id', 'global_id', 'site_name', 'cluster', 'latitude', 'longitude']
             missing = [c for c in required if c not in df.columns]
@@ -1309,7 +1409,7 @@ class AsyncProjectSitesImportView(APIView):
         linked = 0
         skipped = 0
         errors = []
-        
+
         with transaction.atomic():
             for idx, row in chunk_df.iterrows():
                 rownum = start_row_num + (idx - chunk_df.index[0])
@@ -1365,7 +1465,7 @@ class AsyncProjectSitesImportView(APIView):
                         skipped += 1
                 except Exception as e:
                     errors.append({'row': rownum, 'error': str(e)})
-        
+
         return {
             'created_master': created_master,
             'linked': linked,
@@ -1470,6 +1570,155 @@ class ProjectInventoryImportView(APIView):
     """
     permission_classes = [IsAuthenticated, IsTenantMember]
     
+    def get(self, request, project_id=None):
+        """Download template for project inventory import."""
+        try:
+            # Get the project
+            tenant = getattr(request, 'tenant', None)
+            project = Project.objects.filter(
+                id=project_id, 
+                tenant=tenant, 
+                deleted_at__isnull=True
+            ).first()
+            
+            if not project:
+                return Response(
+                    {'error': 'Project not found'}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Validate permissions (same as ViewSet would do)
+            if project.client_tenant != tenant:
+                # Check if user has vendor access to this project
+                is_vendor = ProjectVendor.objects.filter(
+                    project=project,
+                    status='active',
+                    relationship__vendor_tenant=tenant
+                ).exists()
+                
+                if not is_vendor:
+                    return Response(
+                        {'error': 'Permission denied'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+            
+            # Create template Excel file
+            import pandas as pd
+            from django.http import HttpResponse
+            import io
+            
+            # Unified template data that handles multiple equipment types and multiple rows per site
+            template_data = {
+                'Site ID': [
+                    'IMBIL_01039', 
+                    'IMBPL_31003',
+                    'IMBPL_31003',
+                    'IMSGR_11035'
+                ],
+                'Equipment 1 (Material Code or Name)': [
+                    '302034957',    # 2G Card
+                    '302050930',    # 3G Card  
+                    '302036650',    # 3G Card (different card, same site)
+                    'MW Antenna 1.2'  # MW Antenna
+                ],
+                'Equipment 1 Serial': [
+                    'C530431613',
+                    'NA',           # No serial number
+                    'NA',           # No serial number
+                    'NA'
+                ],
+                'Equipment 2 (Material Code or Name)': [
+                    '301446925',    # 2G DUG/DUX
+                    '301447108',    # 3G DUW
+                    '301447108',    # 3G DUW (same DUW, different card)
+                    '301641349'     # MW Radio
+                ],
+                'Equipment 2 Serial': [
+                    'TU8D336037',
+                    'X1Z8837566',
+                    'X1Z8837566',   # Same serial for same equipment
+                    'TU8D336038'
+                ],
+                'Equipment 3 (Material Code or Name)': [
+                    '',             # Empty - no third equipment
+                    '',             # Empty - no third equipment
+                    '',             # Empty - no third equipment
+                    '302055935'     # MW MMU
+                ],
+                'Equipment 3 Serial': [
+                    '',
+                    '',
+                    '',
+                    'MK54585698'
+                ],
+                'Equipment 4 (Material Code or Name)': [
+                    '',
+                    '',
+                    '',
+                    '302055943'     # MW Other equipment
+                ],
+                'Equipment 4 Serial': [
+                    '',
+                    '',
+                    '',
+                    'DF5654782'
+                ],
+                'Equipment 5 (Material Code or Name)': [
+                    '',
+                    '',
+                    '',
+                    ''
+                ],
+                'Equipment 5 Serial': [
+                    '',
+                    '',
+                    '',
+                    ''
+                ]
+            }
+            
+            # Create DataFrame
+            df = pd.DataFrame(template_data)
+            
+            # Create Excel file in memory
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Dismantle Inventory')
+                
+                # Get the workbook and worksheet to add formatting
+                workbook = writer.book
+                worksheet = writer.sheets['Dismantle Inventory']
+                
+                # Auto-adjust column widths
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+            
+            output.seek(0)
+            
+            # Create HTTP response
+            response = HttpResponse(
+                output.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            )
+            response['Content-Disposition'] = f'attachment; filename="project_{project_id}_inventory_template.xlsx"'
+            
+            return response
+            
+        except Exception as e:
+            return Response(
+                {'error': f'Failed to generate template: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     def post(self, request, project_id=None):
         """Bulk upload planned dismantle serials from Excel/CSV."""
         try:
@@ -1535,22 +1784,22 @@ class ProjectInventoryImportView(APIView):
                     site_business_id = str(row.get(site_col) or '').strip()
                     if not site_business_id:
                         continue
-                    
+                        
                     # Basic processing logic - this is simplified
                     # The async version will have the full processing logic
                     created += 1
-                    
+                        
                 except Exception as e:
                     errors.append({'row': rownum, 'error': str(e)})
 
             return Response({
                 'plan_id': plan.id,
                 'created': created,
-                'skipped': skipped,
-                'errors': errors[:50],
+            'skipped': skipped,
+            'errors': errors[:50],
                 'has_more_errors': len(errors) > 50,
-            }, status=status.HTTP_200_OK)
-            
+        }, status=status.HTTP_200_OK)
+
         except Exception as e:
             logger.error(f"Error importing project inventory: {str(e)}")
             return Response(
@@ -1581,6 +1830,21 @@ class AsyncProjectInventoryImportView(APIView):
                     {'error': 'Project not found'}, 
                     status=status.HTTP_404_NOT_FOUND
                 )
+            
+            # Validate permissions (same as ViewSet would do)
+            if project.client_tenant != tenant:
+                # Check if user has vendor access to this project
+                is_vendor = ProjectVendor.objects.filter(
+                    project=project,
+                    status='active',
+                    relationship__vendor_tenant=tenant
+                ).exists()
+                
+                if not is_vendor:
+                    return Response(
+                        {'error': 'Permission denied'}, 
+                        status=status.HTTP_403_FORBIDDEN
+                    )
             
             # Validate file upload
             upload_ser = DismantleBulkUploadSerializer(data=request.data)
@@ -1682,10 +1946,39 @@ class AsyncProjectInventoryImportView(APIView):
                 return None
 
             site_col = pick_col(['Site ID', 'SiteId', 'site_id'])
-            radio_col = pick_col(['Radio (Material Code or Name)', 'Radio', 'Radio Name', 'Radio Material Code'])
-            radio_serial_col = pick_col(['Radio Serial', 'RadioSerial', 'Radio SN'])
-            dug_col = pick_col(['DUG/DUX (Material Code or Name)', 'DUG/DUX', 'DUG', 'DUX'])
-            dug_serial_col = pick_col(['DUG/DUX Serial', 'DUG Serial', 'DUX Serial'])
+            
+            # Unified column detection - find all Equipment X (Material Code or Name) columns
+            equipment_columns = []
+            for col in df.columns:
+                if 'Equipment' in col and 'Material Code' in col:
+                    # Extract equipment number from column name
+                    import re
+                    match = re.search(r'Equipment (\d+)', col)
+                    if match:
+                        equipment_num = match.group(1)
+                        serial_col = pick_col([f'Equipment {equipment_num} Serial'])
+                        if serial_col:
+                            equipment_columns.append({
+                                'equipment_col': col,
+                                'serial_col': serial_col,
+                                'number': equipment_num
+                            })
+            
+            # Fallback to legacy column names for backward compatibility
+            if not equipment_columns:
+                legacy_pairs = [
+                    {
+                        'equipment_col': pick_col(['Radio (Material Code or Name)', 'Card (Material Code or Name)', 'Card Mat Code', 'Radio', 'Radio Name']),
+                        'serial_col': pick_col(['Radio Serial', 'Card Serial', 'RadioSerial', 'Radio SN']),
+                        'number': '1'
+                    },
+                    {
+                        'equipment_col': pick_col(['DUG/DUX (Material Code or Name)', 'DUW (Material Code or Name)', 'DXU Mat Code', 'DUG/DUX', 'DUG', 'DXU']),
+                        'serial_col': pick_col(['DUG/DUX Serial', 'DUW Serial', 'DUG Serial', 'DXU Serial', 'DUX Serial']),
+                        'number': '2'
+                    }
+                ]
+                equipment_columns = [pair for pair in legacy_pairs if pair['equipment_col'] and pair['serial_col']]
 
             if not site_col:
                 job.status = 'failed'
@@ -1709,7 +2002,7 @@ class AsyncProjectInventoryImportView(APIView):
                 
                 chunk_result = self._process_inventory_chunk(
                     chunk, job.project, job.plan, job.tenant, user, i + 1, 
-                    site_col, radio_col, radio_serial_col, dug_col, dug_serial_col
+                    site_col, equipment_columns
                 )
                 
                 # Update counters
@@ -1742,7 +2035,7 @@ class AsyncProjectInventoryImportView(APIView):
             job.save()
     
     def _process_inventory_chunk(self, chunk_df, project, plan, tenant, user, start_row_num, 
-                                site_col, radio_col, radio_serial_col, dug_col, dug_serial_col):
+                                site_col, equipment_columns):
         """Process a chunk of the inventory dataframe"""
         created = 0
         skipped = 0
@@ -1777,45 +2070,60 @@ class AsyncProjectInventoryImportView(APIView):
                 return str(v)
             return str(v)
 
-        with transaction.atomic():
-            for idx, row in chunk_df.iterrows():
-                rownum = start_row_num + (idx - chunk_df.index[0])
-                try:
-                    site_business_id = cell(row.get(site_col)).strip()
-                    if not site_business_id:
-                        continue
-                    
-                    # Resolve project_site by business site_id → master Site → ProjectSite link
-                    ps = ProjectSite.objects.filter(
+        for idx, row in chunk_df.iterrows():
+            rownum = start_row_num + (idx - chunk_df.index[0])
+            # Use individual savepoint for each row to prevent atomic block issues
+            sp = transaction.savepoint()
+            try:
+                site_business_id = cell(row.get(site_col)).strip()
+                if not site_business_id:
+                    transaction.savepoint_rollback(sp)
+                    continue
+                
+                # Resolve project_site by business site_id → master Site → ProjectSite link
+                ps = ProjectSite.objects.filter(
                         project=project,
                         site__site_id=site_business_id,
                         is_active=True
                     ).select_related('site').first()
 
-                    # Two potential serials per row
-                    pairs = []
-                    if radio_col or radio_serial_col:
-                        pairs.append((cell(row.get(radio_col)) if radio_col else '', cell(row.get(radio_serial_col)) if radio_serial_col else ''))
-                    if dug_col or dug_serial_col:
-                        pairs.append((cell(row.get(dug_col)) if dug_col else '', cell(row.get(dug_serial_col)) if dug_serial_col else ''))
+                # Process all equipment columns dynamically
+                for equipment_config in equipment_columns:
+                    equipment_col = equipment_config['equipment_col']
+                    serial_col = equipment_config['serial_col']
                     
-                    for equipment_name, serial in pairs:
-                        serial_str = cell(serial).strip()
-                        if not serial_str:
-                            continue
-                        
-                        eq = resolve_equipment(cell(equipment_name).strip()) if equipment_name is not None else None
-                        if not eq:
-                            errors.append({'row': rownum, 'error': f'Equipment not found: {equipment_name if equipment_name else "(empty)"}'})
-                            continue
+                    equipment_name = cell(row.get(equipment_col)) if equipment_col else ''
+                    serial = cell(row.get(serial_col)) if serial_col else ''
+                    
+                    # Skip if equipment name is empty - but ALLOW equipment with empty/blank/NA serials
+                    if not equipment_name or equipment_name.strip() == '':
+                        continue  # Continue to next equipment, not rollback entire row
+                            
+                    serial_str = serial.strip()
+                    # Handle "NA" as empty serial
+                    if serial_str.upper() == 'NA':
+                        serial_str = ''
+                    
+                    # IMPORTANT: Allow equipment without serial numbers - we should still create the inventory record
+                    # This ensures equipment with "NA", empty, or blank serials are included in the inventory
+                    # The equipment record should be created even if serial_str is empty
+                    
+                    eq = resolve_equipment(cell(equipment_name).strip()) if equipment_name is not None else None
+                    if not eq:
+                        errors.append({'row': rownum, 'error': f'Equipment not found: {equipment_name if equipment_name else "(empty)"}'})
+                        continue  # Continue to next equipment, not rollback entire row
 
-                        # Idempotent insert
-                        normalized = serial_str.strip().upper()
-                        # Check idempotency depending on link status
+                    # Idempotent insert - for equipment without serials, check by equipment_item instead
+                    normalized = serial_str.strip().upper() if serial_str else ''
+                    
+                    # Enhanced idempotency check - check by equipment_item + site + serial combination
+                    if serial_str:
+                        # For equipment with serial numbers, check by equipment + site + serial
                         if ps:
                             exists = ProjectSiteInventory.objects.filter(
                                 plan=plan,
                                 project_site=ps,
+                                equipment_item=eq,
                                 serial_normalized=normalized,
                                 deleted_at__isnull=True
                             ).exists()
@@ -1824,28 +2132,53 @@ class AsyncProjectInventoryImportView(APIView):
                                 plan=plan,
                                 project_site__isnull=True,
                                 site_id_business=site_business_id,
+                                equipment_item=eq,
                                 serial_normalized=normalized,
                                 deleted_at__isnull=True
                             ).exists()
-                        
-                        if exists:
-                            skipped += 1
-                            continue
+                    else:
+                        # For equipment without serial numbers, check by equipment_item + site to avoid duplicates
+                        if ps:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site=ps,
+                                equipment_item=eq,
+                                serial_number='',  # Empty serial
+                                deleted_at__isnull=True
+                            ).exists()
+                        else:
+                            exists = ProjectSiteInventory.objects.filter(
+                                plan=plan,
+                                project_site__isnull=True,
+                                site_id_business=site_business_id,
+                                equipment_item=eq,
+                                serial_number='',  # Empty serial
+                                deleted_at__isnull=True
+                            ).exists()
+                    
+                    if exists:
+                        skipped += 1
+                        continue  # Continue to next equipment, not rollback entire row
 
-                        item = ProjectSiteInventory(
-                            plan=plan,
-                            project_site=ps,  # may be None (deferred linking)
-                            equipment_item=eq,
-                            serial_number=serial_str,
-                            site_id_business=site_business_id,
-                            equipment_material_code=getattr(eq, 'material_code', '') or '',
-                            created_by=user,
-                        )
-                        item.save()
-                        created += 1
+                    item = ProjectSiteInventory(
+                        plan=plan,
+                        project_site=ps,  # may be None (deferred linking)
+                        equipment_item=eq,
+                        serial_number=serial_str,
+                        site_id_business=site_business_id,
+                        equipment_material_code=getattr(eq, 'material_code', '') or '',
+                        created_by=user,
+                    )
+                    item.save()
+                    created += 1
+                
+                # Commit the row savepoint if we reach here successfully
+                transaction.savepoint_commit(sp)
                         
-                except Exception as e:
-                    errors.append({'row': rownum, 'error': str(e)})
+            except Exception as e:
+                # Rollback this row and continue with next row
+                transaction.savepoint_rollback(sp)
+                errors.append({'row': rownum, 'error': str(e)})
 
         return {
             'created': created,
@@ -1882,7 +2215,7 @@ class ProjectInventoryBulkUploadJobStatusView(APIView):
                 # Get specific job
                 job = ProjectInventoryBulkUploadJob.objects.filter(
                     id=job_id,
-                    project=project,
+                        project=project,
                     tenant=tenant
                 ).first()
                 

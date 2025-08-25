@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState, useRef } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Box,
   Breadcrumbs,
@@ -30,19 +30,50 @@ import {
   Accordion,
   AccordionSummary,
   AccordionDetails,
+  Pagination,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  Divider,
 } from "@mui/material";
-import { Add, CloudUpload, Refresh, Download, PlaceOutlined, SortByAlpha, FormatListNumbered, ExpandLess, ExpandMore, ContentCopy, Search, ExpandMore as ExpandMoreIcon } from "@mui/icons-material";
+import {
+  Add,
+  CloudUpload,
+  Refresh,
+  Download,
+  PlaceOutlined,
+  SortByAlpha,
+  FormatListNumbered,
+  ExpandLess,
+  ExpandMore,
+  ContentCopy,
+  Search,
+  ExpandMore as ExpandMoreIcon,
+  FilterList,
+  Clear,
+} from "@mui/icons-material";
 import { API_ENDPOINTS, apiHelpers } from "../services/api";
 
 interface SerialRow {
   id: number;
-  project_site: number;
+  project_site: number | null;
   equipment_item: number;
   equipment_item_name: string;
   equipment_category?: string;
   serial_number: string;
   equipment_model?: string;
-  site_id_business?: string;
+  equipment_name?: string;
+  site_id_business: string; // Remove optional - this should always exist
+  equipment_material_code?: string;
+  site_details?: {
+    site_id?: string;
+    global_id?: string;
+    site_name?: string;
+    town?: string;
+    cluster?: string;
+    is_linked?: boolean;
+  };
 }
 
 interface UploadResult {
@@ -70,16 +101,57 @@ interface UploadResult {
   duration?: string;
 }
 
+interface InventoryFilters {
+  search: string;
+  equipment_type: string;
+  equipment_category: string;
+  site_id: string;
+}
+
+interface PaginationInfo {
+  page: number;
+  page_size: number;
+  total_count: number;
+  total_pages: number;
+}
+
 const ProjectInventoryPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Data states
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState<SerialRow[]>([]);
-  const [search, setSearch] = useState("");
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
+  const [siteInfoMap, setSiteInfoMap] = useState<Record<string, { site_id?: string; global_id?: string; site_name?: string }>>({});
+  const [sitesCount, setSitesCount] = useState<number>(0);
+
+  // Pagination state
+  const [pagination, setPagination] = useState<PaginationInfo>({
+    page: parseInt(searchParams.get("page") || "1"),
+    page_size: parseInt(searchParams.get("page_size") || "20"),
+    total_count: 0,
+    total_pages: 0,
+  });
+
+  // Filter states
+  const [filters, setFilters] = useState<InventoryFilters>({
+    search: searchParams.get("search") || "",
+    equipment_type: searchParams.get("equipment_type") || "",
+    equipment_category: searchParams.get("equipment_category") || "",
+    site_id: searchParams.get("site_id") || "",
+  });
+
+  // Search debounce state
+  const [searchInput, setSearchInput] = useState(filters.search);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Upload states
   const [openImport, setOpenImport] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [downloadingTemplate, setDownloadingTemplate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
 
@@ -93,13 +165,15 @@ const ProjectInventoryPage: React.FC = () => {
   // Refs for stable polling
   const activeJobIdRef = useRef<number | null>(null);
   const pollCountRef = useRef<number>(0);
+
+  // Display options
   const [siteSort, setSiteSort] = useState<"alpha" | "qty">("alpha");
   const [expandedRadio, setExpandedRadio] = useState(true);
   const [expandedDug, setExpandedDug] = useState(true);
-  const [typeFilter, setTypeFilter] = useState("");
-  const [siteInfoMap, setSiteInfoMap] = useState<Record<string, { site_id?: string; global_id?: string; site_name?: string }>>({});
-  const [totalCount, setTotalCount] = useState<number>(0);
-  const [sitesCount, setSitesCount] = useState<number>(0);
+
+  // Available filter options
+  const [equipmentTypes, setEquipmentTypes] = useState<string[]>([]);
+  const [equipmentCategories, setEquipmentCategories] = useState<string[]>([]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -109,55 +183,300 @@ const ProjectInventoryPage: React.FC = () => {
     }
   };
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)), { params: { page_size: 5000 } });
-      const list = Array.isArray(res) ? res : res?.results || [];
-      const count = Array.isArray(res) ? list.length : res?.count ?? list.length;
-      setTotalCount(count);
-      setRows(list);
+  // Update URL params when filters change
+  const updateURLParams = useCallback(
+    (newFilters: Partial<InventoryFilters>, newPage?: number) => {
+      const params = new URLSearchParams(searchParams);
 
-      // Fetch linked project sites once to enrich left list with global_id and site_name
-      try {
-        const siteRes: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.SITES.LIST(String(id)));
-        const siteList = Array.isArray(siteRes) ? siteRes : siteRes?.results || [];
-        const info: Record<string, { site_id?: string; global_id?: string; site_name?: string }> = {};
-        siteList.forEach((ps: any) => {
-          const d = ps?.site_details || {};
-          const payload = { site_id: d?.site_id, global_id: d?.global_id, site_name: d?.site_name };
-          if (d?.site_id) info[d.site_id] = payload;
-          // Some tenants use business Site ID in global_id; map both keys so lookups by either value work
-          if (d?.global_id) info[d.global_id] = payload;
-        });
-        setSiteInfoMap(info);
-        setSitesCount(siteList.length);
-      } catch (e) {
-        // best-effort enrichment; ignore failures
+      if (newPage !== undefined) {
+        params.set("page", newPage.toString());
       }
-    } finally {
-      setLoading(false);
-    }
-  };
 
-  useEffect(() => {
-    load();
+      Object.entries(newFilters).forEach(([key, value]) => {
+        if (value && value.trim()) {
+          params.set(key, value);
+        } else {
+          params.delete(key);
+        }
+      });
+
+      setSearchParams(params);
+    },
+    [searchParams, setSearchParams]
+  );
+
+  // Load inventory data with pagination and filters
+  const load = useCallback(
+    async (page?: number, filterOverrides?: Partial<InventoryFilters>) => {
+      setLoading(true);
+      try {
+        const currentPage = page || pagination.page;
+        const currentFilters = { ...filters, ...filterOverrides };
+
+        // Build API parameters (only use backend-supported filters)
+        const params: any = {
+          page: currentPage,
+          page_size: pagination.page_size,
+        };
+
+        // Only send search parameter (supported by backend)
+        if (currentFilters.search?.trim()) {
+          params.search = currentFilters.search.trim();
+        }
+
+        console.log("📊 Loading inventory data:", {
+          projectId: id,
+          page: currentPage,
+          params,
+          endpoint: API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)),
+        });
+
+        const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)), { params });
+
+        console.log("🔍 Raw API response:", res);
+        console.log("🔍 Response type:", typeof res, "Is array:", Array.isArray(res));
+
+        // Handle both paginated and non-paginated responses
+        let list: SerialRow[] = [];
+        let count = 0;
+        let totalPages = 1;
+
+        if (Array.isArray(res)) {
+          // Non-paginated response (direct array)
+          list = res.filter((item: any): item is SerialRow => item && typeof item === "object" && typeof item.id === "number" && typeof item.serial_number === "string");
+          count = list.length;
+          totalPages = 1;
+        } else if (res && typeof res === "object") {
+          // Paginated response
+          list = (res.results || []).filter((item: any): item is SerialRow => item && typeof item === "object" && typeof item.id === "number" && typeof item.serial_number === "string");
+          count = res.count ?? list.length;
+          totalPages = Math.max(1, Math.ceil(count / pagination.page_size));
+        }
+
+        console.log("✅ Processed data:", {
+          listLength: list.length,
+          count,
+          totalPages,
+          sampleItem: list[0],
+        });
+
+        setRows(list);
+        setPagination((prev) => ({
+          ...prev,
+          page: currentPage,
+          total_count: count,
+          total_pages: totalPages,
+        }));
+
+        // Update URL params
+        updateURLParams(currentFilters, currentPage);
+
+        console.log("✅ Inventory data loaded:", { count, totalPages, page: currentPage });
+
+        // Fetch linked project sites once to enrich left list with global_id and site_name
+        try {
+          const siteRes: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.SITES.LIST(String(id)));
+          const siteList = Array.isArray(siteRes) ? siteRes : siteRes?.results || [];
+          const info: Record<string, { site_id?: string; global_id?: string; site_name?: string }> = {};
+          siteList.forEach((ps: any) => {
+            const d = ps?.site_details || {};
+            const payload = { site_id: d?.site_id, global_id: d?.global_id, site_name: d?.site_name };
+            if (d?.site_id) info[d.site_id] = payload;
+            // Some tenants use business Site ID in global_id; map both keys so lookups by either value work
+            if (d?.global_id) info[d.global_id] = payload;
+          });
+          setSiteInfoMap(info);
+          setSitesCount(siteList.length);
+        } catch (e) {
+          console.warn("Failed to load site enrichment data:", e);
+        }
+      } catch (error: any) {
+        console.error("❌ Failed to load inventory data:", error);
+        console.error("❌ Error details:", {
+          status: error?.response?.status,
+          statusText: error?.response?.statusText,
+          data: error?.response?.data,
+          message: error?.message,
+          projectId: id,
+        });
+
+        let errorMessage = "Failed to load inventory data";
+        if (error?.response?.status === 404) {
+          errorMessage = "Project not found or you don't have access to this project";
+        } else if (error?.response?.data?.error?.message) {
+          errorMessage = error.response.data.error.message;
+        } else if (error?.response?.data?.detail) {
+          errorMessage = error.response.data.detail;
+        } else if (error?.message) {
+          errorMessage = error.message;
+        }
+
+        setError(errorMessage);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [id, pagination.page_size, filters, updateURLParams]
+  );
+
+  // Load filter options
+  const loadFilterOptions = useCallback(async () => {
+    try {
+      // Load equipment types and categories for filters
+      // This could be from a separate endpoint or derived from the current data
+      const params = { page_size: 1000, fields: "equipment_item_name,equipment_category" };
+      const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)), { params });
+      const list = Array.isArray(res) ? res : res?.results || [];
+
+      const types = Array.from(new Set(list.map((item: SerialRow) => item.equipment_item_name).filter(Boolean) as string[])).sort();
+      const categories = Array.from(new Set(list.map((item: SerialRow) => item.equipment_category).filter(Boolean) as string[])).sort();
+
+      setEquipmentTypes(types);
+      setEquipmentCategories(categories);
+    } catch (error) {
+      console.warn("Failed to load filter options:", error);
+    }
   }, [id]);
 
-  // Aggregate by site
+  // Debounced search effect
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    searchTimeoutRef.current = setTimeout(() => {
+      if (searchInput !== filters.search) {
+        handleFilterChange("search", searchInput);
+      }
+    }, 500); // 500ms delay
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [searchInput, filters.search]);
+
+  // Load data when component mounts or id changes
+  useEffect(() => {
+    if (id) {
+      load();
+      loadFilterOptions();
+    }
+  }, [id]);
+
+  // Handle filter changes
+  const handleFilterChange = useCallback(
+    (key: keyof InventoryFilters, value: string) => {
+      const newFilters = { ...filters, [key]: value };
+      setFilters(newFilters);
+      // Reset to page 1 when filters change
+      load(1, newFilters);
+    },
+    [filters, load]
+  );
+
+  // Handle page change
+  const handlePageChange = useCallback(
+    (event: React.ChangeEvent<unknown>, newPage: number) => {
+      load(newPage);
+    },
+    [load]
+  );
+
+  // Handle page size change
+  const handlePageSizeChange = useCallback(
+    (event: any) => {
+      const newPageSize = parseInt(event.target.value);
+      setPagination((prev) => ({ ...prev, page_size: newPageSize }));
+      load(1, filters); // Reset to page 1 with new page size
+    },
+    [filters, load]
+  );
+
+  // Clear all filters
+  const clearFilters = useCallback(() => {
+    const clearedFilters: InventoryFilters = {
+      search: "",
+      equipment_type: "",
+      equipment_category: "",
+      site_id: "",
+    };
+    setFilters(clearedFilters);
+    setSearchInput("");
+    load(1, clearedFilters);
+  }, [load]);
+
+  // Refresh data
+  const handleRefresh = useCallback(() => {
+    load(pagination.page, filters);
+  }, [load, pagination.page, filters]);
+
+  // Aggregate by site with robust data validation
   const { sites, bySite } = useMemo(() => {
+    console.log("🔍 Aggregating sites from rows:", rows.length, "rows");
+
+    // Validate data structure first
+    if (!Array.isArray(rows) || rows.length === 0) {
+      console.warn("⚠️ No valid rows data for site aggregation");
+      return { sites: [], bySite: {} };
+    }
+
+    console.log("📊 Sample row data:", rows[0]);
+
     const map: Record<string, { total: number; items: SerialRow[] }> = {};
+    const invalidRows: any[] = [];
+
     for (const r of rows) {
-      const site = (r as any).site_id_business || "Unknown";
+      // Validate row structure
+      if (!r || typeof r !== "object") {
+        invalidRows.push(r);
+        continue;
+      }
+
+      // Get site identifier with multiple fallbacks
+      let site = "Unknown";
+
+      if (r.site_id_business && typeof r.site_id_business === "string" && r.site_id_business.trim()) {
+        site = r.site_id_business.trim();
+      } else if (r.site_details?.site_id && typeof r.site_details.site_id === "string" && r.site_details.site_id.trim()) {
+        site = r.site_details.site_id.trim();
+      } else if (r.site_details?.global_id && typeof r.site_details.global_id === "string" && r.site_details.global_id.trim()) {
+        site = r.site_details.global_id.trim();
+      }
+
+      console.log("🏠 Processing row:", {
+        id: r.id,
+        site_id_business: r.site_id_business,
+        site_details: r.site_details,
+        resolved_site: site,
+      });
+
       if (!map[site]) map[site] = { total: 0, items: [] };
       map[site].total += 1;
       map[site].items.push(r);
     }
-    let siteList = Object.keys(map).filter((s) => s.toLowerCase().includes(search.toLowerCase()));
+
+    if (invalidRows.length > 0) {
+      console.warn("⚠️ Found invalid rows during aggregation:", invalidRows);
+    }
+
+    console.log("🗺️ Site map created:", Object.keys(map));
+
+    // Apply client-side site filtering if a specific site filter is applied
+    let siteList = Object.keys(map);
+    if (filters.site_id && filters.site_id.trim()) {
+      const searchTerm = filters.site_id.toLowerCase().trim();
+      siteList = siteList.filter((s) => s.toLowerCase().includes(searchTerm));
+    }
+
+    // Apply sorting
     siteList = siteSort === "alpha" ? siteList.sort((a, b) => a.localeCompare(b)) : siteList.sort((a, b) => map[b].total - map[a].total || a.localeCompare(b));
+
     const siteTuples = siteList.map((s) => ({ site: s, total: map[s].total }));
+    console.log("📋 Final sites list:", siteTuples);
     return { sites: siteTuples, bySite: map };
-  }, [rows, search, siteSort]);
+  }, [rows, filters.site_id, siteSort]);
 
   useEffect(() => {
     if (!selectedSite && sites.length > 0) setSelectedSite(sites[0].site);
@@ -226,9 +545,8 @@ const ProjectInventoryPage: React.FC = () => {
       }
 
       // Always use async for better progress tracking and user experience
-      // TEMPORARY: Use sync for now due to backend 500 error on async endpoint
-      const useAsync = false; // TODO: Fix backend async endpoint and re-enable
-      console.log(`⚠️ TEMPORARY: Using sync endpoint due to backend async issues`);
+      const useAsync = true; // Force async for all files - provides better UX, progress tracking, and performance
+      console.log(`🚀 FORCING ASYNC: Using async endpoint for all files (better UX & progress tracking)`);
 
       console.log(`🚨🚨🚨 File Analysis:`, {
         sizeMB: fileSizeMB.toFixed(2),
@@ -265,13 +583,14 @@ const ProjectInventoryPage: React.FC = () => {
 
       setUploadResult(res);
 
-      if (useAsync && res.job_id) {
-        // Start polling for async jobs
+      if (res.job_id) {
+        // Start polling for async jobs (always async now)
         console.log(`🚨🚨🚨 Starting job polling for async upload 🚨🚨🚨`);
         startJobStatusPolling(res.job_id);
         // Don't close modal for async uploads so user can see progress
       } else {
-        // Sync upload completed
+        // Fallback: if no job_id but still successful (shouldn't happen with async)
+        console.warn("⚠️ No job_id in response - unexpected for async upload");
         await load();
         setUploading(false);
       }
@@ -427,6 +746,23 @@ const ProjectInventoryPage: React.FC = () => {
     }
   };
 
+  // Handle template download with loading state
+  const handleTemplateDownload = async () => {
+    if (!id || downloadingTemplate) return;
+
+    setDownloadingTemplate(true);
+    try {
+      console.log(`📄 Starting template download for project ${id}`);
+      await apiHelpers.download(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_TEMPLATE(String(id)), "dismantle_planned_inventory_template.xlsx");
+      console.log(`✅ Template download completed successfully`);
+    } catch (error) {
+      console.error(`❌ Template download failed:`, error);
+      // Could show a toast/alert here if needed
+    } finally {
+      setDownloadingTemplate(false);
+    }
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       <Breadcrumbs sx={{ mb: 2 }}>
@@ -442,21 +778,18 @@ const ProjectInventoryPage: React.FC = () => {
             <Typography variant="h6" sx={{ fontWeight: 700, letterSpacing: 0.2 }}>
               Project Inventory (Dismantle)
             </Typography>
-            <Chip size="small" variant="outlined" label={`${totalCount} serial${totalCount === 1 ? "" : "s"}`} />
+            <Chip size="small" variant="outlined" label={`${pagination.total_count} serial${pagination.total_count === 1 ? "" : "s"}`} />
             <Chip size="small" variant="outlined" label={`${sitesCount} site${sitesCount === 1 ? "" : "s"}`} />
+            {pagination.total_pages > 1 && <Chip size="small" variant="outlined" color="primary" label={`Page ${pagination.page} of ${pagination.total_pages}`} />}
           </Stack>
           <Stack direction="row" spacing={1}>
             <Button variant="outlined" startIcon={<CloudUpload />} onClick={() => setOpenImport(true)}>
               Bulk Upload
             </Button>
-            <Button
-              variant="outlined"
-              startIcon={<Download />}
-              onClick={() => apiHelpers.download(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_TEMPLATE(String(id)), "dismantle_planned_inventory_template.xlsx")}
-            >
-              Template
+            <Button variant="outlined" startIcon={downloadingTemplate ? <CircularProgress size={18} color="inherit" /> : <Download />} onClick={handleTemplateDownload} disabled={downloadingTemplate}>
+              {downloadingTemplate ? "Downloading..." : "Template"}
             </Button>
-            <Button variant="text" startIcon={<Refresh />} onClick={load}>
+            <Button variant="text" startIcon={<Refresh />} onClick={handleRefresh}>
               Refresh
             </Button>
             <Button variant="contained" onClick={() => navigate(-1)}>
@@ -466,12 +799,92 @@ const ProjectInventoryPage: React.FC = () => {
         </Stack>
       </Paper>
 
+      {/* Filters Section */}
+      <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: 2 }}>
+        <Stack spacing={2}>
+          <Stack direction="row" spacing={1} alignItems="center">
+            <FilterList fontSize="small" color="primary" />
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Filters
+            </Typography>
+            {filters.search && (
+              <Button size="small" startIcon={<Clear />} onClick={clearFilters} color="error">
+                Clear Search
+              </Button>
+            )}
+          </Stack>
+
+          <Stack spacing={2}>
+            <Grid container spacing={2}>
+              <Grid size={{ xs: 12, sm: 6, md: 4 }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  label="Search"
+                  placeholder="Search serials, equipment models, or equipment names..."
+                  value={searchInput}
+                  onChange={(e) => setSearchInput(e.target.value)}
+                  InputProps={{
+                    startAdornment: (
+                      <InputAdornment position="start">
+                        <Search fontSize="small" />
+                      </InputAdornment>
+                    ),
+                  }}
+                />
+              </Grid>
+            </Grid>
+
+            <Divider />
+
+            <Typography variant="body2" color="text.secondary" sx={{ fontStyle: "italic" }}>
+              🚧 Additional filters (Equipment Type, Equipment Category, Site ID) are planned for future releases and require backend API enhancements.
+            </Typography>
+          </Stack>
+
+          {loading && <LinearProgress sx={{ mt: 1 }} />}
+        </Stack>
+      </Paper>
+
+      {/* Error Display */}
+      {error && (
+        <Paper variant="outlined" sx={{ p: 2, mb: 2, borderRadius: 2 }}>
+          <Alert severity="error" onClose={() => setError(null)}>
+            <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+              Failed to Load Project Inventory
+            </Typography>
+            <Typography variant="body2">{error}</Typography>
+            {error.includes("Project not found") && (
+              <Stack spacing={1} sx={{ mt: 2 }}>
+                <Typography variant="body2" sx={{ fontStyle: "italic" }}>
+                  💡 <strong>Troubleshooting steps:</strong>
+                </Typography>
+                <Typography variant="body2" component="div" sx={{ ml: 2 }}>
+                  1. Check the project ID in the URL: <code>/projects/{id}/inventory</code>
+                  <br />
+                  2. Verify you have access to this project
+                  <br />
+                  3. Ensure the project exists and is not deleted
+                  <br />
+                  4. Check if you need vendor permissions for this project
+                </Typography>
+                <Typography variant="body2" sx={{ fontStyle: "italic", color: "text.secondary" }}>
+                  🔧 If you believe this is a backend issue, check the browser console for detailed error information.
+                </Typography>
+              </Stack>
+            )}
+          </Alert>
+        </Paper>
+      )}
+
       <Grid container spacing={2}>
         {/* Left: Sites list */}
         <Grid size={{ xs: 12, md: 4 }}>
           <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2, position: "sticky", top: 8 }}>
-            <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
-              <TextField fullWidth size="small" placeholder="Search by Site ID…" value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                Sites ({sites.length})
+              </Typography>
               <ToggleButtonGroup size="small" value={siteSort} exclusive onChange={(_, v) => v && setSiteSort(v)} aria-label="sort sites">
                 <ToggleButton value="alpha" aria-label="sort-by-name">
                   <SortByAlpha fontSize="small" />
@@ -493,33 +906,53 @@ const ProjectInventoryPage: React.FC = () => {
                     </ListItemButton>
                   ))
                 : sites.map(({ site, total }) => {
+                    // Get enhanced site info from multiple sources
                     const extra = siteInfoMap[site];
-                    const primaryLabel = extra?.site_id || site;
-                    const secondary = [extra?.global_id, extra?.site_name].filter(Boolean).join(" • ");
+                    const sampleItem = bySite[site]?.items?.[0];
+                    const siteDetails = sampleItem?.site_details;
+
+                    // Determine primary label with fallbacks
+                    const primaryLabel = siteDetails?.site_id || extra?.site_id || site;
+
+                    // Build secondary info with site name and status
+                    const secondaryInfo = [];
+                    if (siteDetails?.site_name) {
+                      secondaryInfo.push(siteDetails.site_name);
+                    } else if (extra?.site_name) {
+                      secondaryInfo.push(extra.site_name);
+                    }
+
+                    if (siteDetails?.global_id && siteDetails.global_id !== primaryLabel) {
+                      secondaryInfo.push(siteDetails.global_id);
+                    } else if (extra?.global_id && extra.global_id !== primaryLabel) {
+                      secondaryInfo.push(extra.global_id);
+                    }
+
+                    // Show linking status
+                    const isLinked = siteDetails?.is_linked ?? false;
+
                     return (
                       <ListItemButton key={site} selected={selectedSite === site} onClick={() => setSelectedSite(site)} sx={{ borderRadius: 1, mb: 0.25, py: 1.25 }}>
                         <ListItemIcon sx={{ minWidth: 28 }}>
-                          <PlaceOutlined fontSize="small" color="primary" />
+                          <PlaceOutlined fontSize="small" color={isLinked ? "primary" : "action"} />
                         </ListItemIcon>
                         <ListItemText
                           primary={
-                            <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>
-                              {primaryLabel}
-                            </Typography>
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Typography variant="body2" sx={{ fontWeight: 700 }} noWrap>
+                                {primaryLabel}
+                              </Typography>
+                              {!isLinked && <Chip size="small" label="Unlinked" color="warning" variant="outlined" sx={{ fontSize: "0.6rem", height: 16 }} />}
+                            </Stack>
                           }
                           secondary={
-                            extra ? (
+                            secondaryInfo.length > 0 ? (
                               <Stack spacing={0.25}>
-                                {extra.site_name && (
-                                  <Typography variant="caption" color="text.secondary" noWrap>
-                                    {extra.site_name}
+                                {secondaryInfo.map((info, idx) => (
+                                  <Typography key={idx} variant="caption" color="text.secondary" noWrap>
+                                    {info}
                                   </Typography>
-                                )}
-                                {extra.global_id && (
-                                  <Typography variant="caption" color="text.secondary" noWrap>
-                                    {extra.global_id}
-                                  </Typography>
-                                )}
+                                ))}
                               </Stack>
                             ) : undefined
                           }
@@ -529,9 +962,16 @@ const ProjectInventoryPage: React.FC = () => {
                     );
                   })}
               {!loading && sites.length === 0 && (
-                <Typography variant="body2" color="text.secondary" sx={{ px: 1, py: 2 }}>
-                  No sites
-                </Typography>
+                <Stack spacing={1} sx={{ px: 1, py: 2 }}>
+                  <Typography variant="body2" color="text.secondary">
+                    {filters.search ? "No sites found matching your search" : "No sites available"}
+                  </Typography>
+                  {filters.search && (
+                    <Typography variant="caption" color="text.secondary" sx={{ fontStyle: "italic" }}>
+                      Searched for: "{filters.search}"
+                    </Typography>
+                  )}
+                </Stack>
               )}
             </List>
           </Paper>
@@ -638,6 +1078,41 @@ const ProjectInventoryPage: React.FC = () => {
         </Grid>
       </Grid>
 
+      {/* Pagination Controls */}
+      {pagination.total_pages > 1 && (
+        <Paper variant="outlined" sx={{ p: 2, mt: 2, borderRadius: 2 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={2} alignItems="center" justifyContent="space-between">
+            <Stack direction="row" spacing={2} alignItems="center">
+              <Typography variant="body2" color="text.secondary">
+                Showing {(pagination.page - 1) * pagination.page_size + 1} - {Math.min(pagination.page * pagination.page_size, pagination.total_count)} of {pagination.total_count} results
+              </Typography>
+
+              <FormControl size="small" sx={{ minWidth: 120 }}>
+                <InputLabel>Per Page</InputLabel>
+                <Select value={pagination.page_size} label="Per Page" onChange={handlePageSizeChange}>
+                  <MenuItem value={10}>10 per page</MenuItem>
+                  <MenuItem value={20}>20 per page</MenuItem>
+                  <MenuItem value={50}>50 per page</MenuItem>
+                  <MenuItem value={100}>100 per page</MenuItem>
+                </Select>
+              </FormControl>
+            </Stack>
+
+            <Pagination
+              count={pagination.total_pages}
+              page={pagination.page}
+              onChange={handlePageChange}
+              color="primary"
+              size="small"
+              showFirstButton
+              showLastButton
+              siblingCount={1}
+              boundaryCount={1}
+            />
+          </Stack>
+        </Paper>
+      )}
+
       {/* Bulk Upload Modal */}
       <Dialog
         open={openImport}
@@ -658,7 +1133,9 @@ const ProjectInventoryPage: React.FC = () => {
         <DialogContent>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <Typography variant="body2" color="text.secondary">
-              Excel/CSV with columns: Site ID, Radio, Radio Serial, DXU, DXU Serial
+              📄 Unified template with columns: Site ID, Equipment 1 (Material Code or Name), Equipment 1 Serial, Equipment 2 (Material Code or Name), Equipment 2 Serial, etc.
+              <br />
+              💡 Supports multiple equipment types per site. Use "NA" for missing serial numbers. Multiple rows per site are allowed.
             </Typography>
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1} alignItems={{ xs: "stretch", sm: "center" }}>
               <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => setFile(e.target.files?.[0] || null)} disabled={uploading} />
@@ -668,13 +1145,11 @@ const ProjectInventoryPage: React.FC = () => {
             {uploading && (
               <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
                 <Typography variant="h6" gutterBottom>
-                  {isAsyncUpload ? "Processing Large File..." : "Uploading..."}
+                  Processing File...
                 </Typography>
-                {isAsyncUpload && (
-                  <Typography variant="body2" color="info.main" sx={{ mb: 1 }}>
-                    ⚡ Large file detected - using background processing to prevent timeouts
-                  </Typography>
-                )}
+                <Typography variant="body2" color="info.main" sx={{ mb: 1 }}>
+                  ⚡ Using async processing for optimal performance and progress tracking
+                </Typography>
 
                 {uploadResult?.status === "processing" && (
                   <>
@@ -929,7 +1404,7 @@ const ProjectInventoryPage: React.FC = () => {
             Close
           </Button>
           <Button variant="contained" disabled={!file || uploading} startIcon={uploading ? <CircularProgress size={18} color="inherit" /> : undefined} onClick={handleBulkUpload}>
-            {uploading ? (isAsyncUpload ? "Processing..." : "Uploading...") : "Upload"}
+            {uploading ? "Processing..." : "Upload"}
           </Button>
           {/* Show "Close" button when upload completes with errors */}
           {uploadResult && ((uploadResult.error_count && uploadResult.error_count > 0) || (uploadResult.errors && uploadResult.errors.length > 0)) && !uploading && (

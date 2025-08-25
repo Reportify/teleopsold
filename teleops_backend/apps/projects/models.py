@@ -278,17 +278,17 @@ class ProjectSiteInventory(models.Model):
     class Meta:
         db_table = 'project_site_inventory'
         constraints = [
-            # Uniqueness when linked to a project_site
+            # Uniqueness when linked to a project_site (includes equipment_item to allow multiple equipment with same serial)
             models.UniqueConstraint(
-                fields=['plan', 'project_site', 'serial_normalized'],
+                fields=['plan', 'project_site', 'equipment_item', 'serial_normalized'],
                 condition=models.Q(deleted_at__isnull=True, project_site__isnull=False),
-                name='uniq_serial_plan_site_linked'
+                name='uniq_equipment_serial_plan_site_linked'
             ),
-            # Uniqueness when not yet linked (deferred linking) using business site id
+            # Uniqueness when not yet linked (deferred linking) using business site id (includes equipment_item)
             models.UniqueConstraint(
-                fields=['plan', 'site_id_business', 'serial_normalized'],
+                fields=['plan', 'site_id_business', 'equipment_item', 'serial_normalized'],
                 condition=models.Q(deleted_at__isnull=True, project_site__isnull=True),
-                name='uniq_serial_plan_business_site_unlinked'
+                name='uniq_equipment_serial_plan_business_site_unlinked'
             ),
         ]
         indexes = [

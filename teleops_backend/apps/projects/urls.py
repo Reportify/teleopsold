@@ -27,6 +27,7 @@ urlpatterns = [
     path('<int:project_id>/inventory/dismantle/upload-async/', AsyncProjectInventoryImportView.as_view(), name='project-inventory-import-async'),
     path('<int:project_id>/inventory/dismantle/upload-jobs/', ProjectInventoryBulkUploadJobStatusView.as_view(), name='project-inventory-import-jobs'),
     path('<int:project_id>/inventory/dismantle/upload-jobs/<int:job_id>/', ProjectInventoryBulkUploadJobStatusView.as_view(), name='project-inventory-import-job-detail'),
+    path('<int:project_id>/inventory/dismantle/template/', ProjectInventoryImportView.as_view(), name='project-inventory-template'),
     
     # Vendor Invitations (public, token-based)
     path('invitations/<str:token>/', VendorInvitationPublicViewSet.as_view({'get': 'preview'}), name='vendor-invite-preview'),

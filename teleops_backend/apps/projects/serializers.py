@@ -469,15 +469,43 @@ class ProjectSiteInventorySerializer(serializers.ModelSerializer):
     equipment_item_name = serializers.CharField(source='equipment_item.name', read_only=True)
     equipment_category = serializers.CharField(source='equipment_item.category', read_only=True)
     project_site_id = serializers.IntegerField(source='project_site.id', read_only=True)
+    site_details = serializers.SerializerMethodField()
 
     class Meta:
         model = ProjectSiteInventory
         fields = [
             'id', 'plan', 'project_site', 'project_site_id', 'equipment_item', 'equipment_item_name', 'equipment_category',
             'serial_number', 'serial_normalized', 'equipment_name', 'equipment_model', 'site_id_business',
-            'remarks', 'created_at', 'updated_at'
+            'equipment_material_code', 'site_details', 'remarks', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'serial_normalized', 'equipment_name', 'equipment_model', 'site_id_business', 'created_at', 'updated_at']
+
+    def get_site_details(self, obj):
+        """Get detailed site information for better frontend display"""
+        # Try to get site details from linked project_site first
+        if obj.project_site and obj.project_site.site:
+            site = obj.project_site.site
+            return {
+                'site_id': site.site_id,
+                'global_id': site.global_id,
+                'site_name': site.site_name,
+                'town': site.town,
+                'cluster': site.cluster,
+                'is_linked': True
+            }
+        
+        # For unlinked inventory, provide basic info from business id
+        if obj.site_id_business:
+            return {
+                'site_id': obj.site_id_business,
+                'global_id': obj.site_id_business,  # Fallback
+                'site_name': f"Site {obj.site_id_business}",  # Fallback name
+                'town': None,
+                'cluster': None,
+                'is_linked': False
+            }
+        
+        return None
 
 
 class DismantleBulkUploadSerializer(serializers.Serializer):
