@@ -149,4 +149,26 @@ export class FlowService {
       return createApiError<any>("Failed to fetch statistics");
     }
   }
+
+  static async createTasksFromFlow(taskCreationConfig: any): Promise<ApiResponse<any>> {
+    try {
+      const response = await apiHelpers.post(API_ENDPOINTS.TASKS.CREATE_FROM_FLOW, taskCreationConfig);
+      return {
+        data: response,
+        success: true,
+        message: "Tasks created successfully from flow template",
+      };
+    } catch (error: any) {
+      console.error("Failed to create tasks from flow:", error);
+
+      // Extract error message from response
+      const errorMessage = error.response?.data?.message || error.message || "Failed to create tasks from flow template";
+
+      return {
+        data: null,
+        success: false,
+        message: errorMessage,
+      };
+    }
+  }
 }

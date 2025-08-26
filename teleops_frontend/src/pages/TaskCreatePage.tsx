@@ -43,6 +43,7 @@ import {
   Switch,
   FormGroup,
   Tooltip,
+  Autocomplete,
 } from "@mui/material";
 import {
   ArrowBack,
@@ -66,10 +67,29 @@ import {
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
 import { TaskType, ActivityType, AssignmentType } from "../types/task";
-import { FlowTemplate } from "../types/flow";
+import { FlowTemplate, FlowActivity } from "../types/flow";
 import { FlowService } from "../services/flowService";
 import projectService, { Project } from "../services/projectService";
 import siteService, { ProjectSite, Site } from "../services/siteService";
+
+// Backend flow activity interface with assigned_sites and dependency info
+interface BackendFlowActivity extends Omit<FlowActivity, "id" | "dependencies"> {
+  id: string;
+  dependencies?: string[];
+  assigned_sites?: {
+    id: string;
+    flow_site: {
+      id: string;
+      alias: string;
+      order: number;
+    };
+    is_required: boolean;
+    execution_order: number;
+  }[];
+  // Add dependency-related fields that exist in the backend
+  dependency_scope?: "SITE_LOCAL" | "CROSS_SITE" | "GLOBAL";
+  parallel_execution?: boolean;
+}
 
 // New interfaces for flow-based task creation
 interface TaskFromFlowPreview {
@@ -85,7 +105,6 @@ interface TaskSiteGroupPreview {
   site_alias: string;
   site_name: string;
   site_global_id: string;
-  role: string;
 }
 
 interface TaskSubActivityPreview {
@@ -94,18 +113,18 @@ interface TaskSubActivityPreview {
   activity_type: string;
   site_alias: string;
   dependencies: string[];
-  dependency_scope: string;
+  dependency_scope: "SITE_LOCAL" | "CROSS_SITE" | "GLOBAL";
   parallel_execution: boolean;
 }
 
 interface SiteGroupConfig {
-  sites: { [alias: string]: number }; // alias -> site_id mapping
+  sites: { [alias: string]: number }; // alias -> project_site_id mapping
   client_task_id?: string;
 }
 
 interface TaskCreationConfig {
   flow_template_id: string;
-  project_id: number;
+  project_id: number; // Backend now accepts numeric IDs to match Project model
   site_groups: SiteGroupConfig[];
   task_naming: {
     auto_id_prefix?: string;
@@ -404,7 +423,7 @@ const TaskCreatePage: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error("Failed to load flow templates:", error);
+      console.error("Failed to load flow templates", error);
     } finally {
       setLoadingFlows(false);
     }
@@ -576,18 +595,13 @@ const TaskCreatePage: React.FC = () => {
     // Get required site aliases from flow template
     const requiredAliases = selectedFlowTemplate.sites?.map((site) => site.alias) || [];
 
-    // Create site groups based on available sites
-    const groups: SiteGroupConfig[] = [];
-
-    // For now, create one group with all sites
-    // In the future, this could be enhanced to create multiple groups
+    // Create initial site group
     const group: SiteGroupConfig = {
       sites: {},
     };
 
     requiredAliases.forEach((alias) => {
-      // Find a site that matches this alias requirement
-      // For now, assign the first available site
+      // Find the first available site for this alias
       const availableSite = projectSites.find((site) => !Object.values(group.sites).includes(site.id));
 
       if (availableSite) {
@@ -600,7 +614,27 @@ const TaskCreatePage: React.FC = () => {
     }
   }, [selectedFlowTemplate, projectSites]);
 
-  const handleSiteGroupUpdate = (groupIndex: number, alias: string, siteId: number) => {
+  const handleAddSiteGroup = useCallback(() => {
+    if (!selectedFlowTemplate) return;
+
+    const requiredAliases = selectedFlowTemplate.sites?.map((site) => site.alias) || [];
+    const newGroup: SiteGroupConfig = {
+      sites: {},
+    };
+
+    // Initialize with empty sites - user will select them
+    requiredAliases.forEach((alias) => {
+      newGroup.sites[alias] = 0; // 0 means no site selected yet
+    });
+
+    setSiteGroups((prev) => [...prev, newGroup]);
+  }, [selectedFlowTemplate]);
+
+  const handleRemoveSiteGroup = useCallback((groupIndex: number) => {
+    setSiteGroups((prev) => prev.filter((_, index) => index !== groupIndex));
+  }, []);
+
+  const handleSiteGroupUpdate = (groupIndex: number, alias: string, projectSiteId: number) => {
     setSiteGroups((prev) =>
       prev.map((group, index) => {
         if (index === groupIndex) {
@@ -608,7 +642,7 @@ const TaskCreatePage: React.FC = () => {
             ...group,
             sites: {
               ...group.sites,
-              [alias]: siteId,
+              [alias]: projectSiteId,
             },
           };
         }
@@ -639,29 +673,43 @@ const TaskCreatePage: React.FC = () => {
       // This would call the backend API to preview task creation
       // For now, we'll create a mock preview
       const preview: TaskFromFlowPreview[] = siteGroups.map((group, index) => ({
-        task_id: group.client_task_id || `TASK${taskNaming.auto_id_start + index}`,
+        task_id: group.client_task_id || `${taskNaming.auto_id_prefix || "TASK"}${taskNaming.auto_id_start + index}`,
         task_name: `${selectedFlowTemplate.name} Task`,
         project_name: projects.find((p) => p.id === taskBuilder.project_id)?.name || "",
         flow_template_name: selectedFlowTemplate.name,
-        site_groups: Object.entries(group.sites).map(([alias, siteId]) => {
-          const site = projectSites.find((s) => s.id === siteId);
-          return {
-            site_alias: alias,
-            site_name: site?.site_details?.site_name || site?.site?.name || "",
-            site_global_id: site?.site_details?.global_id || site?.site?.global_id || "",
-            role: index === 0 ? "PRIMARY" : "SECONDARY",
-          };
-        }),
+        site_groups: Object.entries(group.sites)
+          .filter(([alias, projectSiteId]) => projectSiteId > 0) // Only include selected project sites
+          .map(([alias, projectSiteId]) => {
+            const projectSite = projectSites.find((s) => s.id === projectSiteId);
+            return {
+              site_alias: alias,
+              site_name: projectSite?.site_details?.site_name || projectSite?.site?.name || "",
+              site_global_id: projectSite?.site_details?.global_id || projectSite?.site?.global_id || "",
+            };
+          }),
         sub_activities:
-          selectedFlowTemplate.activities?.map((activity) => ({
-            sequence_order: activity.sequence_order,
-            activity_name: activity.activity_name,
-            activity_type: activity.activity_type,
-            site_alias: "", // FlowActivity doesn't have assigned_sites in the current type
-            dependencies: activity.dependencies || [],
-            dependency_scope: "SITE_LOCAL", // Default value since FlowActivity doesn't have this
-            parallel_execution: false, // Default value since FlowActivity doesn't have this
-          })) || [],
+          selectedFlowTemplate.activities?.map((activity) => {
+            const backendActivity = activity as BackendFlowActivity;
+            return {
+              sequence_order: activity.sequence_order,
+              activity_name: activity.activity_name,
+              activity_type: activity.activity_type,
+              site_alias:
+                backendActivity.assigned_sites && backendActivity.assigned_sites.length > 0
+                  ? backendActivity.assigned_sites
+                      .map((siteAssignment) => {
+                        const alias = siteAssignment.flow_site.alias;
+                        // Extract just the alias if it's formatted as "Site Name (Alias)"
+                        const match = alias.match(/\(([^)]+)\)$/);
+                        return match ? match[1] : alias;
+                      })
+                      .join(", ")
+                  : "All Sites",
+              dependencies: backendActivity.dependencies || activity.dependencies || [],
+              dependency_scope: backendActivity.dependency_scope || "SITE_LOCAL",
+              parallel_execution: backendActivity.parallel_execution || false,
+            };
+          }) || [],
       }));
 
       setTaskPreview(preview);
@@ -680,19 +728,24 @@ const TaskCreatePage: React.FC = () => {
     try {
       const config: TaskCreationConfig = {
         flow_template_id: selectedFlowTemplate.id,
-        project_id: taskBuilder.project_id,
+        project_id: taskBuilder.project_id, // Backend now accepts numeric IDs
         site_groups: siteGroups,
         task_naming: taskNaming,
       };
 
-      // TODO: Call the backend API
-      // const response = await FlowService.createTasksFromFlow(config);
-      console.log("Creating tasks with config:", config);
+      // Call the backend API
+      const response = await FlowService.createTasksFromFlow(config);
 
-      // For now, just navigate back
-      navigate("/tasks");
-    } catch (error) {
-      setApiError("Failed to create tasks");
+      if (response.success) {
+        const { created_count, total_sites } = response.data;
+        alert(`Successfully created ${created_count} task${created_count > 1 ? "s" : ""} across ${total_sites} site${total_sites > 1 ? "s" : ""}!`);
+        navigate("/tasks");
+      } else {
+        setApiError(response.message || "Failed to create tasks");
+      }
+    } catch (error: any) {
+      console.error("Failed to create tasks:", error);
+      setApiError(error.response?.data?.message || error.message || "Failed to create tasks");
     } finally {
       setLoadingTaskCreation(false);
     }
@@ -915,80 +968,130 @@ const TaskCreatePage: React.FC = () => {
                     <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
                       <Typography variant="h6">Site Group Configuration</Typography>
                       <Button variant="outlined" startIcon={<Refresh />} onClick={generateSiteGroups} disabled={!selectedFlowTemplate || !projectSites.length}>
-                        Generate Site Groups
+                        Generate Initial Group
                       </Button>
                     </Box>
 
                     {siteGroups.length === 0 ? (
-                      <Alert severity="info">Click "Generate Site Groups" to automatically configure site assignments based on the flow template requirements.</Alert>
+                      <Alert severity="info">
+                        Click "Generate Initial Group" to create the first site group based on the flow template requirements. You can then add more site groups to create multiple tasks at once.
+                      </Alert>
                     ) : (
-                      siteGroups.map((group, groupIndex) => (
-                        <Accordion key={groupIndex} defaultExpanded sx={{ mb: 2 }}>
-                          <AccordionSummary expandIcon={<ExpandMore />}>
-                            <Typography variant="subtitle1">Site Group {groupIndex + 1}</Typography>
-                          </AccordionSummary>
-                          <AccordionDetails>
-                            <Grid container spacing={2}>
-                              {/* Client Task ID */}
-                              <Grid size={{ xs: 12 }}>
-                                <TextField
-                                  fullWidth
-                                  label="Client Task ID (optional)"
-                                  placeholder="e.g., CLIENT-001"
-                                  value={group.client_task_id || ""}
-                                  onChange={(e) => handleClientTaskIdChange(groupIndex, e.target.value)}
-                                  helperText="Provide a client-specific task ID, or leave blank for auto-generation"
-                                />
-                              </Grid>
+                      <>
+                        <Alert severity="info" sx={{ mb: 2 }}>
+                          Each site group will create one task. You currently have {siteGroups.length} site group{siteGroups.length > 1 ? "s" : ""}, which will create {siteGroups.length} task
+                          {siteGroups.length > 1 ? "s" : ""}.
+                        </Alert>
 
-                              {/* Site Assignments */}
-                              {selectedFlowTemplate.sites?.map((flowSite) => (
-                                <Grid size={{ xs: 12, md: 6 }} key={flowSite.alias}>
-                                  <FormControl fullWidth>
-                                    <InputLabel>{flowSite.alias} Site</InputLabel>
-                                    <Select
-                                      value={group.sites[flowSite.alias] || ""}
-                                      onChange={(e) => handleSiteGroupUpdate(groupIndex, flowSite.alias, e.target.value as number)}
-                                      label={`${flowSite.alias} Site`}
-                                    >
-                                      <MenuItem value="">
-                                        <em>Select a site</em>
-                                      </MenuItem>
-                                      {projectSites.map((projectSite) => {
-                                        const siteData = projectSite.site_details || projectSite.site;
-                                        if (!siteData) return null;
-
-                                        return (
-                                          <MenuItem key={projectSite.id} value={projectSite.id}>
-                                            <Box>
-                                              <Typography variant="body2">{siteData.site_name || siteData.name || siteData.id}</Typography>
-                                              <Typography variant="caption" color="text.secondary">
-                                                {siteData.global_id || siteData.id} • {siteData.cluster || siteData.circle || "N/A"}
-                                              </Typography>
-                                            </Box>
-                                          </MenuItem>
-                                        );
-                                      })}
-                                    </Select>
-                                  </FormControl>
+                        {siteGroups.map((group, groupIndex) => (
+                          <Accordion key={groupIndex} defaultExpanded sx={{ mb: 2 }}>
+                            <AccordionSummary expandIcon={<ExpandMore />}>
+                              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                                <Typography variant="subtitle1">
+                                  Task {groupIndex + 1} - Site Group {groupIndex + 1}
+                                </Typography>
+                                {siteGroups.length > 1 && (
+                                  <IconButton
+                                    size="small"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRemoveSiteGroup(groupIndex);
+                                    }}
+                                    sx={{ color: "error.main" }}
+                                  >
+                                    <Delete fontSize="small" />
+                                  </IconButton>
+                                )}
+                              </Box>
+                            </AccordionSummary>
+                            <AccordionDetails>
+                              <Grid container spacing={2}>
+                                {/* Client Task ID */}
+                                <Grid size={{ xs: 12 }}>
+                                  <TextField
+                                    fullWidth
+                                    label="Client Task ID (optional)"
+                                    placeholder="e.g., CLIENT-001"
+                                    value={group.client_task_id || ""}
+                                    onChange={(e) => handleClientTaskIdChange(groupIndex, e.target.value)}
+                                    helperText="Provide a client-specific task ID, or leave blank for auto-generation"
+                                  />
                                 </Grid>
-                              ))}
-                            </Grid>
-                          </AccordionDetails>
-                        </Accordion>
-                      ))
+
+                                {/* Site Assignments */}
+                                {selectedFlowTemplate.sites?.map((flowSite) => (
+                                  <Grid size={{ xs: 12, md: 6 }} key={flowSite.alias}>
+                                    <FormControl fullWidth>
+                                      <Autocomplete<ProjectSite>
+                                        options={projectSites}
+                                        getOptionLabel={(option: ProjectSite) => {
+                                          const siteData = option.site_details || option.site;
+                                          if (!siteData) return "Unknown Site";
+                                          return String(siteData.site_name || siteData.name || siteData.id || "Unknown Site");
+                                        }}
+                                        renderOption={(props: React.HTMLAttributes<HTMLLIElement>, option: ProjectSite) => {
+                                          const siteData = option.site_details || option.site;
+                                          if (!siteData) return null;
+
+                                          return (
+                                            <Box component="li" {...props}>
+                                              <Box>
+                                                <Typography variant="body2">{siteData.site_name || siteData.name || siteData.id}</Typography>
+                                                <Typography variant="caption" color="text.secondary">
+                                                  {siteData.global_id || siteData.id} • {siteData.cluster || siteData.circle || "N/A"}
+                                                </Typography>
+                                              </Box>
+                                            </Box>
+                                          );
+                                        }}
+                                        value={projectSites.find((site) => site.id === group.sites[flowSite.alias]) || null}
+                                        onChange={(event: React.SyntheticEvent, newValue: ProjectSite | null) => {
+                                          handleSiteGroupUpdate(groupIndex, flowSite.alias, newValue?.id || 0);
+                                        }}
+                                        renderInput={(params) => <TextField {...params} label={`${flowSite.alias} Site`} placeholder="Search sites..." size="small" />}
+                                        filterOptions={(options: ProjectSite[], { inputValue }: { inputValue: string }) => {
+                                          if (!inputValue) return options;
+
+                                          return options.filter((option: ProjectSite) => {
+                                            const siteData = option.site_details || option.site;
+                                            if (!siteData) return false;
+
+                                            const siteName = String(siteData.site_name || siteData.name || siteData.id || "").toLowerCase();
+                                            const globalId = String(siteData.global_id || siteData.id || "").toLowerCase();
+                                            const cluster = String(siteData.cluster || siteData.circle || "").toLowerCase();
+                                            const searchTerm = inputValue.toLowerCase();
+
+                                            return siteName.includes(searchTerm) || globalId.includes(searchTerm) || cluster.includes(searchTerm);
+                                          });
+                                        }}
+                                        isOptionEqualToValue={(option: ProjectSite, value: ProjectSite) => option.id === value.id}
+                                        noOptionsText="No sites found"
+                                        clearOnBlur={false}
+                                        openOnFocus
+                                      />
+                                    </FormControl>
+                                  </Grid>
+                                ))}
+                              </Grid>
+                            </AccordionDetails>
+                          </Accordion>
+                        ))}
+                      </>
                     )}
                   </CardContent>
                 </Card>
 
-                {/* Preview Button */}
-                <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
+                {/* Action Buttons */}
+                <Box sx={{ display: "flex", justifyContent: "center", gap: 2, mt: 3 }}>
+                  <Button variant="outlined" size="large" startIcon={<Add />} onClick={handleAddSiteGroup} disabled={!selectedFlowTemplate || siteGroups.length === 0}>
+                    Add Site Group
+                  </Button>
                   <Button
                     variant="contained"
                     size="large"
                     startIcon={<Preview />}
                     onClick={previewTaskCreation}
-                    disabled={!siteGroups.length || siteGroups.some((group) => Object.keys(group.sites).length === 0)}
+                    disabled={!siteGroups.length || siteGroups.some((group) => Object.keys(group.sites).length === 0 || Object.values(group.sites).some((siteId) => siteId <= 0))}
                     loading={loadingTaskCreation}
                   >
                     Preview Task Creation
@@ -1060,18 +1163,20 @@ const TaskCreatePage: React.FC = () => {
                   <Card sx={{ mb: 2 }}>
                     <CardContent>
                       <Typography variant="h6" gutterBottom color="primary">
-                        Site Groups Configuration
+                        Tasks to be Created ({siteGroups.length})
                       </Typography>
                       {siteGroups.map((group, index) => (
                         <Box key={index} sx={{ mb: 2, p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
                           <Typography variant="subtitle1" gutterBottom>
-                            Site Group {index + 1}
+                            Task {index + 1} - Site Group {index + 1}
                             {group.client_task_id && <Chip label={`Client ID: ${group.client_task_id}`} size="small" color="primary" sx={{ ml: 1 }} />}
                           </Typography>
                           <Grid container spacing={2}>
-                            {Object.entries(group.sites).map(([alias, siteId]) => {
-                              const site = projectSites.find((s) => s.id === siteId);
-                              const siteData = site?.site_details || site?.site;
+                            {Object.entries(group.sites).map(([alias, projectSiteId]) => {
+                              if (projectSiteId <= 0) return null; // Skip unselected project sites
+
+                              const projectSite = projectSites.find((s) => s.id === projectSiteId);
+                              const siteData = projectSite?.site_details || projectSite?.site;
 
                               return (
                                 <Grid size={{ xs: 12, md: 6 }} key={alias}>
@@ -1098,7 +1203,7 @@ const TaskCreatePage: React.FC = () => {
                       Preview Tasks
                     </Button>
                     <Button variant="contained" size="large" startIcon={<Save />} onClick={createTasksFromFlow} disabled={loadingTaskCreation} loading={loadingTaskCreation}>
-                      Create Tasks from Flow
+                      Create {siteGroups.length} Task{siteGroups.length > 1 ? "s" : ""} from Flow
                     </Button>
                   </Box>
                 </Grid>
@@ -1129,11 +1234,16 @@ const TaskCreatePage: React.FC = () => {
   const isStepValid = (step: number) => {
     switch (step) {
       case 0:
-        return taskBuilder.task_name && taskBuilder.project_id && taskBuilder.description;
+        return taskBuilder.task_name && taskBuilder.project_id; // Description is now optional
       case 1:
         return selectedFlowTemplate !== null;
       case 2:
-        return siteGroups.length > 0 && siteGroups.every((group) => Object.keys(group.sites).length > 0);
+        return (
+          siteGroups.length > 0 &&
+          siteGroups.every(
+            (group) => Object.keys(group.sites).length > 0 && Object.values(group.sites).every((siteId) => siteId > 0) // Ensure all sites are actually selected
+          )
+        );
       case 3:
         return selectedFlowTemplate !== null && siteGroups.length > 0;
       default:
@@ -1278,95 +1388,127 @@ const TaskCreatePage: React.FC = () => {
           </Typography>
         </DialogTitle>
         <DialogContent>
-          {taskPreview.map((task, index) => (
-            <Card key={index} sx={{ mb: 3 }}>
-              <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  {task.task_name} - {task.task_id}
-                </Typography>
-
-                <Grid container spacing={2} sx={{ mb: 2 }}>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Project:</strong> {task.project_name}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Flow Template:</strong> {task.flow_template_name}
-                    </Typography>
+          {taskPreview.length > 0 && (
+            <>
+              {/* Common Task Information */}
+              <Card sx={{ mb: 3, bgcolor: "primary.50" }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom color="primary">
+                    Task Creation Summary
+                  </Typography>
+                  <Grid container spacing={3}>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Task Name:</strong> {taskBuilder.task_name}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Description:</strong> {taskBuilder.description || "No description provided"}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Priority:</strong> {taskBuilder.priority}
+                      </Typography>
+                    </Grid>
+                    <Grid size={{ xs: 12, md: 6 }}>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Project:</strong> {taskPreview[0].project_name}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Flow Template:</strong> {taskPreview[0].flow_template_name}
+                      </Typography>
+                      <Typography variant="body2" sx={{ mb: 1 }}>
+                        <strong>Tasks to Create:</strong> {taskPreview.length}
+                      </Typography>
+                    </Grid>
                   </Grid>
-                  <Grid size={{ xs: 12, md: 6 }}>
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Site Groups:</strong> {task.site_groups.length}
-                    </Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      <strong>Sub-activities:</strong> {task.sub_activities.length}
-                    </Typography>
-                  </Grid>
-                </Grid>
+                </CardContent>
+              </Card>
 
-                {/* Site Groups */}
-                <Typography variant="subtitle2" gutterBottom>
-                  Site Groups:
-                </Typography>
-                <TableContainer component={Paper} variant="outlined" sx={{ mb: 2 }}>
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Alias</TableCell>
-                        <TableCell>Site Name</TableCell>
-                        <TableCell>Global ID</TableCell>
-                        <TableCell>Role</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {task.site_groups.map((siteGroup, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{siteGroup.site_alias}</TableCell>
-                          <TableCell>{siteGroup.site_name}</TableCell>
-                          <TableCell>{siteGroup.site_global_id}</TableCell>
-                          <TableCell>{siteGroup.role}</TableCell>
+              {/* Task Flow (Sub-activities) */}
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom color="primary">
+                    Task Flow - Sub-activities ({taskPreview[0].sub_activities.length})
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                    This workflow will be applied to all {taskPreview.length} task{taskPreview.length > 1 ? "s" : ""}
+                  </Typography>
+                  <TableContainer component={Paper} variant="outlined">
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Order</TableCell>
+                          <TableCell>Activity</TableCell>
+                          <TableCell>Type</TableCell>
+                          <TableCell>Site Alias</TableCell>
+                          <TableCell>Dependencies</TableCell>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
+                      </TableHead>
+                      <TableBody>
+                        {taskPreview[0].sub_activities.map((activity, idx) => (
+                          <TableRow key={idx}>
+                            <TableCell>{activity.sequence_order}</TableCell>
+                            <TableCell>{activity.activity_name}</TableCell>
+                            <TableCell>{activity.activity_type}</TableCell>
+                            <TableCell>{activity.site_alias || "All Sites"}</TableCell>
+                            <TableCell>{activity.dependencies.length > 0 ? activity.dependencies.join(", ") : "None"}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                </CardContent>
+              </Card>
 
-                {/* Sub-activities */}
-                <Typography variant="subtitle2" gutterBottom>
-                  Sub-activities:
-                </Typography>
-                <TableContainer component={Paper} variant="outlined">
-                  <Table size="small">
-                    <TableHead>
-                      <TableRow>
-                        <TableCell>Order</TableCell>
-                        <TableCell>Activity</TableCell>
-                        <TableCell>Type</TableCell>
-                        <TableCell>Site Alias</TableCell>
-                        <TableCell>Dependencies</TableCell>
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {task.sub_activities.map((activity, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{activity.sequence_order}</TableCell>
-                          <TableCell>{activity.activity_name}</TableCell>
-                          <TableCell>{activity.activity_type}</TableCell>
-                          <TableCell>{activity.site_alias || "All Sites"}</TableCell>
-                          <TableCell>{activity.dependencies.length > 0 ? activity.dependencies.join(", ") : "None"}</TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </TableContainer>
-              </CardContent>
-            </Card>
-          ))}
+              {/* Individual Tasks */}
+              <Card sx={{ mb: 3 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom color="primary">
+                    Tasks to be Created ({taskPreview.length})
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+                    Each task will have the same workflow but applied to different site groups
+                  </Typography>
+
+                  {taskPreview.map((task, index) => (
+                    <Box key={index} sx={{ mb: 3, p: 2, border: 1, borderColor: "divider", borderRadius: 1 }}>
+                      <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 600 }}>
+                        Task {index + 1}: {task.task_id}
+                      </Typography>
+
+                      <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                        Site Group Assignment:
+                      </Typography>
+                      <TableContainer component={Paper} variant="outlined">
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>Alias</TableCell>
+                              <TableCell>Site Name</TableCell>
+                              <TableCell>Global ID</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {task.site_groups.map((siteGroup, idx) => (
+                              <TableRow key={idx}>
+                                <TableCell>{siteGroup.site_alias}</TableCell>
+                                <TableCell>{siteGroup.site_name}</TableCell>
+                                <TableCell>{siteGroup.site_global_id}</TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Box>
+                  ))}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowTaskPreview(false)}>Close</Button>
           <Button variant="contained" onClick={createTasksFromFlow} loading={loadingTaskCreation}>
-            Create Tasks
+            Create {siteGroups.length} Task{siteGroups.length > 1 ? "s" : ""}
           </Button>
         </DialogActions>
       </Dialog>

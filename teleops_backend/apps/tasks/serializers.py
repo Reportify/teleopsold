@@ -128,12 +128,12 @@ class TaskSerializer(serializers.ModelSerializer):
             'id', 'task_id', 'title', 'description', 'status', 'priority', 'task_type',
             'project', 'project_name', 'primary_site', 'primary_site_name', 'primary_site_global_id',
             'assigned_to', 'assigned_to_name', 'supervisor', 'supervisor_name',
-            'due_date', 'scheduled_start', 'scheduled_end', 'actual_start', 'actual_end',
+            'scheduled_start', 'scheduled_end', 'actual_start', 'actual_end',
             'estimated_hours', 'actual_hours', 'progress_percentage',
             'equipment_verification_required', 'equipment_verification_status',
             'mobile_accessible', 'offline_capable', 'gps_required',
             'created_by', 'created_by_name', 'created_at', 'updated_at',
-            'sites_count', 'team_members_count', 'duration_hours', 'is_overdue', 'days_until_due'
+            'sites_count', 'team_members_count', 'duration_hours'
         ]
     
     def get_sites_count(self, obj):
@@ -148,19 +148,7 @@ class TaskSerializer(serializers.ModelSerializer):
         """Get task duration in hours"""
         return obj.duration_hours
     
-    def get_is_overdue(self, obj):
-        """Check if task is overdue"""
-        if not obj.due_date:
-            return False
-        return (obj.due_date < timezone.now() and 
-                obj.status in ['pending', 'assigned', 'in_progress'])
-    
-    def get_days_until_due(self, obj):
-        """Get days until due date (negative if overdue)"""
-        if not obj.due_date:
-            return None
-        delta = obj.due_date.date() - timezone.now().date()
-        return delta.days
+
 
 
 class TaskDetailSerializer(TaskSerializer):
@@ -251,18 +239,11 @@ class TaskCreateSerializer(serializers.ModelSerializer):
         # Date validations
         scheduled_start = data.get('scheduled_start')
         scheduled_end = data.get('scheduled_end')
-        due_date = data.get('due_date')
         
         if scheduled_start and scheduled_end:
             if scheduled_start >= scheduled_end:
                 raise serializers.ValidationError(
                     "Scheduled start must be before scheduled end"
-                )
-        
-        if due_date and scheduled_end:
-            if due_date < scheduled_end:
-                raise serializers.ValidationError(
-                    "Due date cannot be before scheduled end"
                 )
         
         # Ensure primary site is not in additional sites
@@ -313,7 +294,7 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
         model = Task
         fields = [
             'title', 'description', 'status', 'priority', 'task_type',
-            'assigned_to', 'supervisor', 'due_date', 'scheduled_start', 'scheduled_end',
+            'assigned_to', 'supervisor', 'scheduled_start', 'scheduled_end',
             'estimated_hours', 'actual_hours', 'progress_percentage',
             'estimated_cost', 'actual_cost', 'equipment_verification_required',
             'mobile_accessible', 'offline_capable', 'gps_required',
@@ -392,7 +373,6 @@ class TaskStatsSerializer(serializers.Serializer):
     in_progress_tasks = serializers.IntegerField()
     completed_tasks = serializers.IntegerField()
     cancelled_tasks = serializers.IntegerField()
-    overdue_tasks = serializers.IntegerField()
     completion_rate = serializers.FloatField()
     
     equipment_verification = serializers.DictField()
@@ -446,8 +426,6 @@ class TaskSearchSerializer(serializers.Serializer):
     created_by = serializers.UUIDField(required=False)
     
     # Date range filters
-    due_date_from = serializers.DateField(required=False)
-    due_date_to = serializers.DateField(required=False)
     created_from = serializers.DateTimeField(required=False)
     created_to = serializers.DateTimeField(required=False)
     
@@ -456,22 +434,12 @@ class TaskSearchSerializer(serializers.Serializer):
     progress_max = serializers.IntegerField(min_value=0, max_value=100, required=False)
     
     # Boolean filters
-    overdue_only = serializers.BooleanField(required=False)
     equipment_verification_required = serializers.BooleanField(required=False)
     mobile_accessible = serializers.BooleanField(required=False)
     
     def validate(self, data):
         """Validate search parameters"""
         # Date range validations
-        due_date_from = data.get('due_date_from')
-        due_date_to = data.get('due_date_to')
-        
-        if due_date_from and due_date_to:
-            if due_date_from > due_date_to:
-                raise serializers.ValidationError(
-                    "Due date 'from' must be before 'to'"
-                )
-        
         created_from = data.get('created_from')
         created_to = data.get('created_to')
         
@@ -733,7 +701,7 @@ class TaskSiteGroupSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskSiteGroup
         fields = [
-            'id', 'site', 'site_alias', 'assignment_order', 'is_primary', 'role',
+            'id', 'site', 'site_alias', 'assignment_order',
             'site_name', 'site_global_id'
         ]
         read_only_fields = ['id']
@@ -773,7 +741,7 @@ class TaskFromFlowSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'task_id', 'client_task_id', 'is_client_id_provided',
             'task_name', 'description', 'flow_template', 'flow_template_name',
-            'project', 'project_name', 'status', 'priority', 'due_date',
+            'project', 'project_name', 'status', 'priority',
             'scheduled_start', 'scheduled_end', 'created_by', 'created_by_name',
             'assigned_to', 'assigned_to_name', 'supervisor', 'supervisor_name',
             'created_at', 'updated_at', 'site_groups', 'sub_activities'
@@ -784,7 +752,7 @@ class TaskFromFlowSerializer(serializers.ModelSerializer):
 class TaskCreationRequestSerializer(serializers.Serializer):
     """Serializer for task creation request validation"""
     flow_template_id = serializers.UUIDField()
-    project_id = serializers.UUIDField()
+    project_id = serializers.IntegerField()  # Changed from UUIDField to IntegerField to match Project model (Phase 1 uses integer IDs)
     site_groups = serializers.ListField(
         child=serializers.DictField(),
         min_length=1

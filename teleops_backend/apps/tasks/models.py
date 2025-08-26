@@ -93,7 +93,6 @@ class Task(models.Model):
     priority = models.CharField(max_length=20, choices=TASK_PRIORITY, default='medium')
     
     # Task scheduling and timeline
-    due_date = models.DateTimeField(null=True, blank=True)
     scheduled_start = models.DateTimeField(null=True, blank=True)
     scheduled_end = models.DateTimeField(null=True, blank=True)
     actual_start = models.DateTimeField(null=True, blank=True)
@@ -250,7 +249,6 @@ class Task(models.Model):
             models.Index(fields=['primary_site', 'status']),
             models.Index(fields=['assigned_to', 'status']),
             models.Index(fields=['priority', 'status']),
-            models.Index(fields=['due_date']),
             models.Index(fields=['task_type', 'status']),
             models.Index(fields=['equipment_verification_status']),
             models.Index(fields=['created_at']),
@@ -334,14 +332,7 @@ class Task(models.Model):
         
         return f'TSK-{current_month}-{next_number:04d}'
 
-    @property
-    def is_overdue(self):
-        """Check if task is overdue"""
-        return (
-            self.due_date is not None 
-            and self.due_date < timezone.now() 
-            and self.status not in ['completed', 'cancelled']
-        )
+
 
     @property
     def is_multi_site(self):
@@ -834,7 +825,7 @@ class FlowInstance(models.Model):
     
     # References
     flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='instances')
-    task = models.ForeignKey(Task, on_delete=models.SET_NULL, null=True, blank=True, related_name='flow_instances')
+    task_id = models.UUIDField(help_text="Reference to the task this flow instance is tracking")
     
     # Instance state
     status = models.CharField(
@@ -865,7 +856,7 @@ class FlowInstance(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.flow_template.name} for {self.task.title}"
+        return f"{self.flow_template.name} for task {self.task_id}"
 
 
 class TaskFromFlow(models.Model):
@@ -889,7 +880,6 @@ class TaskFromFlow(models.Model):
     priority = models.CharField(max_length=20, choices=Task.TASK_PRIORITY, default='medium')
     
     # Scheduling
-    due_date = models.DateTimeField(null=True, blank=True)
     scheduled_start = models.DateTimeField(null=True, blank=True)
     scheduled_end = models.DateTimeField(null=True, blank=True)
     
@@ -927,18 +917,6 @@ class TaskSiteGroup(models.Model):
     site = models.ForeignKey('sites.Site', on_delete=models.CASCADE, related_name='flow_task_groups')
     site_alias = models.CharField(max_length=50, help_text="Site alias from flow template (e.g., 'Near-end', 'Far-end')")
     assignment_order = models.IntegerField(default=0, help_text="Order within the site group")
-    
-    # Site-specific settings
-    is_primary = models.BooleanField(default=False, help_text="Whether this is the primary site for the task")
-    role = models.CharField(
-        max_length=20,
-        choices=[
-            ('PRIMARY', 'Primary'),
-            ('SECONDARY', 'Secondary'),
-            ('COORDINATION', 'Coordination'),
-        ],
-        default='SECONDARY'
-    )
 
     class Meta:
         db_table = 'task_site_groups'

@@ -117,6 +117,7 @@ export const API_ENDPOINTS = {
     UPDATE: (id: string) => `/tasks/${id}/`,
     DELETE: (id: string) => `/tasks/${id}/`,
     EQUIPMENT_VERIFICATION: (id: string) => `/tasks/${id}/equipment-verification/`,
+    CREATE_FROM_FLOW: "/tasks/create-from-flow/",
     FLOWS: {
       LIST: "/tasks/flow-templates/",
       CREATE: "/tasks/flow-templates/",

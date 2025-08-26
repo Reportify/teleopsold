@@ -24,7 +24,7 @@ from core.permissions.tenant_permissions import TenantScopedPermission, TaskPerm
 from core.pagination import StandardResultsSetPagination, LargeResultsSetPagination
 from .utils import TaskIDGenerator, TaskCreationValidator
 from django.core.exceptions import ValidationError
-from apps.projects.models import Project
+from apps.projects.models import Project, ProjectSite
 from apps.sites.models import Site
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     ]
     search_fields = ['title', 'description', 'task_id', 'instructions']
     ordering_fields = [
-        'created_at', 'due_date', 'scheduled_start', 'priority', 
+        'created_at', 'scheduled_start', 'priority', 
         'progress_percentage', 'task_id'
     ]
     ordering = ['-created_at']
@@ -78,13 +78,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 models.Q(assigned_team=self.request.user)
             ).distinct()
         
-        # Filter by overdue tasks
-        overdue = self.request.query_params.get('overdue')
-        if overdue == 'true':
-            queryset = queryset.filter(
-                due_date__lt=timezone.now(),
-                status__in=['pending', 'assigned', 'in_progress']
-            )
+
         
         return queryset
 
@@ -313,10 +307,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         in_progress_tasks = tasks.filter(status='in_progress').count()
         completed_tasks = tasks.filter(status='completed').count()
         cancelled_tasks = tasks.filter(status='cancelled').count()
-        overdue_tasks = tasks.filter(
-            due_date__lt=timezone.now(),
-            status__in=['pending', 'assigned', 'in_progress']
-        ).count()
+
         
         # Equipment verification stats
         verification_required = tasks.filter(equipment_verification_required=True).count()
@@ -349,7 +340,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             'in_progress_tasks': in_progress_tasks,
             'completed_tasks': completed_tasks,
             'cancelled_tasks': cancelled_tasks,
-            'overdue_tasks': overdue_tasks,
             'completion_rate': (completed_tasks / total_tasks * 100) if total_tasks > 0 else 0,
             'equipment_verification': {
                 'required': verification_required,
@@ -918,20 +908,25 @@ class CreateTaskFromFlowView(APIView):
                     created_tasks.append(task)
                     total_sites += len(site_group['sites'])
                 
-                # Create flow instance for tracking
-                flow_instance = FlowInstance.objects.create(
-                    flow_template=flow_template,
-                    status='PENDING'
-                )
+                # Create flow instance for tracking (using the first task's ID)
+                if created_tasks:
+                    flow_instance = FlowInstance.objects.create(
+                        flow_template=flow_template,
+                        task_id=created_tasks[0].id,
+                        status='PENDING'
+                    )
+                else:
+                    # This shouldn't happen, but handle it gracefully
+                    flow_instance = None
                 
                 # Prepare response data
                 response_data = {
                     'tasks': TaskFromFlowSerializer(created_tasks, many=True).data,
                     'flow_instance': {
-                        'id': str(flow_instance.id),
+                        'id': str(flow_instance.id) if flow_instance else None,
                         'flow_template': flow_template.name,
-                        'status': flow_instance.status
-                    },
+                        'status': flow_instance.status if flow_instance else 'PENDING'
+                    } if flow_instance else None,
                     'message': f"Successfully created {len(created_tasks)} tasks",
                     'created_count': len(created_tasks),
                     'total_sites': total_sites
@@ -985,20 +980,22 @@ class CreateTaskFromFlowView(APIView):
         )
         
         # Create site group mappings
-        for i, (alias, site_id) in enumerate(site_group['sites'].items()):
-            # Get the actual site object
+        for i, (alias, project_site_id) in enumerate(site_group['sites'].items()):
+            # Get the project site object first, then extract the actual site
             try:
-                site = Site.objects.get(id=site_id)
-            except Site.DoesNotExist:
-                raise ValidationError(f"Site with ID {site_id} not found")
+                project_site = ProjectSite.objects.get(id=project_site_id)
+                actual_site = project_site.site
+            except ProjectSite.DoesNotExist:
+                raise ValidationError(f"Project site with ID {project_site_id} not found")
+            except AttributeError:
+                # Handle case where project_site.site might be None
+                raise ValidationError(f"Project site {project_site_id} has no associated site")
             
             TaskSiteGroup.objects.create(
                 task_from_flow=task,
-                site=site,
+                site=actual_site,
                 site_alias=alias,
-                assignment_order=i,
-                is_primary=(i == 0),  # First site is primary
-                role='PRIMARY' if i == 0 else 'SECONDARY'
+                assignment_order=i
             )
         
         # Create sub-activities for this task
@@ -1016,10 +1013,19 @@ class CreateTaskFromFlowView(APIView):
         
         for template_activity in template_activities:
             # Check which sites this activity is assigned to
-            for flow_site in template_activity.assigned_sites.all():
-                if flow_site.alias in site_group['sites']:
-                    # Get the actual site ID for this alias
-                    actual_site_id = site_group['sites'][flow_site.alias]
+            for flow_activity_site in template_activity.assigned_sites.all():
+                if flow_activity_site.flow_site.alias in site_group['sites']:
+                    # Get the project site ID for this alias
+                    project_site_id = site_group['sites'][flow_activity_site.flow_site.alias]
+                    
+                    # Get the actual site from the project site
+                    try:
+                        project_site = ProjectSite.objects.get(id=project_site_id)
+                        actual_site = project_site.site
+                    except ProjectSite.DoesNotExist:
+                        raise ValidationError(f"Project site with ID {project_site_id} not found")
+                    except AttributeError:
+                        raise ValidationError(f"Project site {project_site_id} has no associated site")
                     
                     # Create sub-task for this site
                     sub_task = TaskSubActivity.objects.create(
@@ -1029,8 +1035,8 @@ class CreateTaskFromFlowView(APIView):
                         activity_type=template_activity.activity_type,
                         activity_name=template_activity.activity_name,
                         description=template_activity.description,
-                        assigned_site_id=actual_site_id,
-                        site_alias=flow_site.alias,
+                        assigned_site=actual_site,  # Use the actual Site object, not ID
+                        site_alias=flow_activity_site.flow_site.alias,
                         dependencies=template_activity.dependencies,  # Keep template dependencies
                         dependency_scope=template_activity.dependency_scope,
                         parallel_execution=template_activity.parallel_execution,
