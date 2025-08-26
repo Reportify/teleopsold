@@ -725,7 +725,7 @@ class FlowActivity(models.Model):
     
     # Activity details
     activity_name = models.CharField(max_length=255)
-    description = models.TextField()
+    description = models.TextField(blank=True, default="")  # Make description optional
     activity_type = models.CharField(max_length=50, choices=Task.TASK_TYPE)
     
     # Sequence and dependencies

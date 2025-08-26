@@ -1009,8 +1009,9 @@ class CreateTaskFromFlowView(APIView):
         template_activities = flow_template.activities.all().order_by('sequence_order')
         
         sub_task_counter = 0
-        sub_task_map = {}  # Map template sequence to sub-task ID for dependencies
+        sub_task_map = {}  # Map template sequence to list of sub-task IDs for dependencies
         
+        # First pass: Create all sub-tasks and build the mapping
         for template_activity in template_activities:
             # Check which sites this activity is assigned to
             for flow_activity_site in template_activity.assigned_sites.all():
@@ -1037,7 +1038,7 @@ class CreateTaskFromFlowView(APIView):
                         description=template_activity.description,
                         assigned_site=actual_site,  # Use the actual Site object, not ID
                         site_alias=flow_activity_site.flow_site.alias,
-                        dependencies=template_activity.dependencies,  # Keep template dependencies
+                        dependencies=[],  # Initialize empty, will be updated later
                         dependency_scope=template_activity.dependency_scope,
                         parallel_execution=template_activity.parallel_execution,
                         status='pending',
@@ -1045,15 +1046,28 @@ class CreateTaskFromFlowView(APIView):
                     )
                     
                     # Store mapping for dependency resolution
-                    sub_task_map[template_activity.sequence_order] = sub_task.id
+                    if template_activity.sequence_order not in sub_task_map:
+                        sub_task_map[template_activity.sequence_order] = []
+                    sub_task_map[template_activity.sequence_order].append(sub_task.id)
                     sub_task_counter += 1
         
-        # Update dependencies to use sub-task IDs instead of template sequence
+        # Second pass: Update dependencies to use sub-task IDs instead of template sequence
         for sub_task in task.sub_activities.all():
-            if sub_task.dependencies:
+            # Get the template activity for this sub-task
+            template_activity = sub_task.flow_activity
+            
+            if template_activity.dependencies:
                 updated_dependencies = []
-                for dep_sequence in sub_task.dependencies:
-                    if dep_sequence in sub_task_map:
-                        updated_dependencies.append(str(sub_task_map[dep_sequence]))
+                for dep_sequence in template_activity.dependencies:
+                    try:
+                        dep_sequence_int = int(dep_sequence)
+                        if dep_sequence_int in sub_task_map:
+                            # For now, just use the first sub-task of the dependent activity
+                            # This handles the basic case where dependencies are site-local
+                            updated_dependencies.append(str(sub_task_map[dep_sequence_int][0]))
+                    except ValueError:
+                        # Skip invalid dependency sequences
+                        continue
+                
                 sub_task.dependencies = updated_dependencies
                 sub_task.save(update_fields=['dependencies']) 

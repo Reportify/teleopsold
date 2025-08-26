@@ -347,7 +347,7 @@ const FlowBuilderPage: React.FC = () => {
           // Assign activities to sites based on backend site assignments
           activities.forEach((activity) => {
             const backendActivity = (flowTemplate.activities as unknown as BackendFlowActivity[]).find((a) => a.sequence_order === activity.sequence_order);
-            if (backendActivity && backendActivity.assigned_sites) {
+            if (backendActivity && backendActivity.assigned_sites && backendActivity.assigned_sites.length > 0) {
               const assignedSiteAliases = backendActivity.assigned_sites.map((siteAssignment: BackendFlowActivitySite) => siteAssignment.flow_site.alias || "Unknown Site");
               activity.assigned_sites = assignedSiteAliases
                 .map((alias: string) => {
@@ -355,6 +355,9 @@ const FlowBuilderPage: React.FC = () => {
                   return site ? site.id : null;
                 })
                 .filter(Boolean) as string[];
+            } else {
+              // If no specific site assignments, assign to all sites (default behavior)
+              activity.assigned_sites = sites.map((site) => site.id);
             }
           });
 
@@ -691,6 +694,7 @@ const FlowBuilderPage: React.FC = () => {
         activities: flowBuilder.activities.map((activity) => ({
           sequence_order: activity.sequence_order,
           activity_name: activity.activity_name,
+          description: activity.description || "", // Include description field
           // Map frontend activity types to backend task types
           activity_type: (() => {
             switch (activity.activity_type) {
@@ -742,9 +746,13 @@ const FlowBuilderPage: React.FC = () => {
           dependency_scope: activity.dependency_scope, // Use the actual dependency scope
           site_coordination: activity.site_coordination || false, // Use the actual site coordination setting
         })),
-        // Frontend sites are abstract placeholders for flow organization
-        // They don't need to be stored in the backend database
-        sites: [],
+        // Send the actual site data from the flow builder
+        sites: flowBuilder.sites.map((site) => ({
+          alias: site.alias,
+          order: site.order,
+          is_required: true,
+          role: "PRIMARY", // Default role for sites
+        })),
       };
 
       let response;
@@ -1415,6 +1423,65 @@ const FlowBuilderPage: React.FC = () => {
               multiline
               rows={3}
             />
+
+            {/* Advanced Settings */}
+            <Box>
+              <Typography variant="subtitle2" sx={{ mb: 2, fontWeight: 600 }}>
+                Advanced Settings
+              </Typography>
+              <Grid container spacing={2}>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Dependency Scope</InputLabel>
+                    <Select
+                      value={editingActivity?.dependency_scope || "SITE_LOCAL"}
+                      onChange={(e) => setEditingActivity((prev) => (prev ? { ...prev, dependency_scope: e.target.value } : null))}
+                      label="Dependency Scope"
+                    >
+                      <MenuItem value="SITE_LOCAL">Site Local</MenuItem>
+                      <MenuItem value="CROSS_SITE">Cross Site</MenuItem>
+                      <MenuItem value="GLOBAL">Global</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Parallel Execution</InputLabel>
+                    <Select
+                      value={editingActivity?.parallel_execution ? "true" : "false"}
+                      onChange={(e) => setEditingActivity((prev) => (prev ? { ...prev, parallel_execution: e.target.value === "true" } : null))}
+                      label="Parallel Execution"
+                    >
+                      <MenuItem value="false">Sequential</MenuItem>
+                      <MenuItem value="true">Parallel</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Site Coordination</InputLabel>
+                    <Select
+                      value={editingActivity?.site_coordination ? "true" : "false"}
+                      onChange={(e) => setEditingActivity((prev) => (prev ? { ...prev, site_coordination: e.target.value === "true" } : null))}
+                      label="Site Coordination"
+                    >
+                      <MenuItem value="false">Independent</MenuItem>
+                      <MenuItem value="true">Coordinated</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <FormControl fullWidth>
+                    <InputLabel>Site Scope</InputLabel>
+                    <Select value={editingActivity?.site_scope || "SINGLE"} onChange={(e) => setEditingActivity((prev) => (prev ? { ...prev, site_scope: e.target.value } : null))} label="Site Scope">
+                      <MenuItem value="SINGLE">Single Site</MenuItem>
+                      <MenuItem value="MULTIPLE">Multiple Sites</MenuItem>
+                      <MenuItem value="ALL">All Sites</MenuItem>
+                    </Select>
+                  </FormControl>
+                </Grid>
+              </Grid>
+            </Box>
 
             {/* Site Assignment */}
             {flowBuilder.sites.length > 0 && (

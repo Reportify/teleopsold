@@ -487,6 +487,7 @@ class FlowActivitySiteSerializer(serializers.ModelSerializer):
 class FlowActivitySerializer(serializers.ModelSerializer):
     """Serializer for FlowActivity model"""
     assigned_sites = serializers.SerializerMethodField()
+    description = serializers.CharField(required=False, allow_blank=True, default="")
     
     class Meta:
         model = FlowActivity
@@ -608,6 +609,10 @@ class FlowTemplateCreateSerializer(serializers.ModelSerializer):
                 # Extract site assignments from the activity data
                 assigned_sites = activity_data.pop('assigned_sites', [])
                 
+                # Ensure description field is present (provide default if missing)
+                if 'description' not in activity_data:
+                    activity_data['description'] = ""
+                
                 activity = FlowActivity.objects.create(
                     flow_template=flow_template,
                     **activity_data
@@ -657,19 +662,100 @@ class FlowTemplateUpdateSerializer(serializers.ModelSerializer):
         
         # Update activities - delete existing and create new ones
         instance.activities.all().delete()
+        
+        # Create sites first so we can reference them in activities
+        created_sites = {}
+        
+        if sites_data:
+            # First, delete ALL existing sites since we're replacing them
+            instance.sites.all().delete()
+            
+            # Create new sites from the provided data
+            for i, site_data in enumerate(sites_data):
+                site = FlowSite.objects.create(
+                    flow_template=instance,
+                    **site_data
+                )
+                created_sites[site_data.get('alias', f'site_{i}')] = site
+        else:
+            # Preserve existing sites if no new data provided
+            existing_sites = instance.sites.all()
+            if existing_sites.exists():
+                for site in existing_sites:
+                    created_sites[site.alias] = site
+            else:
+                # No existing sites, create them from activity assignments
+                all_site_aliases = set()
+                for activity_data in activities_data:
+                    assigned_sites = activity_data.get('assigned_sites', [])
+                    if assigned_sites:  # Only add non-empty site aliases
+                        all_site_aliases.update(assigned_sites)
+                
+                # If no site aliases found in activities, create a default site
+                if not all_site_aliases:
+                    # Check if a default site already exists
+                    if "Site" not in created_sites:
+                        site = FlowSite.objects.create(
+                            flow_template=instance,
+                            alias="Site",
+                            order=0,
+                            is_required=True,
+                            role='PRIMARY'
+                        )
+                        created_sites["Site"] = site
+                else:
+                    # Create sites automatically from activity assignments
+                    for i, site_alias in enumerate(all_site_aliases):
+                        if site_alias:  # Skip empty aliases
+                            # Check if site with this alias already exists
+                            if site_alias not in created_sites:
+                                site = FlowSite.objects.create(
+                                    flow_template=instance,
+                                    alias=site_alias,
+                                    order=i,
+                                    is_required=True,
+                                    role='PRIMARY'
+                                )
+                                created_sites[site_alias] = site
+        
+        # Clean up any existing FlowActivitySite objects since we're recreating everything
+        from apps.tasks.models import FlowActivitySite
+        FlowActivitySite.objects.filter(flow_site__flow_template=instance).delete()
+        
+        # Create activities with site assignments
         for activity_data in activities_data:
-            FlowActivity.objects.create(
+            # Extract site assignments from the activity data
+            assigned_sites = activity_data.pop('assigned_sites', [])
+            
+            # Ensure description field is present (provide default if missing)
+            if 'description' not in activity_data:
+                activity_data['description'] = ""
+            
+            activity = FlowActivity.objects.create(
                 flow_template=instance,
                 **activity_data
             )
-        
-        # Update sites - delete existing and create new ones
-        instance.sites.all().delete()
-        for site_data in sites_data:
-            FlowSite.objects.create(
-                flow_template=instance,
-                **site_data
-            )
+            
+            # Create site assignments for this activity
+            if assigned_sites and len(assigned_sites) > 0:
+                for i, site_alias in enumerate(assigned_sites):
+                    if site_alias in created_sites:
+                        FlowActivitySite.objects.create(
+                            flow_activity=activity,
+                            flow_site=created_sites[site_alias],
+                            execution_order=i
+                        )
+                    else:
+                        # If site alias not found, skip this assignment
+                        continue
+            else:
+                # If no specific site assignments, assign to all sites (default behavior)
+                for i, (site_alias, site) in enumerate(created_sites.items()):
+                    FlowActivitySite.objects.create(
+                        flow_activity=activity,
+                        flow_site=site,
+                        execution_order=i
+                    )
         
         return instance
 
