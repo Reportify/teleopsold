@@ -398,7 +398,15 @@ const AppInner: React.FC = () => {
           }
         />
         <Route
-          path="/tasks/:id"
+          path="/tasks/:taskId"
+          element={
+            <ProtectedRoute>
+              <TaskDetailsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/:taskId/edit"
           element={
             <ProtectedRoute>
               <TaskDetailsPage />

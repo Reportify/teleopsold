@@ -299,7 +299,11 @@ class TaskPermission(BasePermission):
         if not tenant_permission.has_permission(request, view):
             return False
         
-        # Check specific task permissions
+        # For APIView (like bulk upload), check if user can create tasks
+        if not hasattr(view, 'action'):
+            return self._can_create_tasks(request)
+        
+        # Check specific task permissions for ViewSet
         if view.action in ['create']:
             return self._can_create_tasks(request)
         elif view.action in ['update', 'partial_update', 'destroy']:

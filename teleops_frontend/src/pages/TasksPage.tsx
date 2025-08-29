@@ -1,5 +1,5 @@
 // Task Management Page - Main task list and management interface
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Box,
   Typography,
@@ -16,28 +16,51 @@ import {
   Card,
   CardContent,
   Grid,
-  LinearProgress,
   IconButton,
   Tooltip,
   Stack,
   Tabs,
   Tab,
+  FormControl,
+  InputLabel,
+  Select,
+  InputAdornment,
+  Collapse,
+  Divider,
 } from "@mui/material";
-import { Add, Edit, Delete, Visibility, Assignment, CheckCircle, Schedule, Cancel, Task as TaskIcon, PlayArrow, Pause, Stop, AccountTree } from "@mui/icons-material";
+import {
+  Add,
+  Edit,
+  Delete,
+  Visibility,
+  Assignment,
+  CheckCircle,
+  Schedule,
+  Cancel,
+  Task as TaskIcon,
+  PlayArrow,
+  Pause,
+  Stop,
+  AccountTree,
+  Refresh,
+  Search,
+  FilterList,
+  Clear,
+  ExpandMore,
+  ExpandLess,
+} from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
-import { DataTable, Column, RowAction } from "../components";
+import { DataTable, Column, RowAction, Pagination } from "../components";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Task, TaskStatus, TaskType } from "../types/task";
-import { mockTasks } from "../mockData/tasks";
+import { TaskFromFlow, TaskStatus, TaskSiteGroup } from "../types/task";
 import FlowLibraryPage from "./FlowLibraryPage";
+import { taskService } from "../services/taskService";
+import { usePagination, PaginationFilters } from "../hooks/usePagination";
 
 const TasksPage: React.FC = () => {
   const { getCurrentTenant, isCorporateUser, isCircleUser } = useAuth();
-  const [tasks, setTasks] = useState<Task[]>(mockTasks);
-  const [loading, setLoading] = useState(false);
-  const [error] = useState<string | null>(null);
   const { darkMode } = useDarkMode();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -48,30 +71,61 @@ const TasksPage: React.FC = () => {
     return tabParam ? parseInt(tabParam, 10) : 0;
   });
 
-  // Local state for filtering and search
-  const [searchTerm, setSearchTerm] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("all");
-  const [typeFilter, setTypeFilter] = useState<string>("all");
-
   // Feature permissions
   const { hasPermission } = useFeaturePermissions();
   const canEditTasks = hasPermission("tasks.edit");
   const canDeleteTasks = hasPermission("tasks.delete");
 
-  // Filter tasks based on search and filters
-  const filteredTasks = useMemo(() => {
-    return tasks.filter((task) => {
-      const matchesSearch =
-        task.task_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        task.project_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        task.client_name.toLowerCase().includes(searchTerm.toLowerCase());
+  // Pagination hook
+  const {
+    data: tasks,
+    pagination,
+    loading,
+    error,
+    refresh,
+    setPage,
+    setPageSize,
+    setFilters,
+    clearFilters,
+    hasNextPage,
+    hasPreviousPage,
+  } = usePagination(
+    useCallback((page: number, pageSize: number, filters: PaginationFilters) => {
+      return taskService.getTasksFromFlow(page, pageSize, filters);
+    }, []),
+    {
+      status: "all",
+      priority: "all",
+    },
+    {
+      pageSize: 20,
+      cacheKey: "tasks-from-flow",
+      enableCache: true,
+      cacheExpiry: 5 * 60 * 1000, // 5 minutes
+    }
+  );
 
-      const matchesStatus = statusFilter === "all" || task.status === statusFilter;
-      const matchesType = typeFilter === "all" || task.task_type === typeFilter;
+  // Debounced search
+  const [searchTerm, setSearchTerm] = useState("");
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
 
-      return matchesSearch && matchesStatus && matchesType;
+  // Debounce search term
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  // Update filters when search term changes
+  useEffect(() => {
+    setFilters({
+      search: debouncedSearchTerm || undefined,
+      status: searchParams.get("status") || "all",
+      priority: searchParams.get("priority") || "all",
     });
-  }, [tasks, searchTerm, statusFilter, typeFilter]);
+  }, [debouncedSearchTerm, searchParams, setFilters]);
 
   // Status badge component
   const StatusBadge: React.FC<{ status: TaskStatus }> = ({ status }) => {
@@ -108,54 +162,25 @@ const TasksPage: React.FC = () => {
     return <Chip icon={getStatusIcon(status)} label={status.replace("_", " ")} color={getStatusColor(status)} size="small" variant="outlined" />;
   };
 
-  // Task type badge component
-  const TaskTypeBadge: React.FC<{ type: TaskType }> = ({ type }) => {
-    const getTypeLabel = (type: TaskType) => {
-      switch (type) {
-        case "2G_DISMANTLE":
-          return "2G Dismantle";
-        case "MW_DISMANTLE":
-          return "MW Dismantle";
-        case "INSTALLATION_COMMISSIONING":
-          return "Installation & Commissioning";
+  // Priority badge component
+  const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
+    const getPriorityColor = (priority: string) => {
+      switch (priority.toLowerCase()) {
+        case "high":
+          return "error";
+        case "medium":
+          return "warning";
+        case "low":
+          return "default";
         default:
-          return type;
+          return "default";
       }
     };
 
-    return (
-      <Chip
-        label={getTypeLabel(type)}
-        size="small"
-        variant="filled"
-        sx={{
-          backgroundColor: darkMode ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-          color: darkMode ? "rgba(255, 255, 255, 0.8)" : "rgba(0, 0, 0, 0.8)",
-        }}
-      />
-    );
+    return <Chip label={priority} size="small" variant="filled" color={getPriorityColor(priority)} />;
   };
 
-  // Progress bar component
-  const ProgressBar: React.FC<{ progress: number }> = ({ progress }) => (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 120 }}>
-      <LinearProgress
-        variant="determinate"
-        value={progress}
-        sx={{
-          flexGrow: 1,
-          height: 8,
-          borderRadius: 4,
-          backgroundColor: darkMode ? "rgba(255, 255, 255, 0.1)" : "rgba(0, 0, 0, 0.1)",
-        }}
-      />
-      <Typography variant="caption" sx={{ minWidth: 35 }}>
-        {progress}%
-      </Typography>
-    </Box>
-  );
-
-  // Table columns
+  // Table columns for TaskFromFlow
   const columns: Column[] = [
     {
       id: "task_name",
@@ -173,33 +198,42 @@ const TasksPage: React.FC = () => {
       ),
     },
     {
-      id: "task_type",
-      label: "Type",
+      id: "task_id",
+      label: "Task ID",
       sortable: true,
-      format: (value, task) => <TaskTypeBadge type={task.task_type} />,
-    },
-    {
-      id: "client_name",
-      label: "Client",
-      sortable: true,
+      format: (value, task) => (
+        <Typography variant="body2" fontFamily="monospace">
+          {task.task_id}
+        </Typography>
+      ),
     },
     {
       id: "status",
       label: "Status",
       sortable: true,
-      format: (value, task) => <StatusBadge status={task.status} />,
+      format: (value, task) => <StatusBadge status={task.status as TaskStatus} />,
     },
     {
-      id: "progress_percentage",
-      label: "Progress",
+      id: "priority",
+      label: "Priority",
       sortable: true,
-      format: (value, task) => <ProgressBar progress={task.progress_percentage} />,
+      format: (value, task) => <Chip label={task.priority} size="small" variant="outlined" color={task.priority === "high" ? "error" : task.priority === "medium" ? "warning" : "default"} />,
     },
     {
-      id: "sites_count",
+      id: "site_groups",
       label: "Sites",
       sortable: true,
-      format: (value, task) => <Chip label={`${task.sites_count} site${task.sites_count > 1 ? "s" : ""}`} size="small" variant="outlined" color={task.requires_coordination ? "warning" : "default"} />,
+      format: (value, task) => (
+        <Box>
+          {task.site_groups.map((siteGroup: TaskSiteGroup, index: number) => (
+            <Box key={siteGroup.id} sx={{ mb: index < task.site_groups.length - 1 ? 1 : 0 }}>
+              <Typography variant="body2" component="span">
+                <strong>{siteGroup.site_alias}:</strong> {siteGroup.site_global_id || siteGroup.site_name}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
+      ),
     },
     {
       id: "created_at",
@@ -221,7 +255,7 @@ const TasksPage: React.FC = () => {
           {
             label: "Edit",
             icon: <Edit />,
-            onClick: (task: Task) => navigate(`/tasks/${task.id}/edit`),
+            onClick: (task: TaskFromFlow) => navigate(`/tasks/${task.id}/edit`),
           },
         ]
       : []),
@@ -230,9 +264,16 @@ const TasksPage: React.FC = () => {
           {
             label: "Delete",
             icon: <Delete />,
-            onClick: (task: Task) => {
-              // TODO: Implement delete functionality
-              console.log("Delete task:", task.id);
+            onClick: async (task: TaskFromFlow) => {
+              if (window.confirm(`Are you sure you want to delete task "${task.task_name}"?`)) {
+                try {
+                  // TODO: Implement proper delete for TaskFromFlow
+                  // For now, refresh the data to get updated list
+                  refresh();
+                } catch (err) {
+                  console.error("Error deleting task:", err);
+                }
+              }
             },
             color: "error" as const,
           },
@@ -258,9 +299,14 @@ const TasksPage: React.FC = () => {
           </Typography>
         </Box>
         {currentTab === 0 && (
-          <Button variant="contained" startIcon={<Add />} onClick={handleCreateTask} sx={{ minWidth: 140 }}>
-            Create Task
-          </Button>
+          <Box sx={{ display: "flex", gap: 2 }}>
+            <Button variant="outlined" startIcon={<Refresh />} onClick={refresh} sx={{ minWidth: 120 }}>
+              Refresh
+            </Button>
+            <Button variant="contained" startIcon={<Add />} onClick={handleCreateTask} sx={{ minWidth: 140 }}>
+              Create Task
+            </Button>
+          </Box>
         )}
       </Box>
 
@@ -278,12 +324,58 @@ const TasksPage: React.FC = () => {
           {/* Filters */}
           <Card sx={{ mb: 3 }}>
             <CardContent>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                <Typography variant="h6" color="primary">
+                  Filters & Search
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  {pagination.totalItems} task{pagination.totalItems !== 1 ? "s" : ""} found
+                </Typography>
+              </Box>
+
               <Grid container spacing={2} alignItems="center">
-                <Grid size={{ xs: 12, md: 4 }}>
-                  <TextField fullWidth label="Search tasks..." variant="outlined" size="small" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                <Grid size={{ xs: 12, md: 6 }}>
+                  <TextField
+                    fullWidth
+                    label="Search tasks..."
+                    variant="outlined"
+                    size="small"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    InputProps={{
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search />
+                        </InputAdornment>
+                      ),
+                      endAdornment: searchTerm && (
+                        <InputAdornment position="end">
+                          <IconButton size="small" onClick={() => setSearchTerm("")} edge="end">
+                            <Clear />
+                          </IconButton>
+                        </InputAdornment>
+                      ),
+                    }}
+                    placeholder="Search by task name, ID, or project..."
+                  />
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <TextField fullWidth select label="Status" size="small" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Status"
+                    size="small"
+                    value={searchParams.get("status") || "all"}
+                    onChange={(e) => {
+                      const newParams = new URLSearchParams(searchParams);
+                      if (e.target.value === "all") {
+                        newParams.delete("status");
+                      } else {
+                        newParams.set("status", e.target.value);
+                      }
+                      navigate(`?${newParams.toString()}`);
+                    }}
+                  >
                     <MenuItem value="all">All Statuses</MenuItem>
                     <MenuItem value="CREATED">Created</MenuItem>
                     <MenuItem value="IN_PROGRESS">In Progress</MenuItem>
@@ -292,26 +384,77 @@ const TasksPage: React.FC = () => {
                   </TextField>
                 </Grid>
                 <Grid size={{ xs: 12, md: 3 }}>
-                  <TextField fullWidth select label="Task Type" size="small" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
-                    <MenuItem value="all">All Types</MenuItem>
-                    <MenuItem value="2G_DISMANTLE">2G Dismantle</MenuItem>
-                    <MenuItem value="MW_DISMANTLE">MW Dismantle</MenuItem>
-                    <MenuItem value="INSTALLATION_COMMISSIONING">Installation & Commissioning</MenuItem>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Priority"
+                    size="small"
+                    value={searchParams.get("priority") || "all"}
+                    onChange={(e) => {
+                      const newParams = new URLSearchParams(searchParams);
+                      if (e.target.value === "all") {
+                        newParams.delete("priority");
+                      } else {
+                        newParams.set("priority", e.target.value);
+                      }
+                      navigate(`?${newParams.toString()}`);
+                    }}
+                  >
+                    <MenuItem value="all">All Priorities</MenuItem>
+                    <MenuItem value="Low">Low</MenuItem>
+                    <MenuItem value="High">High</MenuItem>
+                    <MenuItem value="Medium">Medium</MenuItem>
+                    <MenuItem value="Critical">Critical</MenuItem>
                   </TextField>
                 </Grid>
-                <Grid size={{ xs: 12, md: 2 }}>
-                  <Typography variant="body2" color="text.secondary">
-                    {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}
-                  </Typography>
-                </Grid>
               </Grid>
+
+              {/* Clear filters button */}
+              {(searchParams.get("status") || searchParams.get("priority") || searchTerm) && (
+                <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    startIcon={<Clear />}
+                    onClick={() => {
+                      setSearchTerm("");
+                      navigate("?");
+                    }}
+                  >
+                    Clear All Filters
+                  </Button>
+                </Box>
+              )}
             </CardContent>
           </Card>
 
+          {/* Error Display */}
+          {error && (
+            <Card sx={{ mb: 3, borderColor: "error.main" }}>
+              <CardContent>
+                <Typography color="error" variant="body2">
+                  {error}
+                </Typography>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Tasks Table */}
           <Card>
-            <DataTable rows={filteredTasks} columns={columns} loading={loading} error={error} actions={rowActions} emptyMessage="No tasks found" />
+            <DataTable rows={Array.isArray(tasks) ? tasks : []} columns={columns} loading={loading} error={null} actions={rowActions} emptyMessage="No tasks found" />
           </Card>
+
+          {/* Pagination */}
+          <Pagination
+            pagination={pagination}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+            onRefresh={refresh}
+            pageSizeOptions={[10, 20, 50, 100]}
+            showPageSizeSelector={true}
+            showRefreshButton={true}
+            disabled={loading}
+          />
         </>
       )}
 

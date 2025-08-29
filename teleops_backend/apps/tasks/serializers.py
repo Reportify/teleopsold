@@ -11,6 +11,7 @@ from apps.projects.serializers import ProjectSerializer
 from apps.sites.models import Site
 from apps.users.models import User
 from .models import FlowSite, FlowActivity, FlowTemplate, FlowInstance, FlowActivitySite, TaskFromFlow, TaskSiteGroup, TaskSubActivity
+from apps.tasks.models import BulkTaskCreationJob
 
 
 class TaskSiteAssignmentSerializer(serializers.ModelSerializer):
@@ -895,3 +896,22 @@ class TaskCreationResponseSerializer(serializers.Serializer):
     message = serializers.CharField(default="Tasks created successfully")
     created_count = serializers.IntegerField()
     total_sites = serializers.IntegerField() 
+
+
+class BulkTaskCreationJobSerializer(serializers.ModelSerializer):
+    """Serializer for BulkTaskCreationJob model"""
+    progress_percentage = serializers.ReadOnlyField()
+    duration = serializers.ReadOnlyField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    flow_template_name = serializers.CharField(source='flow_template.name', read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    
+    class Meta:
+        model = BulkTaskCreationJob
+        fields = [
+            'id', 'tenant', 'created_by', 'created_by_name', 'flow_template', 'flow_template_name',
+            'project', 'project_name', 'file_name', 'total_rows', 'processed_rows', 'success_count',
+            'error_count', 'status', 'error_message', 'detailed_errors', 'started_at', 'completed_at',
+            'created_at', 'updated_at', 'progress_percentage', 'duration'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'progress_percentage', 'duration'] 

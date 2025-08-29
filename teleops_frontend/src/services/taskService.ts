@@ -1,273 +1,331 @@
-// Task Management Service - Mock implementation for prototype
-import { Task, TaskFilters, CreateTaskRequest, AssignSubActivityRequest, UpdateProgressRequest, TaskStatistics, TeamWorkload, VendorPerformance } from "../types/task";
-import { mockTasks, mockVendors, mockTeams, getMockTaskById, createMockApiResponse, createMockApiError } from "../mockData/tasks";
+// Task Management Service - Real API implementation
+import { Task, TaskFromFlow, TaskFilters, CreateTaskRequest, AssignSubActivityRequest, UpdateProgressRequest, TaskStatistics, TeamWorkload, VendorPerformance } from "../types/task";
+import { API_ENDPOINTS, apiHelpers } from "./api";
 
 class TaskService {
   // Get all tasks with optional filtering
   async getTasks(filters?: TaskFilters): Promise<Task[]> {
-    let filteredTasks = [...mockTasks];
+    try {
+      const params: any = {};
 
-    if (filters) {
-      if (filters.search) {
-        const searchLower = filters.search.toLowerCase();
-        filteredTasks = filteredTasks.filter(
-          (task) => task.task_name.toLowerCase().includes(searchLower) || task.project_name.toLowerCase().includes(searchLower) || task.client_name.toLowerCase().includes(searchLower)
-        );
+      if (filters?.search) {
+        params.search = filters.search;
       }
 
-      if (filters.status && filters.status !== "all") {
-        filteredTasks = filteredTasks.filter((task) => task.status === filters.status);
+      if (filters?.status && filters.status !== "all") {
+        params.status = filters.status;
       }
 
-      if (filters.task_type && filters.task_type !== "all") {
-        filteredTasks = filteredTasks.filter((task) => task.task_type === filters.task_type);
+      if (filters?.task_type && filters.task_type !== "all") {
+        params.task_type = filters.task_type;
       }
 
-      if (filters.client_id) {
-        // Mock client filtering - would need client ID mapping in real implementation
-        filteredTasks = filteredTasks.filter((task) => task.client_name.includes("Client"));
+      if (filters?.project_id) {
+        params.project = filters.project_id;
       }
 
-      if (filters.project_id) {
-        filteredTasks = filteredTasks.filter((task) => task.project_id === filters.project_id);
+      const response = await apiHelpers.get<Task[]>(API_ENDPOINTS.TASKS.LIST, { params });
+
+      // Handle case where response might be wrapped in a 'results' field
+      if (response && typeof response === "object" && "results" in response) {
+        return (response as any).results || [];
       }
+
+      // Handle case where response is an array
+      if (Array.isArray(response)) {
+        return response;
+      }
+
+      // Handle case where response is unexpected
+      console.warn("Unexpected response format:", response);
+      return [];
+    } catch (error) {
+      console.error("Error fetching tasks:", error);
+      return [];
     }
-
-    return createMockApiResponse(filteredTasks, 300);
   }
 
   // Get single task by ID
-  async getTaskById(id: number): Promise<Task> {
-    const task = getMockTaskById(id);
-    if (!task) {
-      return createMockApiError(`Task with ID ${id} not found`);
+  async getTaskById(id: number): Promise<Task | null> {
+    try {
+      const response = await apiHelpers.get<Task>(API_ENDPOINTS.TASKS.DETAIL(String(id)));
+      return response;
+    } catch (error) {
+      console.error(`Error fetching task ${id}:`, error);
+      return null;
     }
-    return createMockApiResponse(task, 200);
   }
 
   // Create new task
-  async createTask(taskData: CreateTaskRequest): Promise<Task> {
-    // Simulate task creation
-    const newTask: Task = {
-      id: Math.max(...mockTasks.map((t) => t.id)) + 1,
-      task_name: taskData.task_name,
-      task_type: taskData.task_type,
-      project_id: taskData.project_id,
-      project_name: `Project ${taskData.project_id}`, // Mock project name
-      client_name: "Mock Client", // Mock client name
-      status: "CREATED",
-      progress_percentage: 0,
-      sites_count: taskData.site_ids.length,
-      requires_coordination: taskData.site_ids.length > 1,
-      estimated_duration_hours: taskData.estimated_duration_hours || 8,
-      created_at: new Date().toISOString(),
-      created_by: "Current User", // Mock current user
-      sub_activities: taskData.sub_activities.map((sa, index) => ({
-        id: index + 1,
-        sub_activity_name: sa.sub_activity_name,
-        activity_type: sa.activity_type,
-        sequence_order: sa.sequence_order,
-        assignment_type: sa.assignment_type || "VENDOR_ALLOCATION",
-        status: "UNALLOCATED",
-        progress_percentage: 0,
-        execution_dependencies: sa.execution_dependencies || [],
-        estimated_duration_hours: sa.estimated_duration_hours || 4,
-        work_instructions: sa.work_instructions,
-      })),
-      sites: taskData.site_ids.map((siteId, index) => ({
-        id: index + 1,
-        site_id: siteId,
-        site_name: `Site ${siteId}`,
-        site_role: index === 0 ? "Primary" : "Far_End",
-        sequence_order: index + 1,
-        location: {
-          latitude: 40.7128 + (Math.random() - 0.5) * 0.1,
-          longitude: -74.006 + (Math.random() - 0.5) * 0.1,
-          address: `Mock Address ${siteId}`,
-        },
-      })),
-      timeline: [
-        {
-          id: 1,
-          event_type: "TASK_CREATED",
-          event_description: "Task created",
-          timestamp: new Date().toISOString(),
-          updated_by: "Current User",
-        },
-      ],
-    };
-
-    return createMockApiResponse(newTask, 800);
+  async createTask(taskData: CreateTaskRequest): Promise<Task | null> {
+    try {
+      const response = await apiHelpers.post<Task>(API_ENDPOINTS.TASKS.CREATE, taskData);
+      return response;
+    } catch (error) {
+      console.error("Error creating task:", error);
+      return null;
+    }
   }
 
   // Update task
-  async updateTask(id: number, updates: Partial<Task>): Promise<Task> {
-    const task = getMockTaskById(id);
-    if (!task) {
-      return createMockApiError(`Task with ID ${id} not found`);
+  async updateTask(id: number, updates: Partial<Task>): Promise<Task | null> {
+    try {
+      const response = await apiHelpers.put<Task>(API_ENDPOINTS.TASKS.UPDATE(String(id)), updates);
+      return response;
+    } catch (error) {
+      console.error(`Error updating task ${id}:`, error);
+      return null;
     }
-
-    const updatedTask = { ...task, ...updates };
-    return createMockApiResponse(updatedTask, 400);
   }
 
   // Delete task
-  async deleteTask(id: number): Promise<void> {
-    const task = getMockTaskById(id);
-    if (!task) {
-      return createMockApiError(`Task with ID ${id} not found`);
+  async deleteTask(id: number): Promise<boolean> {
+    try {
+      await apiHelpers.delete(API_ENDPOINTS.TASKS.DELETE(String(id)));
+      return true;
+    } catch (error) {
+      console.error(`Error deleting task ${id}:`, error);
+      return false;
     }
-
-    return createMockApiResponse(undefined, 300);
   }
 
   // Assign sub-activity
-  async assignSubActivity(taskId: number, subActivityId: number, assignment: AssignSubActivityRequest): Promise<Task> {
-    const task = getMockTaskById(taskId);
-    if (!task) {
-      return createMockApiError(`Task with ID ${taskId} not found`);
+  async assignSubActivity(taskId: number, subActivityId: number, assignment: AssignSubActivityRequest): Promise<Task | null> {
+    try {
+      const response = await apiHelpers.post<Task>(`${API_ENDPOINTS.TASKS.DETAIL(String(taskId))}/assign-sub-activity/`, {
+        sub_activity_id: subActivityId,
+        ...assignment,
+      });
+      return response;
+    } catch (error) {
+      console.error(`Error assigning sub-activity ${subActivityId} to task ${taskId}:`, error);
+      return null;
     }
-
-    // Mock assignment logic
-    const updatedTask = { ...task };
-    const subActivity = updatedTask.sub_activities?.find((sa) => sa.id === subActivityId);
-
-    if (subActivity) {
-      if (assignment.assignment_type === "VENDOR_ALLOCATION" && assignment.vendor_id) {
-        const vendor = mockVendors.find((v) => v.id === assignment.vendor_id);
-        subActivity.allocated_vendor = vendor ? { id: vendor.id, name: vendor.name } : undefined;
-        subActivity.status = "ALLOCATED";
-      } else if (assignment.assignment_type === "DIRECT_ASSIGNMENT" && assignment.team_id) {
-        const team = mockTeams.find((t) => t.id === assignment.team_id);
-        subActivity.assigned_team = team ? { id: team.id, name: team.name } : undefined;
-        subActivity.status = "ASSIGNED";
-      }
-      subActivity.assignment_type = assignment.assignment_type;
-    }
-
-    return createMockApiResponse(updatedTask, 500);
   }
 
   // Update sub-activity progress
-  async updateSubActivityProgress(taskId: number, subActivityId: number, progress: UpdateProgressRequest): Promise<Task> {
-    const task = getMockTaskById(taskId);
-    if (!task) {
-      return createMockApiError(`Task with ID ${taskId} not found`);
+  async updateSubActivityProgress(taskId: number, subActivityId: number, progress: UpdateProgressRequest): Promise<Task | null> {
+    try {
+      const response = await apiHelpers.post<Task>(`${API_ENDPOINTS.TASKS.DETAIL(String(taskId))}/update-progress/`, {
+        sub_activity_id: subActivityId,
+        ...progress,
+      });
+      return response;
+    } catch (error) {
+      console.error(`Error updating progress for sub-activity ${subActivityId} in task ${taskId}:`, error);
+      return null;
     }
-
-    const updatedTask = { ...task };
-    const subActivity = updatedTask.sub_activities?.find((sa) => sa.id === subActivityId);
-
-    if (subActivity) {
-      subActivity.progress_percentage = progress.progress_percentage;
-      if (progress.actual_duration_hours) {
-        subActivity.actual_duration_hours = progress.actual_duration_hours;
-      }
-
-      // Update status based on progress
-      if (progress.progress_percentage === 100) {
-        subActivity.status = "COMPLETED";
-        subActivity.completion_date = new Date().toISOString();
-      } else if (progress.progress_percentage > 0 && subActivity.status === "ASSIGNED") {
-        subActivity.status = "IN_PROGRESS";
-        subActivity.start_date = new Date().toISOString();
-      }
-    }
-
-    // Update overall task progress
-    if (updatedTask.sub_activities) {
-      const totalProgress = updatedTask.sub_activities.reduce((sum, sa) => sum + sa.progress_percentage, 0);
-      updatedTask.progress_percentage = totalProgress / updatedTask.sub_activities.length;
-
-      // Update task status
-      if (updatedTask.progress_percentage === 100) {
-        updatedTask.status = "COMPLETED";
-        updatedTask.completion_date = new Date().toISOString();
-      } else if (updatedTask.progress_percentage > 0 && updatedTask.status === "CREATED") {
-        updatedTask.status = "IN_PROGRESS";
-        updatedTask.start_date = new Date().toISOString();
-      }
-    }
-
-    return createMockApiResponse(updatedTask, 400);
   }
 
   // Get task statistics
-  async getTaskStatistics(): Promise<TaskStatistics> {
-    const stats: TaskStatistics = {
-      total_tasks: mockTasks.length,
-      tasks_by_status: {
-        CREATED: mockTasks.filter((t) => t.status === "CREATED").length,
-        IN_PROGRESS: mockTasks.filter((t) => t.status === "IN_PROGRESS").length,
-        COMPLETED: mockTasks.filter((t) => t.status === "COMPLETED").length,
-        CANCELLED: mockTasks.filter((t) => t.status === "CANCELLED").length,
-      },
-      tasks_by_type: {
-        "2G_DISMANTLE": mockTasks.filter((t) => t.task_type === "2G_DISMANTLE").length,
-        MW_DISMANTLE: mockTasks.filter((t) => t.task_type === "MW_DISMANTLE").length,
-        INSTALLATION_COMMISSIONING: mockTasks.filter((t) => t.task_type === "INSTALLATION_COMMISSIONING").length,
-        EMF_SURVEY: mockTasks.filter((t) => t.task_type === "EMF_SURVEY").length,
-        DEGROW: mockTasks.filter((t) => t.task_type === "DEGROW").length,
-        RELOCATION: mockTasks.filter((t) => t.task_type === "RELOCATION").length,
-      },
-      average_completion_time: 18.5, // Mock average
-      completion_rate: 0.75, // Mock completion rate
-      overdue_tasks: 2, // Mock overdue count
-    };
-
-    return createMockApiResponse(stats, 200);
+  async getTaskStatistics(): Promise<TaskStatistics | null> {
+    try {
+      const response = await apiHelpers.get<TaskStatistics>(`${API_ENDPOINTS.TASKS.LIST}statistics/`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching task statistics:", error);
+      return null;
+    }
   }
 
   // Get team workload
   async getTeamWorkload(): Promise<TeamWorkload[]> {
-    const workload: TeamWorkload[] = mockTeams.map((team) => ({
-      team_id: team.id,
-      team_name: team.name,
-      active_tasks: Math.floor(Math.random() * 5) + 1,
-      pending_assignments: Math.floor(Math.random() * 3),
-      completion_rate: 0.8 + Math.random() * 0.2,
-      average_task_duration: 12 + Math.random() * 8,
-      utilization_percentage: 60 + Math.random() * 30,
-    }));
-
-    return createMockApiResponse(workload, 300);
+    try {
+      const response = await apiHelpers.get<TeamWorkload[]>(`${API_ENDPOINTS.TEAMS.LIST}workload/`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching team workload:", error);
+      return [];
+    }
   }
 
   // Get vendor performance
   async getVendorPerformance(): Promise<VendorPerformance[]> {
-    const performance: VendorPerformance[] = mockVendors.map((vendor) => ({
-      vendor_id: vendor.id,
-      vendor_name: vendor.name,
-      total_allocations: Math.floor(Math.random() * 20) + 5,
-      completed_tasks: Math.floor(Math.random() * 15) + 3,
-      average_completion_time: 14 + Math.random() * 6,
-      quality_score: 3.5 + Math.random() * 1.5,
-      on_time_delivery_rate: 0.7 + Math.random() * 0.3,
-    }));
-
-    return createMockApiResponse(performance, 300);
+    try {
+      const response = await apiHelpers.get<VendorPerformance[]>(`${API_ENDPOINTS.TEAMS.LIST}vendor-performance/`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching vendor performance:", error);
+      return [];
+    }
   }
 
   // Get available vendors
   async getVendors() {
-    return createMockApiResponse(mockVendors, 200);
+    try {
+      const response = await apiHelpers.get(`${API_ENDPOINTS.TEAMS.LIST}vendors/`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching vendors:", error);
+      return [];
+    }
   }
 
   // Get available teams
   async getTeams() {
-    return createMockApiResponse(mockTeams, 200);
+    try {
+      const response = await apiHelpers.get(`${API_ENDPOINTS.TEAMS.LIST}`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching teams:", error);
+      return [];
+    }
   }
 
   // Get teams for specific vendor
   async getVendorTeams(vendorId: number) {
-    const teams = mockTeams.filter((team) => team.vendor_id === vendorId);
-    return createMockApiResponse(teams, 200);
+    try {
+      const response = await apiHelpers.get(`${API_ENDPOINTS.TEAMS.LIST}?vendor_id=${vendorId}`);
+      return response;
+    } catch (error) {
+      console.error(`Error fetching teams for vendor ${vendorId}:`, error);
+      return [];
+    }
   }
 
   // Get internal teams
   async getInternalTeams() {
-    const teams = mockTeams.filter((team) => team.vendor_id === null);
-    return createMockApiResponse(teams, 200);
+    try {
+      const response = await apiHelpers.get(`${API_ENDPOINTS.TEAMS.LIST}?internal=true`);
+      return response;
+    } catch (error) {
+      console.error("Error fetching internal teams:", error);
+      return [];
+    }
+  }
+
+  // Update task status
+  async updateTaskStatus(taskId: string, status: string): Promise<TaskFromFlow | null> {
+    try {
+      const response = await apiHelpers.patch<TaskFromFlow>(`${API_ENDPOINTS.TASKS.FROM_FLOW.LIST}${taskId}/`, {
+        status,
+      });
+      return response;
+    } catch (error) {
+      console.error(`Error updating task ${taskId} status to ${status}:`, error);
+      return null;
+    }
+  }
+
+  // Update sub-activity progress for TaskFromFlow
+  async updateTaskFromFlowSubActivityProgress(taskId: string, subActivityId: string, progress: number, notes?: string): Promise<TaskFromFlow | null> {
+    try {
+      const response = await apiHelpers.patch<TaskFromFlow>(`${API_ENDPOINTS.TASKS.FROM_FLOW.LIST}${taskId}/sub-activities/${subActivityId}/`, {
+        progress_percentage: progress,
+        notes: notes || "",
+      });
+      return response;
+    } catch (error) {
+      console.error(`Error updating sub-activity ${subActivityId} progress:`, error);
+      return null;
+    }
+  }
+
+  // Get single task from flow by ID
+  async getTaskFromFlowById(id: string): Promise<TaskFromFlow | null> {
+    try {
+      const response = await apiHelpers.get<TaskFromFlow>(`${API_ENDPOINTS.TASKS.FROM_FLOW.LIST}${id}/`);
+      return response;
+    } catch (error) {
+      console.error(`Error fetching task from flow ${id}:`, error);
+      return null;
+    }
+  }
+
+  // Get tasks from flow templates with pagination
+  async getTasksFromFlow(
+    page: number = 1,
+    pageSize: number = 20,
+    filters?: {
+      project?: number;
+      flow_template?: string;
+      status?: string;
+      search?: string;
+      priority?: string;
+      created_after?: string;
+      created_before?: string;
+    }
+  ): Promise<{
+    results: TaskFromFlow[];
+    count: number;
+    next: string | null;
+    previous: string | null;
+    current_page: number;
+    page_size: number;
+    total_pages: number;
+  }> {
+    try {
+      const params: any = {
+        page,
+        page_size: pageSize,
+      };
+
+      if (filters?.project) {
+        params.project = filters.project;
+      }
+
+      if (filters?.flow_template) {
+        params.flow_template = filters.flow_template;
+      }
+
+      if (filters?.status && filters.status !== "all") {
+        params.status = filters.status;
+      }
+
+      if (filters?.search) {
+        params.search = filters.search;
+      }
+
+      if (filters?.priority && filters.priority !== "all") {
+        params.priority = filters.priority;
+      }
+
+      if (filters?.created_after) {
+        params.created_after = filters.created_after;
+      }
+
+      if (filters?.created_before) {
+        params.created_before = filters.created_before;
+      }
+
+      const response = await apiHelpers.get<any>(API_ENDPOINTS.TASKS.FROM_FLOW.LIST, { params });
+
+      // Handle paginated response
+      if (response && typeof response === "object") {
+        return {
+          results: response.results || [],
+          count: response.count || 0,
+          next: response.next || null,
+          previous: response.previous || null,
+          current_page: response.current_page || page,
+          page_size: response.page_size || pageSize,
+          total_pages: response.total_pages || 0,
+        };
+      }
+
+      // Fallback for non-paginated response
+      console.warn("Unexpected response format:", response);
+      return {
+        results: Array.isArray(response) ? response : [],
+        count: Array.isArray(response) ? response.length : 0,
+        next: null,
+        previous: null,
+        current_page: page,
+        page_size: pageSize,
+        total_pages: 1,
+      };
+    } catch (error) {
+      console.error("Error fetching tasks from flow:", error);
+      return {
+        results: [],
+        count: 0,
+        next: null,
+        previous: null,
+        current_page: page,
+        page_size: pageSize,
+        total_pages: 0,
+      };
+    }
   }
 }
 

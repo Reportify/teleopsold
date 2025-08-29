@@ -22,6 +22,64 @@ export interface Task {
   timeline?: TimelineEvent[];
 }
 
+export interface TaskFromFlow {
+  id: string;
+  task_id: string;
+  client_task_id?: string;
+  is_client_id_provided: boolean;
+  task_name: string;
+  description: string;
+  flow_template: string;
+  flow_template_name: string;
+  project: number;
+  project_name: string;
+  status: string;
+  priority: string;
+  scheduled_start?: string;
+  scheduled_end?: string;
+  created_by: number;
+  created_by_name: string;
+  assigned_to?: number;
+  assigned_to_name?: string;
+  supervisor?: number;
+  supervisor_name?: string;
+  created_at: string;
+  updated_at: string;
+  site_groups: TaskSiteGroup[];
+  sub_activities: TaskSubActivity[];
+}
+
+export interface TaskSiteGroup {
+  id: string;
+  site: number;
+  site_alias: string;
+  assignment_order: number;
+  site_name: string;
+  site_global_id: string;
+}
+
+export interface TaskSubActivity {
+  id: string;
+  sequence_order: number;
+  activity_type: string;
+  activity_name: string;
+  description: string;
+  assigned_site: number;
+  site_alias: string;
+  dependencies: string[];
+  dependency_scope: string;
+  parallel_execution: boolean;
+  status: string;
+  actual_start?: string;
+  actual_end?: string;
+  progress_percentage: number;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+  site_name: string;
+  site_global_id: string;
+}
+
 export interface SubActivity {
   id: number;
   sub_activity_name: string;

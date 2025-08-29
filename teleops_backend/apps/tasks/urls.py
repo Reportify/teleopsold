@@ -4,7 +4,8 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     TaskViewSet, TaskCommentViewSet, TaskTemplateViewSet,
     FlowTemplateViewSet, FlowInstanceViewSet, FlowTemplateSearchView,
-    FlowTemplateUsageView, FlowTemplateStatisticsView, CreateTaskFromFlowView
+    FlowTemplateUsageView, FlowTemplateStatisticsView, CreateTaskFromFlowView,
+    TaskFromFlowViewSet, AsyncBulkTaskCreationView, BulkTaskCreationJobStatusView
 )
 
 # Create router and register viewsets
@@ -14,6 +15,7 @@ router.register(r'task-comments', TaskCommentViewSet, basename='taskcomment')
 router.register(r'task-templates', TaskTemplateViewSet, basename='tasktemplate')
 router.register(r'flow-templates', FlowTemplateViewSet, basename='flowtemplate')
 router.register(r'flow-instances', FlowInstanceViewSet, basename='flowinstance')
+router.register(r'tasks-from-flow', TaskFromFlowViewSet, basename='taskfromflow')
 
 # URL patterns
 urlpatterns = [
@@ -26,4 +28,6 @@ urlpatterns = [
     
     # Task creation from flow template
     path('create-from-flow/', CreateTaskFromFlowView.as_view(), name='create-task-from-flow'),
+    path('bulk-create-from-csv/', AsyncBulkTaskCreationView.as_view(), name='bulk-create-from-csv'),
+    path('bulk-task-creation-job/<int:job_id>/', BulkTaskCreationJobStatusView.as_view(), name='bulk-task-creation-job-status'),
 ] 
