@@ -905,6 +905,7 @@ class CreateTaskFromFlowView(APIView):
                     tenant=tenant,
                     is_active=True
                 )
+
             except FlowTemplate.DoesNotExist:
                 return Response({
                     'success': False,
@@ -1007,7 +1008,7 @@ class CreateTaskFromFlowView(APIView):
             task_id=task_id,
             client_task_id=client_task_id,
             is_client_id_provided=bool(client_task_id),
-            task_name=f"{flow_template.name}Task",
+            task_name=site_group.get('task_name', f"{flow_template.name}Task"),
             description=f"Task created from flow template: {flow_template.name}",
             flow_template=flow_template,
             project=project,
@@ -1046,69 +1047,114 @@ class CreateTaskFromFlowView(APIView):
         # Get all activities from the flow template
         template_activities = flow_template.activities.all().order_by('sequence_order')
         
-        sub_task_counter = 0
-        sub_task_map = {}  # Map template sequence to list of sub-task IDs for dependencies
-        
-        # First pass: Create all sub-tasks and build the mapping
-        for template_activity in template_activities:
-            # Check which sites this activity is assigned to
-            for flow_activity_site in template_activity.assigned_sites.all():
-                if flow_activity_site.flow_site.alias in site_group['sites']:
-                    # Get the project site ID for this alias
-                    project_site_id = site_group['sites'][flow_activity_site.flow_site.alias]
-                    
-                    # Get the actual site from the project site
-                    try:
-                        project_site = ProjectSite.objects.get(id=project_site_id)
-                        actual_site = project_site.site
-                    except ProjectSite.DoesNotExist:
-                        raise ValidationError(f"Project site with ID {project_site_id} not found")
-                    except AttributeError:
-                        raise ValidationError(f"Project site {project_site_id} has no associated site")
-                    
-                    # Create sub-task for this site
+        if not template_activities.exists():
+            # If no activities exist, create a default one with a site assigned
+            if site_group['sites']:
+                first_alias = list(site_group['sites'].keys())[0]
+                project_site_id = site_group['sites'][first_alias]
+                try:
+                    project_site = ProjectSite.objects.get(id=project_site_id)
+                    actual_site = project_site.site
                     sub_task = TaskSubActivity.objects.create(
                         task_from_flow=task,
-                        flow_activity=template_activity,
-                        sequence_order=sub_task_counter,
-                        activity_type=template_activity.activity_type,
-                        activity_name=template_activity.activity_name,
-                        description=template_activity.description,
-                        assigned_site=actual_site,  # Use the actual Site object, not ID
-                        site_alias=flow_activity_site.flow_site.alias,
-                        dependencies=[],  # Initialize empty, will be updated later
-                        dependency_scope=template_activity.dependency_scope,
-                        parallel_execution=template_activity.parallel_execution,
+                        flow_activity=None,
+                        sequence_order=0,
+                        activity_type='general',
+                        activity_name='Default Activity',
+                        description='Default activity created for task',
+                        assigned_site=actual_site,  # Assign site immediately
+                        site_alias=first_alias,    # Assign alias immediately
+                        dependencies=[],
+                        dependency_scope='TASK_LOCAL',
+                        parallel_execution=False,
                         status='pending',
                         progress_percentage=0
                     )
-                    
-                    # Store mapping for dependency resolution
-                    if template_activity.sequence_order not in sub_task_map:
-                        sub_task_map[template_activity.sequence_order] = []
-                    sub_task_map[template_activity.sequence_order].append(sub_task.id)
-                    sub_task_counter += 1
+                    return
+                except (ProjectSite.DoesNotExist, AttributeError):
+                    return
+            else:
+                return
         
-        # Second pass: Update dependencies to use sub-task IDs instead of template sequence
-        for sub_task in task.sub_activities.all():
-            # Get the template activity for this sub-task
-            template_activity = sub_task.flow_activity
+        sub_task_map = {}  # Map template sequence to sub-task ID for dependencies
+        
+        # Single pass: Create sub-activities with sites assigned immediately
+        for template_activity in template_activities:
+            # Determine which site to assign to this activity
+            assigned_site = None
+            site_alias = ''
             
-            if template_activity.dependencies:
-                updated_dependencies = []
-                for dep_sequence in template_activity.dependencies:
+            # Try to assign site based on flow template configuration first
+            if hasattr(template_activity, 'assigned_sites') and template_activity.assigned_sites.exists():
+                for flow_activity_site in template_activity.assigned_sites.all():
+                    if flow_activity_site.flow_site.alias in site_group['sites']:
+                        # Get the project site ID for this alias
+                        project_site_id = site_group['sites'][flow_activity_site.flow_site.alias]
+                        
+                        # Get the actual site from the project site
+                        try:
+                            project_site = ProjectSite.objects.get(id=project_site_id)
+                            assigned_site = project_site.site
+                            site_alias = flow_activity_site.flow_site.alias
+                            break  # Use first matching site
+                            
+                        except (ProjectSite.DoesNotExist, AttributeError):
+                            continue
+            
+            # If no site was assigned from flow template, use fallback assignment
+            if not assigned_site:
+                if site_group['sites']:
+                    first_alias = list(site_group['sites'].keys())[0]
+                    project_site_id = site_group['sites'][first_alias]
+                    
                     try:
-                        dep_sequence_int = int(dep_sequence)
-                        if dep_sequence_int in sub_task_map:
-                            # For now, just use the first sub-task of the dependent activity
-                            # This handles the basic case where dependencies are site-local
-                            updated_dependencies.append(str(sub_task_map[dep_sequence_int][0]))
-                    except ValueError:
-                        # Skip invalid dependency sequences
+                        project_site = ProjectSite.objects.get(id=project_site_id)
+                        assigned_site = project_site.site
+                        site_alias = first_alias
+                        
+                    except (ProjectSite.DoesNotExist, AttributeError):
+                        # If we can't get a site, skip this activity
                         continue
+            
+            # Create sub-activity with site already assigned
+            if assigned_site:
+                sub_task = TaskSubActivity.objects.create(
+                    task_from_flow=task,
+                    flow_activity=template_activity,
+                    sequence_order=template_activity.sequence_order,
+                    activity_type=template_activity.activity_type,
+                    activity_name=template_activity.activity_name,
+                    description=template_activity.description or '',
+                    assigned_site=assigned_site,  # Site assigned immediately
+                    site_alias=site_alias,        # Alias assigned immediately
+                    dependencies=[],  # Will be updated in second pass
+                    dependency_scope=template_activity.dependency_scope or 'TASK_LOCAL',
+                    parallel_execution=template_activity.parallel_execution or False,
+                    status='pending',
+                    progress_percentage=0
+                )
                 
-                sub_task.dependencies = updated_dependencies
-                sub_task.save(update_fields=['dependencies']) 
+                # Store mapping for dependency resolution
+                sub_task_map[template_activity.sequence_order] = sub_task.id
+        
+        # Second pass: Update dependencies using sub_task_map
+        for template_activity in template_activities:
+            if template_activity.dependencies:
+                # Get the sub-task for this activity
+                current_sub_task_id = sub_task_map.get(template_activity.sequence_order)
+                if current_sub_task_id:
+                    # Get the dependent sub-task IDs
+                    dependency_sub_task_ids = []
+                    for dep_sequence in template_activity.dependencies:
+                        dep_sub_task_id = sub_task_map.get(dep_sequence)
+                        if dep_sub_task_id:
+                            dependency_sub_task_ids.append(str(dep_sub_task_id))
+                    
+                    # Update the current sub-task's dependencies
+                    if dependency_sub_task_ids:
+                        sub_task = TaskSubActivity.objects.get(id=current_sub_task_id)
+                        sub_task.dependencies = dependency_sub_task_ids
+                        sub_task.save(update_fields=['dependencies']) 
 
 
 class AsyncBulkTaskCreationView(APIView):
@@ -1150,6 +1196,7 @@ class AsyncBulkTaskCreationView(APIView):
             try:
                 flow_template = FlowTemplate.objects.get(id=flow_template_id, tenant=tenant)
                 project = Project.objects.get(id=project_id, tenant=tenant)
+
             except (FlowTemplate.DoesNotExist, Project.DoesNotExist):
                 return Response(
                     {"success": False, "message": "Invalid flow template or project"},
@@ -1427,18 +1474,10 @@ class AsyncBulkTaskCreationView(APIView):
                 
                 # Create site group
                 if sites_data:
-                    # Generate Task ID based on new logic
-                    task_id = self._generate_task_id(
-                        row_index=index,
-                        csv_task_unique_id=csv_task_unique_id,
-                        auto_id_prefix=auto_id_prefix,
-                        auto_id_start=auto_id_start_int
-                    )
-                    
                     site_group = {
                         'sites': sites_data,
                         'task_name': task_name,  # Use task name from Step 1
-                        'client_task_id': task_id  # Use generated task ID
+                        'client_task_id': csv_task_unique_id if csv_task_unique_id and csv_task_unique_id.strip() else None
                     }
                     
                     # Create task using existing logic
@@ -1455,7 +1494,7 @@ class AsyncBulkTaskCreationView(APIView):
                     # Create task using the existing task creation logic
                     try:
                         # Create task using the same logic as CreateTaskFromFlowView
-                        task = self._create_task_from_site_group(
+                        task = CreateTaskFromFlowView()._create_task_from_site_group(
                             flow_template, project, site_group, task_config['task_naming'], tenant, user
                         )
                         
@@ -1493,157 +1532,6 @@ class AsyncBulkTaskCreationView(APIView):
             'error_count': error_count,
             'errors': errors
         }
-    
-    def _generate_task_id(self, row_index, csv_task_unique_id, auto_id_prefix, auto_id_start):
-        """
-        Generate task ID based on the 4 cases:
-        Case 1: Auto-ID Prefix Given + Task Unique ID Blank -> PREFIX + (STARTING_NUMBER + row_index)
-        Case 2: Auto-ID Prefix Given + Task Unique ID Provided -> Use CSV value
-        Case 3: No Auto-ID Prefix + Task Unique ID Provided -> Use CSV value  
-        Case 4: No Auto-ID Prefix + Task Unique ID Blank -> T_{bulk_uuid}_{row_number}
-        """
-        import uuid
-        
-        # Case 2 & 3: CSV Task Unique ID provided
-        if csv_task_unique_id and csv_task_unique_id.strip():
-            return csv_task_unique_id.strip()
-        
-        # Case 1: Auto-ID Prefix given
-        if auto_id_prefix and auto_id_prefix.strip():
-            start_num = auto_id_start if auto_id_start else 1
-            generated_id = f"{auto_id_prefix}{start_num + row_index}"
-            return generated_id
-        
-        # Case 4: Fallback - generate T_{bulk_uuid}_{row_number}
-        bulk_uuid = uuid.uuid4().hex[:8]
-        fallback_id = f"T_{bulk_uuid}_{row_index + 1}"
-        return fallback_id
-    
-    def _create_task_from_site_group(self, flow_template, project, site_group, task_naming, tenant, user):
-        """Create a single task from a site group"""
-        # Generate task ID
-        client_task_id = site_group.get('client_task_id')
-        
-        # Validate client ID if provided
-        if client_task_id:
-            from django.core.exceptions import ValidationError
-            # For now, skip validation in bulk upload to avoid complexity
-            pass
-        
-        # Generate task ID
-        from .utils import TaskIDGenerator
-        task_id = TaskIDGenerator.generate_task_id(
-            flow_template=flow_template,
-            project=project,
-            client_id=client_task_id,
-            prefix=task_naming.get('auto_id_prefix'),
-            start_number=task_naming.get('auto_id_start'),
-            tenant=tenant
-        )
-        
-        # Create main task
-        task = TaskFromFlow.objects.create(
-            task_id=task_id,
-            client_task_id=client_task_id,
-            is_client_id_provided=bool(client_task_id),
-            task_name=site_group.get('task_name') or f"{flow_template.name}Task",
-            description=f"Task created from flow template: {flow_template.name}",
-            flow_template=flow_template,
-            project=project,
-            tenant=tenant,
-            created_by=user,
-            status='pending',
-            priority='medium'
-        )
-        
-        # Create site group mappings
-        for i, (alias, project_site_id) in enumerate(site_group['sites'].items()):
-            # Get the project site object first, then extract the actual site
-            try:
-                project_site = ProjectSite.objects.get(id=project_site_id)
-                actual_site = project_site.site
-            except ProjectSite.DoesNotExist:
-                raise ValidationError(f"Project site with ID {project_site_id} not found")
-            except AttributeError:
-                # Handle case where project_site.site might be None
-                raise ValidationError(f"Project site {project_site_id} has no associated site")
-            
-            TaskSiteGroup.objects.create(
-                task_from_flow=task,
-                site=actual_site,
-                site_alias=alias,
-                assignment_order=i
-            )
-        
-        # Create sub-activities for this task
-        self._create_sub_activities_for_task(task, flow_template, site_group)
-        
-        return task
-    
-    def _create_sub_activities_for_task(self, task, flow_template, site_group):
-        """Create sub-activities for a task based on flow template"""
-        # Get all activities from the flow template
-        template_activities = flow_template.activities.all().order_by('sequence_order')
-        
-        sub_task_counter = 0
-        sub_task_map = {}  # Map template sequence to list of sub-task IDs for dependencies
-        
-        # First pass: Create all sub-tasks and build the mapping
-        for template_activity in template_activities:
-            # Check which sites this activity is assigned to
-            for flow_activity_site in template_activity.assigned_sites.all():
-                if flow_activity_site.flow_site.alias in site_group['sites']:
-                    # Get the project site ID for this alias
-                    project_site_id = site_group['sites'][flow_activity_site.flow_site.alias]
-                    
-                    # Get the actual site from the project site
-                    try:
-                        project_site = ProjectSite.objects.get(id=project_site_id)
-                        actual_site = project_site.site
-                    except ProjectSite.DoesNotExist:
-                        raise ValidationError(f"Project site with ID {project_site_id} not found")
-                    except AttributeError:
-                        raise ValidationError(f"Project site {project_site_id} has no associated site")
-                    
-                    # Create sub-task for this site
-                    sub_task = TaskSubActivity.objects.create(
-                        task_from_flow=task,
-                        flow_activity=template_activity,
-                        sequence_order=sub_task_counter,
-                        activity_type=template_activity.activity_type,
-                        activity_name=template_activity.activity_name,
-                        description=template_activity.description,
-                        assigned_site=actual_site,  # Use the actual Site object, not ID
-                        site_alias=flow_activity_site.flow_site.alias,
-                        dependencies=[],  # Initialize empty, will be updated later
-                        dependency_scope=template_activity.dependency_scope,
-                        parallel_execution=template_activity.parallel_execution,
-                        status='pending',
-                        progress_percentage=0
-                    )
-                    
-                    # Store mapping for dependency resolution
-                    if template_activity.sequence_order not in sub_task_map:
-                        sub_task_map[template_activity.sequence_order] = []
-                    sub_task_map[template_activity.sequence_order].append(sub_task.id)
-                    
-                    sub_task_counter += 1
-        
-        # Second pass: Update dependencies based on flow template dependencies
-        for template_activity in template_activities:
-            if template_activity.dependencies:
-                # Find sub-tasks for this activity
-                current_sub_tasks = sub_task_map.get(template_activity.sequence_order, [])
-                
-                for dependency_sequence in template_activity.dependencies:
-                    # Find sub-tasks for the dependency activity
-                    dependency_sub_tasks = sub_task_map.get(dependency_sequence, [])
-                    
-                    # Update all current sub-tasks with dependencies
-                    for sub_task_id in current_sub_tasks:
-                        sub_task = TaskSubActivity.objects.get(id=sub_task_id)
-                        sub_task.dependencies = dependency_sub_tasks
-                        sub_task.save()
 
 
 class BulkTaskCreationJobStatusView(APIView):
