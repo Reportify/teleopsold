@@ -5,7 +5,6 @@ from rest_framework.response import Response
 from django.db import models, transaction
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-import logging
 from django.db.models import Q, Count, Sum
 from rest_framework.views import APIView
 import pandas as pd
@@ -31,7 +30,7 @@ from apps.projects.models import Project, ProjectSite
 from apps.sites.models import Site
 
 
-logger = logging.getLogger(__name__)
+
 
 
 class TaskViewSet(viewsets.ModelViewSet):
@@ -210,8 +209,6 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         task.update_progress(progress, notes)
         
-        logger.info(f"Task {task.task_id} progress updated to {progress}% by {request.user.email}")
-        
         return Response(TaskSerializer(task).data)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, EquipmentVerificationPermission])
@@ -238,8 +235,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                 comment=f"Equipment verified. {verification_notes}",
                 is_internal=False
             )
-        
-        logger.info(f"Equipment verified for task {task.task_id} by {request.user.email}")
         
         return Response({
             'message': 'Equipment verified successfully',
@@ -287,8 +282,6 @@ class TaskViewSet(viewsets.ModelViewSet):
             comment=f"Status changed from {old_status} to {new_status}. {status_notes}",
             is_internal=False
         )
-        
-        logger.info(f"Task {task.task_id} status updated from {old_status} to {new_status} by {request.user.email}")
         
         return Response(TaskSerializer(task).data)
 
@@ -413,8 +406,6 @@ class TaskViewSet(viewsets.ModelViewSet):
                 )
                 
                 updated_count += 1
-        
-        logger.info(f"Bulk updated {updated_count} tasks to status {new_status} by {request.user.email}")
         
         return Response({
             'message': f'Updated {updated_count} tasks',
@@ -1149,12 +1140,6 @@ class AsyncBulkTaskCreationView(APIView):
             auto_id_start = request.data.get('auto_id_start', '')
             task_name = request.data.get('task_name', '')
             
-            # Log the new parameters for debugging
-            logger.info(f"🚨 TASK ID GENERATION DEBUG - New parameters received:")
-            logger.info(f"Auto-ID Prefix: '{auto_id_prefix}'")
-            logger.info(f"Auto-ID Start: '{auto_id_start}'")
-            logger.info(f"Task Name: '{task_name}'")
-            
             if not all([flow_template_id, project_id, csv_file]):
                 return Response(
                     {"success": False, "message": "Missing required fields: flow_template_id, project_id, csv_file"},
@@ -1177,62 +1162,26 @@ class AsyncBulkTaskCreationView(APIView):
             
             try:
                 csv_content = csv_file.read().decode('utf-8')
-                logger.error(f"🔍 CSV DEBUG: Raw CSV content preview: {csv_content[:1000]}...")
-                logger.error(f"🔍 CSV DEBUG: CSV file size: {len(csv_content)} characters")
                 
                 # Log the raw bytes to see if there are encoding issues
                 csv_file.seek(0)  # Reset file pointer
                 raw_bytes = csv_file.read()
-                logger.error(f"🔍 CSV DEBUG: Raw bytes (first 200): {raw_bytes[:200]}")
-                logger.error(f"🔍 CSV DEBUG: Raw bytes length: {len(raw_bytes)}")
                 
                 # Try different encoding methods
                 try:
                     csv_content_utf8 = raw_bytes.decode('utf-8')
-                    logger.error(f"🔍 CSV DEBUG: UTF-8 decode successful")
                 except UnicodeDecodeError as e:
-                    logger.error(f"🔍 CSV DEBUG: UTF-8 decode failed: {e}")
                     try:
                         csv_content_utf8 = raw_bytes.decode('utf-8-sig')  # Try with BOM
-                        logger.error(f"🔍 CSV DEBUG: UTF-8-BOM decode successful")
                     except UnicodeDecodeError as e2:
-                        logger.error(f"🔍 CSV DEBUG: UTF-8-BOM decode failed: {e2}")
                         csv_content_utf8 = raw_bytes.decode('latin-1')  # Fallback
-                        logger.error(f"🔍 CSV DEBUG: Latin-1 decode successful")
                 
                 # Read CSV with better handling of empty cells and NaN values
-                logger.error(f"🔍 CSV DEBUG: About to read CSV with pandas...")
                 df = pd.read_csv(io.StringIO(csv_content_utf8), na_values=['', 'nan', 'NaN', 'NULL', 'null'], keep_default_na=False)
-                logger.error(f"🔍 CSV DEBUG: Pandas read_csv completed successfully")
-                
-                # Log the raw dataframe info
-                logger.error(f"🔍 CSV DEBUG: DataFrame info:")
-                logger.error(f"🔍 CSV DEBUG: Shape: {df.shape}")
-                logger.error(f"🔍 CSV DEBUG: Columns: {df.columns.tolist()}")
-                logger.error(f"🔍 CSV DEBUG: First few rows (raw):")
-                logger.error(f"🔍 CSV DEBUG: {df.head(3).to_string()}")
                 
                 # Clean the dataframe - replace any remaining NaN values with empty strings
                 df = df.fillna('')
-                logger.error(f"🔍 CSV DEBUG: DataFrame cleaned with fillna")
-                
-                logger.error(f"🔍 CSV DEBUG: CSV loaded with {len(df)} rows and columns: {list(df.columns)}")
-                logger.error(f"🔍 CSV DEBUG: Column names (exact): {[repr(col) for col in df.columns]}")
-                logger.error(f"🔍 CSV DEBUG: DataFrame dtypes: {df.dtypes.to_dict()}")
-                logger.error(f"🔍 CSV DEBUG: First few rows of data:")
-                for i in range(min(3, len(df))):
-                    row_data = dict(df.iloc[i])
-                    logger.error(f"🔍 CSV DEBUG: Row {i+1}: {row_data}")
-                    # Log each column value separately to see exact content
-                    for col, val in row_data.items():
-                        logger.error(f"🔍 CSV DEBUG: Row {i+1}, Column '{col}': '{val}' (type: {type(val)})")
-                
-                logger.error(f"🔍 CSV DEBUG: CSV cleaned - NaN values replaced with empty strings")
             except Exception as e:
-                logger.error(f"CSV reading error: {str(e)}")
-                logger.error(f"Error type: {type(e)}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
                 return Response(
                     {"success": False, "message": f"Failed to read CSV file: {str(e)}"},
                     status=status.HTTP_400_BAD_REQUEST
@@ -1242,13 +1191,6 @@ class AsyncBulkTaskCreationView(APIView):
             expected_columns = ["Task Unique ID (Optional)"]
             for site in flow_template.sites.all():
                 expected_columns.extend([f"{site.alias} Site ID", f"{site.alias} Global ID", f"{site.alias} Site Name"])
-            
-            logger.error(f"🔍 CSV DEBUG: Expected columns: {expected_columns}")
-            logger.error(f"🔍 CSV DEBUG: Actual columns: {list(df.columns)}")
-            logger.error(f"🔍 CSV DEBUG: Column existence check:")
-            for col in expected_columns:
-                exists = col in df.columns
-                logger.error(f"🔍 CSV DEBUG: Column '{col}' exists: {exists}")
             
             if not all(col in df.columns for col in expected_columns):
                 return Response(
@@ -1265,7 +1207,6 @@ class AsyncBulkTaskCreationView(APIView):
                 return self._process_small_upload_sync(request, df, flow_template, project, tenant, user, auto_id_prefix, auto_id_start, task_name)
                 
         except Exception as e:
-            logger.error(f"Error in bulk task creation: {str(e)}")
             return Response(
                 {"success": False, "message": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1288,7 +1229,6 @@ class AsyncBulkTaskCreationView(APIView):
             })
             
         except Exception as e:
-            logger.error(f"Error in sync processing: {str(e)}")
             return Response(
                 {"success": False, "message": f"Failed to process upload: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1328,7 +1268,6 @@ class AsyncBulkTaskCreationView(APIView):
             }, status=status.HTTP_202_ACCEPTED)
             
         except Exception as e:
-            logger.error(f"Error starting async job: {str(e)}")
             return Response(
                 {"success": False, "message": f"Failed to start async processing: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -1337,7 +1276,6 @@ class AsyncBulkTaskCreationView(APIView):
     def _process_large_upload_async_worker(self, job, df, flow_template, project, tenant, user, auto_id_prefix, auto_id_start, task_name):
         """Worker thread for async processing"""
         try:
-            logger.info(f"Starting async processing for job {job.id}, {len(df)} rows")
             job.status = 'processing'
             job.started_at = timezone.now()
             job.detailed_errors = []
@@ -1346,7 +1284,6 @@ class AsyncBulkTaskCreationView(APIView):
             # Process in chunks of 50 rows
             chunk_size = 50
             total_chunks = (len(df) + chunk_size - 1) // chunk_size
-            logger.info(f"Processing {len(df)} rows in {total_chunks} chunks of {chunk_size}")
             
             all_errors = []
             total_success = 0
@@ -1379,10 +1316,7 @@ class AsyncBulkTaskCreationView(APIView):
             job.completed_at = timezone.now()
             job.save()
             
-            logger.info(f"Bulk task creation job {job.id} completed successfully. {job.success_count} tasks created, {job.error_count} errors.")
-            
         except Exception as e:
-            logger.error(f"Error in async task creation job {job.id}: {str(e)}")
             job.status = 'failed'
             job.error_message = str(e)
             job.completed_at = timezone.now()
@@ -1399,12 +1333,6 @@ class AsyncBulkTaskCreationView(APIView):
             auto_id_start_int = int(auto_id_start) if auto_id_start else 1
         except (ValueError, TypeError):
             auto_id_start_int = 1
-            logger.warning(f"Invalid auto_id_start '{auto_id_start}', defaulting to 1")
-        
-        logger.info(f"🚨 TASK ID GENERATION DEBUG - Processing with:")
-        logger.info(f"Auto-ID Prefix: '{auto_id_prefix}'")
-        logger.info(f"Auto-ID Start: {auto_id_start_int}")
-        logger.info(f"Task Name: '{task_name}'")
         
         for index, row in df.iterrows():
             try:
@@ -1412,17 +1340,10 @@ class AsyncBulkTaskCreationView(APIView):
                 csv_task_unique_id = row.get('Task Unique ID (Optional)', '')
                 sites_data = {}
                 
-                logger.info(f"Processing row {index + 1}: csv_task_unique_id='{csv_task_unique_id}'")
-                logger.info(f"Row data: {dict(row)}")
-                
                 # Check if this row has any meaningful data
                 row_has_data = False
-                logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Checking for data...")
-                logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Available columns in row: {list(row.keys())}")
-                logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Flow template has {flow_template.sites.count()} sites")
                 
                 # Let's also check the raw values directly from the dataframe
-                logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Raw dataframe values:")
                 for flow_site in flow_template.sites.all():
                     alias = flow_site.alias
                     site_id_col = f"{alias} Site ID"
@@ -1431,41 +1352,22 @@ class AsyncBulkTaskCreationView(APIView):
                     # Get values directly from dataframe
                     raw_site_id = df.iloc[index][site_id_col]
                     raw_global_id = df.iloc[index][global_id_col]
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Raw df values - {site_id_col}: {repr(raw_site_id)}, {global_id_col}: {repr(raw_global_id)}")
                     
                     # Get values from row object
                     site_id = row.get(site_id_col, '')
                     global_id = row.get(global_id_col, '')
                     
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: alias='{alias}'")
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: site_id_col='{site_id_col}' -> value='{site_id}' (type: {type(site_id)})")
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: global_id_col='{global_id_col}' -> value='{global_id}' (type: {type(global_id)})")
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Raw row data: {dict(row)}")
-                    
                     # Check if the column exists in the row
                     if site_id_col not in row:
-                        logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Column '{site_id_col}' NOT FOUND in row!")
-                        logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Available columns: {list(row.keys())}")
                         # Try to find similar columns
                         similar_cols = [col for col in row.keys() if 'site' in col.lower() and 'id' in col.lower()]
-                        if similar_cols:
-                            logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Found similar columns: {similar_cols}")
                     
                     # Check if either site_id or global_id has valid data
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Checking data validity...")
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: site_id='{site_id}' (type: {type(site_id)}, empty: {site_id == ''}, nan: {site_id == 'nan'})")
-                    logger.error(f"🔍 ROW DEBUG: Row {index + 1}: global_id='{global_id}' (type: {type(global_id)}, empty: {global_id == ''}, nan: {global_id == 'nan'})")
-                    
                     if (site_id and site_id != '' and site_id != 'nan') or (global_id and global_id != '' and global_id != 'nan'):
                         row_has_data = True
-                        logger.error(f"🔍 ROW DEBUG: Row {index + 1}: Found valid data - site_id: '{site_id}', global_id: '{global_id}'")
                         break
-                    else:
-                        logger.error(f"🔍 ROW DEBUG: Row {index + 1}: No valid data found - both columns appear empty")
                 
                 if not row_has_data:
-                    logger.warning(f"Row {index + 1}: Skipping completely empty row - no valid site IDs or global IDs found")
-                    logger.warning(f"Row {index + 1}: All site columns were empty or invalid")
                     error_count += 1
                     errors.append({
                         'row': index + 1,
@@ -1490,71 +1392,38 @@ class AsyncBulkTaskCreationView(APIView):
                     if pd.isna(global_id) or global_id == 'nan':
                         global_id = ''
                     
-                    logger.info(f"Site alias '{alias}': site_id='{site_id}', global_id='{global_id}', site_name='{site_name}'")
-                    
-                    # Log the CSV column names being processed
-                    logger.info(f"CSV columns for alias '{alias}': {site_id_col}, {global_id_col}, {site_name_col}")
-                    
                     # Use either site_id or global_id, prioritizing site_id if available
                     identifier = site_id if site_id else global_id
-                    
-                    logger.info(f"Row {index + 1}: Processing alias '{alias}' - site_id: '{site_id}', global_id: '{global_id}', using identifier: '{identifier}'")
                     
                     if identifier:
                         # Try to find project site by ID or global ID
                         project_site = None
                         
-                        logger.info(f"Processing identifier: '{identifier}' for alias '{alias}' in project {project.id}")
-                        
                         # First try by ProjectSite ID (if identifier is numeric)
                         try:
                             numeric_id = int(identifier)
-                            logger.info(f"Trying to find ProjectSite by ID: {numeric_id}")
                             project_site = ProjectSite.objects.filter(
                                 id=numeric_id,
                                 project=project
                             ).first()
-                            
-                            if project_site:
-                                logger.info(f"Found ProjectSite by ID: {project_site.id} -> Site: {project_site.site.global_id}")
-                            else:
-                                logger.info(f"No ProjectSite found with ID: {numeric_id} in project {project.id}")
                                 
                         except ValueError:
                             # If not numeric, try by site business ID (site_id) first, then global_id
                             if site_id:  # Try business site_id first if available
-                                logger.info(f"Trying to find ProjectSite by Site Business ID: {site_id}")
                                 project_site = ProjectSite.objects.filter(
                                     project=project,
                                     site__site_id=site_id
                                 ).first()
-                                
-                                if project_site:
-                                    logger.info(f"Found ProjectSite by Site Business ID: {project_site.id} -> Site: {project_site.site.site_id}")
-                                else:
-                                    logger.info(f"No ProjectSite found with Site Business ID: {site_id} in project {project.id}")
                             
                             # If still not found and we have a global_id, try that
                             if not project_site and global_id:
-                                logger.info(f"Trying to find ProjectSite by Global ID: {global_id}")
                                 project_site = ProjectSite.objects.filter(
                                     project=project,
                                     site__global_id=global_id
                                 ).first()
-                                
-                                if project_site:
-                                    logger.info(f"Found ProjectSite by Global ID: {project_site.id} -> Site: {project_site.site.global_id}")
-                                else:
-                                    logger.info(f"No ProjectSite found with Global ID: {global_id} in project {project.id}")
                         
                         if project_site:
                             sites_data[alias] = project_site.id
-                            logger.info(f"Row {index + 1}: Successfully found ProjectSite {project_site.id} for alias '{alias}' -> Site: {project_site.site.site_id} (Global: {project_site.site.global_id})")
-                        else:
-                            logger.warning(f"Row {index + 1}: No valid ProjectSite found for identifier: '{identifier}' in project {project.id}")
-                            logger.warning(f"Row {index + 1}: Tried site_id: '{site_id}', global_id: '{global_id}'")
-                    else:
-                        logger.warning(f"Row {index + 1}: Both site_id and global_id are empty for alias '{alias}'")
                 
                 # Create site group
                 if sites_data:
@@ -1566,18 +1435,11 @@ class AsyncBulkTaskCreationView(APIView):
                         auto_id_start=auto_id_start_int
                     )
                     
-                    logger.info(f"Row {index + 1}: Generated Task ID: '{task_id}'")
-                    logger.info(f"Row {index + 1}: CSV Task Unique ID: '{csv_task_unique_id}'")
-                    logger.info(f"Row {index + 1}: Auto-ID Prefix: '{auto_id_prefix}'")
-                    logger.info(f"Row {index + 1}: Auto-ID Start: {auto_id_start_int}")
-                    
                     site_group = {
                         'sites': sites_data,
                         'task_name': task_name,  # Use task name from Step 1
                         'client_task_id': task_id  # Use generated task ID
                     }
-                    
-                    logger.info(f"Row {index + 1}: Creating task with sites_data: {sites_data}")
                     
                     # Create task using existing logic
                     task_config = {
@@ -1599,15 +1461,12 @@ class AsyncBulkTaskCreationView(APIView):
                         
                         if task:
                             success_count += 1
-                            logger.info(f"Row {index + 1}: Successfully created task {task.id} with task_id: {task.task_id}")
-                            logger.info(f"Row {index + 1}: Task created with {len(task.sub_activities.all())} sub-activities")
                         else:
                             error_count += 1
                             errors.append({
                                 'row': index + 1,
                                 'error': 'Task creation returned None'
                             })
-                            logger.error(f"Row {index + 1}: Task creation returned None")
                             
                     except Exception as task_error:
                         error_count += 1
@@ -1615,14 +1474,12 @@ class AsyncBulkTaskCreationView(APIView):
                             'row': index + 1,
                             'error': f'Task creation failed: {str(task_error)}'
                         })
-                        logger.error(f"Row {index + 1}: Error creating task: {str(task_error)}")
                 else:
                     error_count += 1
                     errors.append({
                         'row': index + 1,
                         'error': 'No valid sites found for this row - all site IDs were empty, NaN, or invalid'
                     })
-                    logger.warning(f"Row {index + 1}: No valid sites found - sites_data: {sites_data}")
                     
             except Exception as e:
                 error_count += 1
@@ -1630,19 +1487,6 @@ class AsyncBulkTaskCreationView(APIView):
                     'row': index + 1,
                     'error': str(e)
                 })
-                logger.error(f"Error processing row {index + 1}: {str(e)}")
-        
-        logger.info(f"CSV processing completed: {success_count} successful, {error_count} errors out of {len(df)} total rows")
-        logger.info(f"Final results - Success: {success_count}, Errors: {error_count}, Total: {len(df)}")
-        
-        if success_count > 0:
-            logger.info(f"✅ Successfully created {success_count} tasks from CSV")
-        
-        if errors:
-            error_summary = [f"Row {e.get('row', '?')}: {e.get('error', 'Unknown error')}" for e in errors[:5]]
-            logger.info(f"❌ Error summary: {error_summary}")
-            if len(errors) > 5:
-                logger.info(f"❌ ... and {len(errors) - 5} more errors")
         
         return {
             'success_count': success_count,
@@ -1662,20 +1506,17 @@ class AsyncBulkTaskCreationView(APIView):
         
         # Case 2 & 3: CSV Task Unique ID provided
         if csv_task_unique_id and csv_task_unique_id.strip():
-            logger.info(f"Using CSV Task Unique ID: '{csv_task_unique_id}'")
             return csv_task_unique_id.strip()
         
         # Case 1: Auto-ID Prefix given
         if auto_id_prefix and auto_id_prefix.strip():
             start_num = auto_id_start if auto_id_start else 1
             generated_id = f"{auto_id_prefix}{start_num + row_index}"
-            logger.info(f"Generated Auto-ID: '{generated_id}' (prefix: '{auto_id_prefix}', start: {start_num}, row: {row_index})")
             return generated_id
         
         # Case 4: Fallback - generate T_{bulk_uuid}_{row_number}
         bulk_uuid = uuid.uuid4().hex[:8]
         fallback_id = f"T_{bulk_uuid}_{row_index + 1}"
-        logger.info(f"Generated Fallback ID: '{fallback_id}' (no prefix, no CSV ID)")
         return fallback_id
     
     def _create_task_from_site_group(self, flow_template, project, site_group, task_naming, tenant, user):
@@ -1834,7 +1675,6 @@ class BulkTaskCreationJobStatusView(APIView):
             })
             
         except Exception as e:
-            logger.error(f"Error getting job status: {str(e)}")
             return Response(
                 {"success": False, "message": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
