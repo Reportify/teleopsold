@@ -1046,6 +1046,19 @@ class CreateTaskFromFlowView(APIView):
         """Create sub-activities for a task based on flow template"""
         # Get all activities from the flow template
         template_activities = flow_template.activities.all().order_by('sequence_order')
+        print(f"DEBUG: Found {template_activities.count()} template activities")
+        
+        # Let's also check the raw database values
+        print("DEBUG: Raw database query for dependencies:")
+        raw_activities = flow_template.activities.values('sequence_order', 'activity_name', 'dependencies').order_by('sequence_order')
+        for raw_ta in raw_activities:
+            print(f"DEBUG: Raw - Activity {raw_ta['sequence_order']}: {raw_ta['activity_name']}, dependencies: {raw_ta['dependencies']} (type: {type(raw_ta['dependencies'])})")
+        
+        for ta in template_activities:
+            print(f"DEBUG: Activity {ta.sequence_order}: {ta.activity_name}, dependencies: {ta.dependencies} (type: {type(ta.dependencies)})")
+            if ta.dependencies:
+                for i, dep in enumerate(ta.dependencies):
+                    print(f"DEBUG:   Dependency {i}: {dep} (type: {type(dep)})")
         
         if not template_activities.exists():
             # If no activities exist, create a default one with a site assigned
@@ -1138,23 +1151,57 @@ class CreateTaskFromFlowView(APIView):
                 sub_task_map[template_activity.sequence_order] = sub_task.id
         
         # Second pass: Update dependencies using sub_task_map
+        print(f"DEBUG: Sub-task map: {sub_task_map}")
+        print(f"DEBUG: Sub-task map keys: {list(sub_task_map.keys())}")
+        print(f"DEBUG: Sub-task map values: {list(sub_task_map.values())}")
+        
         for template_activity in template_activities:
+            print(f"DEBUG: Processing dependencies for sequence {template_activity.sequence_order}")
+            print(f"DEBUG: Template activity dependencies: {template_activity.dependencies}")
+            print(f"DEBUG: Template activity dependencies type: {type(template_activity.dependencies)}")
+            print(f"DEBUG: Template activity dependencies length: {len(template_activity.dependencies) if template_activity.dependencies else 0}")
+            
             if template_activity.dependencies:
                 # Get the sub-task for this activity
                 current_sub_task_id = sub_task_map.get(template_activity.sequence_order)
+                print(f"DEBUG: Current sub-task ID: {current_sub_task_id}")
+                
                 if current_sub_task_id:
                     # Get the dependent sub-task IDs
                     dependency_sub_task_ids = []
                     for dep_sequence in template_activity.dependencies:
-                        dep_sub_task_id = sub_task_map.get(dep_sequence)
+                        print(f"DEBUG: Processing dependency sequence: {dep_sequence} (type: {type(dep_sequence)})")
+                        
+                        # Convert string dependency to integer for lookup
+                        try:
+                            dep_sequence_int = int(dep_sequence)
+                            print(f"DEBUG: Converted dependency sequence '{dep_sequence}' to integer {dep_sequence_int}")
+                        except (ValueError, TypeError):
+                            print(f"DEBUG: ERROR: Could not convert dependency sequence '{dep_sequence}' to integer")
+                            continue
+                        
+                        print(f"DEBUG: Looking up dep_sequence {dep_sequence_int} in sub_task_map")
+                        dep_sub_task_id = sub_task_map.get(dep_sequence_int)
+                        print(f"DEBUG: Found dependent sub-task ID: {dep_sub_task_id}")
                         if dep_sub_task_id:
                             dependency_sub_task_ids.append(str(dep_sub_task_id))
+                        else:
+                            print(f"DEBUG: WARNING: No sub-task found for dependency sequence {dep_sequence_int}")
+                    
+                    print(f"DEBUG: Final dependency sub-task IDs: {dependency_sub_task_ids}")
                     
                     # Update the current sub-task's dependencies
                     if dependency_sub_task_ids:
                         sub_task = TaskSubActivity.objects.get(id=current_sub_task_id)
                         sub_task.dependencies = dependency_sub_task_ids
-                        sub_task.save(update_fields=['dependencies']) 
+                        sub_task.save(update_fields=['dependencies'])
+                        print(f"DEBUG: Updated dependencies for sub-task {current_sub_task_id}: {dependency_sub_task_ids}")
+                    else:
+                        print(f"DEBUG: No valid dependencies found for sub-task {current_sub_task_id}")
+                else:
+                    print(f"DEBUG: No sub-task found for sequence {template_activity.sequence_order}")
+            else:
+                print(f"DEBUG: No dependencies for sequence {template_activity.sequence_order}") 
 
 
 class AsyncBulkTaskCreationView(APIView):
