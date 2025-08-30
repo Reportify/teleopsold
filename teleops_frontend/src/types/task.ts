@@ -56,6 +56,7 @@ export interface TaskSiteGroup {
   assignment_order: number;
   site_name: string;
   site_global_id: string;
+  site_business_id: string;
 }
 
 export interface TaskSubActivity {
@@ -78,6 +79,7 @@ export interface TaskSubActivity {
   updated_at: string;
   site_name: string;
   site_global_id: string;
+  site_business_id: string;
 }
 
 export interface SubActivity {

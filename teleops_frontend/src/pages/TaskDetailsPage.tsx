@@ -559,8 +559,7 @@ const TaskDetailsPage: React.FC = () => {
                                     flex: 0.6,
                                     p: 2.5,
                                     backgroundColor: "rgba(33, 150, 243, 0.08)",
-                                    borderRadius: 2.5,
-                                    border: "1px solid",
+                                    borderRadius: 1.5,
                                     borderColor: "divider",
                                     minHeight: 80,
                                     display: "flex",
@@ -600,15 +599,15 @@ const TaskDetailsPage: React.FC = () => {
                                         <Typography variant="body2" color="text.secondary" fontFamily="monospace" sx={{ fontSize: "0.75rem" }}>
                                           {(() => {
                                             const siteGroup = task.site_groups.find((sg: any) => sg.site_alias === subActivity.site_alias);
-                                            const globalId = siteGroup?.site_global_id || subActivity.site_global_id;
-                                            return globalId ? globalId : "Global ID";
+                                            const businessId = siteGroup?.site_business_id || subActivity.site_business_id;
+                                            return businessId ? businessId : "Business ID";
                                           })()}
                                         </Typography>
                                         <Typography variant="body2" color="text.secondary" fontFamily="monospace" sx={{ fontSize: "0.75rem" }}>
                                           {(() => {
                                             const siteGroup = task.site_groups.find((sg: any) => sg.site_alias === subActivity.site_alias);
                                             const globalId = siteGroup?.site_global_id || subActivity.site_global_id;
-                                            return globalId ? globalId.replace(/\d+$/, (match: string) => String(parseInt(match) + 1)) : "Site ID";
+                                            return globalId ? globalId : "Global ID";
                                           })()}
                                         </Typography>
                                       </Box>

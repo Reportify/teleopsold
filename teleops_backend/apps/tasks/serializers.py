@@ -783,13 +783,14 @@ class FlowInstanceSerializer(serializers.ModelSerializer):
 class TaskSiteGroupSerializer(serializers.ModelSerializer):
     """Serializer for TaskSiteGroup model"""
     site_name = serializers.CharField(source='site.site_name', read_only=True)
-    site_global_id = serializers.CharField(source='site.site_global_id', read_only=True)
+    site_global_id = serializers.CharField(source='site.global_id', read_only=True)
+    site_business_id = serializers.CharField(source='site.site_id', read_only=True)
     
     class Meta:
         model = TaskSiteGroup
         fields = [
             'id', 'site', 'site_alias', 'assignment_order',
-            'site_name', 'site_global_id'
+            'site_name', 'site_global_id', 'site_business_id'
         ]
         read_only_fields = ['id']
 
@@ -797,7 +798,8 @@ class TaskSiteGroupSerializer(serializers.ModelSerializer):
 class TaskSubActivitySerializer(serializers.ModelSerializer):
     """Serializer for TaskSubActivity model"""
     site_name = serializers.CharField(source='assigned_site.site_name', read_only=True)
-    site_global_id = serializers.CharField(source='assigned_site.site_global_id', read_only=True)
+    site_global_id = serializers.CharField(source='assigned_site.global_id', read_only=True)
+    site_business_id = serializers.CharField(source='assigned_site.site_id', read_only=True)
     
     class Meta:
         model = TaskSubActivity
@@ -806,7 +808,7 @@ class TaskSubActivitySerializer(serializers.ModelSerializer):
             'assigned_site', 'site_alias', 'dependencies', 'dependency_scope',
             'parallel_execution', 'status', 'actual_start', 'actual_end',
             'progress_percentage', 'notes', 'created_at', 'updated_at',
-            'site_name', 'site_global_id'
+            'site_name', 'site_global_id', 'site_business_id'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
