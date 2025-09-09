@@ -5,396 +5,50 @@ from django.utils import timezone
 import uuid
 
 
-class Task(models.Model):
-    """Enhanced task model for project and site tasks with multi-site support"""
-    TASK_STATUS = (
-        ('pending', 'Pending'),
-        ('assigned', 'Assigned'),
-        ('in_progress', 'In Progress'),
-        ('equipment_verification', 'Equipment Verification'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
-        ('on_hold', 'On Hold'),
-        ('failed', 'Failed'),
-        ('rework_required', 'Rework Required'),
-    )
+# Task model removed - using TaskFromFlow as the main task model
+# All task functionality is now handled by TaskFromFlow
 
-    TASK_PRIORITY = (
-        ('low', 'Low'),
-        ('medium', 'Medium'),
-        ('high', 'High'),
-        ('urgent', 'Urgent'),
-        ('critical', 'Critical'),
-    )
-    
-    TASK_TYPE = (
-        ('installation', 'Installation'),
-        ('maintenance', 'Maintenance'),
-        ('dismantling', 'Dismantling'),
-        ('survey', 'Survey'),
-        ('audit', 'Audit'),
-        ('repair', 'Repair'),
-        ('upgrade', 'Upgrade'),
-        ('testing', 'Testing'),
-        ('commissioning', 'Commissioning'),
-        # Additional activity types for flow templates
-        ('rf_survey', 'RF Survey'),
-        ('emf_survey', 'EMF Survey'),
-        ('rfi_survey', 'RFI Survey'),
-        ('transportation', 'Transportation'),
-        ('packaging', 'Packaging'),
-        ('deviation_email', 'Deviation Email'),
-        ('rsa', 'RSA'),
-    )
-    
-    EQUIPMENT_VERIFICATION_STATUS = (
-        ('not_required', 'Not Required'),
-        ('pending', 'Pending Verification'),
-        ('in_progress', 'Verification In Progress'),
-        ('verified', 'Verified'),
-        ('failed', 'Verification Failed'),
-        ('partial', 'Partially Verified'),
-    )
+# Define choices at module level for reuse
+TASK_STATUS = (
+    ('pending', 'Pending'),
+    ('assigned', 'Assigned'),
+    ('allocated', 'Allocated'),
+    ('in_progress', 'In Progress'),
+    ('equipment_verification', 'Equipment Verification'),
+    ('completed', 'Completed'),
+    ('cancelled', 'Cancelled'),
+    ('on_hold', 'On Hold'),
+    ('failed', 'Failed'),
+    ('rework_required', 'Rework Required'),
+)
 
-    # Core fields
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='tasks')
-    
-    # Task relationships
-    project = models.ForeignKey(
-        'projects.Project', 
-        on_delete=models.CASCADE, 
-        related_name='tasks', 
-        null=True, 
-        blank=True
-    )
-    
-    # Multi-site support
-    primary_site = models.ForeignKey(
-        'sites.Site', 
-        on_delete=models.CASCADE, 
-        related_name='primary_tasks',
-        help_text="Primary site for this task"
-    )
-    additional_sites = models.ManyToManyField(
-        'sites.Site',
-        through='TaskSiteAssignment',
-        related_name='additional_tasks',
-        blank=True,
-        help_text="Additional sites involved in this task"
-    )
-    
-    # Task details
-    task_id = models.CharField(max_length=50, help_text="Business task identifier")
-    title = models.CharField(max_length=255)
-    description = models.TextField()
-    task_type = models.CharField(max_length=20, choices=TASK_TYPE, default='maintenance')
-    status = models.CharField(max_length=25, choices=TASK_STATUS, default='pending')
-    priority = models.CharField(max_length=20, choices=TASK_PRIORITY, default='medium')
-    
-    # Task scheduling and timeline
-    scheduled_start = models.DateTimeField(null=True, blank=True)
-    scheduled_end = models.DateTimeField(null=True, blank=True)
-    actual_start = models.DateTimeField(null=True, blank=True)
-    actual_end = models.DateTimeField(null=True, blank=True)
-    
-    # Time tracking
-    estimated_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        validators=[MinValueValidator(0)]
-    )
-    actual_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        validators=[MinValueValidator(0)]
-    )
-    
-    # Team and assignment
-    assigned_to = models.ForeignKey(
-        'apps_users.User', 
-        on_delete=models.SET_NULL, 
-        null=True, 
-        blank=True, 
-        related_name='assigned_tasks'
-    )
-    assigned_team = models.ManyToManyField(
-        'apps_users.User',
-        through='TaskTeamAssignment',
-        related_name='team_tasks',
-        blank=True
-    )
-    supervisor = models.ForeignKey(
-        'apps_users.User',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='supervised_tasks',
-        help_text="Task supervisor for quality control"
-    )
-    
-    # Equipment verification
-    equipment_verification_required = models.BooleanField(
-        default=False,
-        help_text="Whether equipment verification is required"
-    )
-    equipment_verification_status = models.CharField(
-        max_length=20,
-        choices=EQUIPMENT_VERIFICATION_STATUS,
-        default='not_required'
-    )
-    equipment_verified_by = models.ForeignKey(
-        'apps_users.User',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='verified_tasks'
-    )
-    equipment_verified_at = models.DateTimeField(null=True, blank=True)
-    
-    # Safety and compliance
-    safety_requirements = models.TextField(
-        blank=True,
-        help_text="Safety requirements and protocols"
-    )
-    compliance_notes = models.TextField(
-        blank=True,
-        help_text="Compliance and regulatory notes"
-    )
-    
-    # Task progress and completion
-    progress_percentage = models.DecimalField(
-        max_digits=5,
-        decimal_places=2,
-        default=0,
-        validators=[MinValueValidator(0)],
-        help_text="Task completion percentage (0-100)"
-    )
-    quality_score = models.DecimalField(
-        max_digits=3,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(0)],
-        help_text="Quality score (1-5)"
-    )
-    
-    # Mobile and field support
-    mobile_accessible = models.BooleanField(
-        default=True,
-        help_text="Whether task is accessible via mobile app"
-    )
-    offline_capable = models.BooleanField(
-        default=False,
-        help_text="Whether task can be completed offline"
-    )
-    gps_required = models.BooleanField(
-        default=False,
-        help_text="Whether GPS verification is required"
-    )
-    
-    # Additional metadata
-    instructions = models.TextField(
-        blank=True,
-        help_text="Detailed task instructions"
-    )
-    completion_notes = models.TextField(
-        blank=True,
-        help_text="Notes added upon completion"
-    )
-    cancellation_reason = models.TextField(
-        blank=True,
-        help_text="Reason for cancellation"
-    )
-    
-    # Financial
-    estimated_cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(0)]
-    )
-    actual_cost = models.DecimalField(
-        max_digits=12,
-        decimal_places=2,
-        null=True,
-        blank=True,
-        validators=[MinValueValidator(0)]
-    )
-    
-    # Audit fields
-    created_by = models.ForeignKey(
-        'apps_users.User', 
-        on_delete=models.CASCADE, 
-        related_name='created_tasks'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
+TASK_PRIORITY = (
+    ('low', 'Low'),
+    ('medium', 'Medium'),
+    ('high', 'High'),
+    ('urgent', 'Urgent'),
+    ('critical', 'Critical'),
+)
 
-    class Meta:
-        db_table = 'tasks'
-        verbose_name = _('Task')
-        verbose_name_plural = _('Tasks')
-        ordering = ['-created_at']
-        unique_together = [('tenant', 'task_id')]
-        indexes = [
-            models.Index(fields=['tenant', 'status']),
-            models.Index(fields=['project', 'status']),
-            models.Index(fields=['primary_site', 'status']),
-            models.Index(fields=['assigned_to', 'status']),
-            models.Index(fields=['priority', 'status']),
-            models.Index(fields=['task_type', 'status']),
-            models.Index(fields=['equipment_verification_status']),
-            models.Index(fields=['created_at']),
-            models.Index(fields=['scheduled_start']),
-            models.Index(fields=['task_id']),
-        ]
-
-    def __str__(self):
-        return f"{self.task_id} - {self.title}"
-
-    def clean(self):
-        """Validate task data"""
-        from django.core.exceptions import ValidationError
-        from django.utils import timezone
-        
-        # Validate dates
-        if self.scheduled_start and self.scheduled_end:
-            if self.scheduled_start >= self.scheduled_end:
-                raise ValidationError("Scheduled start must be before scheduled end")
-        
-        if self.actual_start and self.actual_end:
-            if self.actual_start >= self.actual_end:
-                raise ValidationError("Actual start must be before actual end")
-        
-        # Validate progress percentage
-        if self.progress_percentage < 0 or self.progress_percentage > 100:
-            raise ValidationError("Progress percentage must be between 0 and 100")
-        
-        # Validate quality score
-        if self.quality_score is not None and (self.quality_score < 1 or self.quality_score > 5):
-            raise ValidationError("Quality score must be between 1 and 5")
-        
-        # Validate equipment verification
-        if self.equipment_verification_required and self.equipment_verification_status == 'not_required':
-            self.equipment_verification_status = 'pending'
-
-    def save(self, *args, **kwargs):
-        """Override save for business logic"""
-        # Auto-generate task_id if not provided
-        if not self.task_id:
-            self.task_id = self._generate_task_id()
-        
-        # Update completion timestamp
-        if self.status == 'completed' and not self.completed_at:
-            self.completed_at = timezone.now()
-            if self.progress_percentage < 100:
-                self.progress_percentage = 100
-        
-        # Update actual end time when task is completed
-        if self.status == 'completed' and not self.actual_end:
-            self.actual_end = timezone.now()
-        
-        # Set actual start time when task moves to in_progress
-        if self.status == 'in_progress' and not self.actual_start:
-            self.actual_start = timezone.now()
-        
-        self.clean()
-        super().save(*args, **kwargs)
-
-    def _generate_task_id(self):
-        """Generate unique task ID for the tenant"""
-        from django.utils import timezone
-        
-        # Format: TSK-YYYYMM-NNNN
-        current_month = timezone.now().strftime('%Y%m')
-        
-        # Find last task ID for current month
-        last_task = Task.objects.filter(
-            tenant=self.tenant,
-            task_id__startswith=f'TSK-{current_month}-'
-        ).order_by('-task_id').first()
-        
-        if last_task:
-            try:
-                last_number = int(last_task.task_id.split('-')[-1])
-                next_number = last_number + 1
-            except (ValueError, IndexError):
-                next_number = 1
-        else:
-            next_number = 1
-        
-        return f'TSK-{current_month}-{next_number:04d}'
-
-
-
-    @property
-    def is_multi_site(self):
-        """Check if task involves multiple sites"""
-        return self.additional_sites.exists()
-
-    @property
-    def all_sites(self):
-        """Get all sites involved in this task"""
-        sites = [self.primary_site]
-        sites.extend(list(self.additional_sites.all()))
-        return sites
-
-    @property
-    def sites_count(self):
-        """Get total number of sites involved"""
-        return 1 + self.additional_sites.count()
-
-    @property
-    def duration_hours(self):
-        """Calculate actual duration in hours"""
-        if self.actual_start and self.actual_end:
-            delta = self.actual_end - self.actual_start
-            return round(delta.total_seconds() / 3600, 2)
-        return None
-
-    @property
-    def is_equipment_verified(self):
-        """Check if equipment verification is complete"""
-        if not self.equipment_verification_required:
-            return True
-        return self.equipment_verification_status == 'verified'
-
-    def mark_equipment_verified(self, verified_by):
-        """Mark equipment as verified"""
-        self.equipment_verification_status = 'verified'
-        self.equipment_verified_by = verified_by
-        self.equipment_verified_at = timezone.now()
-        self.save(update_fields=[
-            'equipment_verification_status', 
-            'equipment_verified_by', 
-            'equipment_verified_at',
-            'updated_at'
-        ])
-
-    def update_progress(self, percentage, notes=None):
-        """Update task progress"""
-        self.progress_percentage = max(0, min(100, percentage))
-        
-        if percentage >= 100 and self.status not in ['completed', 'cancelled']:
-            self.status = 'completed'
-            self.completed_at = timezone.now()
-            if not self.actual_end:
-                self.actual_end = timezone.now()
-        
-        if notes:
-            if self.completion_notes:
-                self.completion_notes += f"\n{timezone.now().strftime('%Y-%m-%d %H:%M')}: {notes}"
-            else:
-                self.completion_notes = f"{timezone.now().strftime('%Y-%m-%d %H:%M')}: {notes}"
-        
-        self.save()
+TASK_TYPE = (
+    ('installation', 'Installation'),
+    ('maintenance', 'Maintenance'),
+    ('dismantling', 'Dismantling'),
+    ('survey', 'Survey'),
+    ('audit', 'Audit'),
+    ('repair', 'Repair'),
+    ('upgrade', 'Upgrade'),
+    ('testing', 'Testing'),
+    ('commissioning', 'Commissioning'),
+    # Additional activity types for flow templates
+    ('rf_survey', 'RF Survey'),
+    ('emf_survey', 'EMF Survey'),
+    ('rfi_survey', 'RFI Survey'),
+    ('transportation', 'Transportation'),
+    ('packaging', 'Packaging'),
+    ('deviation_email', 'Deviation Email'),
+    ('rsa', 'RSA'),
+)
 
 
 class TaskSiteAssignment(models.Model):
@@ -407,7 +61,7 @@ class TaskSiteAssignment(models.Model):
         ('cancelled', 'Cancelled'),
     )
     
-    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='site_assignments')
     site = models.ForeignKey('sites.Site', on_delete=models.CASCADE)
     
     # Assignment details
@@ -459,16 +113,16 @@ class TaskSiteAssignment(models.Model):
 
     class Meta:
         db_table = 'task_site_assignments'
-        unique_together = ['task', 'site']
+        unique_together = ['task_from_flow', 'site']
         ordering = ['assignment_order', 'created_at']
         indexes = [
-            models.Index(fields=['task', 'status']),
+            models.Index(fields=['task_from_flow', 'status']),
             models.Index(fields=['site', 'status']),
             models.Index(fields=['assignment_order']),
         ]
 
     def __str__(self):
-        return f"{self.task.title} at {self.site.site_name}"
+        return f"{self.task_from_flow.task_name} at {self.site.site_name}"
 
 
 class TaskTeamAssignment(models.Model):
@@ -484,7 +138,7 @@ class TaskTeamAssignment(models.Model):
         ('safety_officer', 'Safety Officer'),
     )
     
-    task = models.ForeignKey(Task, on_delete=models.CASCADE)
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='team_assignments')
     user = models.ForeignKey('apps_users.User', on_delete=models.CASCADE)
     
     # Assignment details
@@ -521,15 +175,15 @@ class TaskTeamAssignment(models.Model):
 
     class Meta:
         db_table = 'task_team_assignments'
-        unique_together = ['task', 'user']
+        unique_together = ['task_from_flow', 'user']
         indexes = [
-            models.Index(fields=['task', 'is_active']),
+            models.Index(fields=['task_from_flow', 'is_active']),
             models.Index(fields=['user', 'is_active']),
             models.Index(fields=['role']),
         ]
 
     def __str__(self):
-        return f"{self.user.full_name} - {self.get_role_display()} on {self.task.title}"
+        return f"{self.user.full_name} - {self.get_role_display()} on {self.task_from_flow.task_name}"
 
 
 class TaskComment(models.Model):
@@ -545,7 +199,7 @@ class TaskComment(models.Model):
         ('completion', 'Completion Note'),
     )
     
-    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name='comments')
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='comments')
     user = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='task_comments')
     
     # Comment details
@@ -583,14 +237,14 @@ class TaskComment(models.Model):
         db_table = 'task_comments'
         ordering = ['-created_at']
         indexes = [
-            models.Index(fields=['task', 'created_at']),
+            models.Index(fields=['task_from_flow', 'created_at']),
             models.Index(fields=['user', 'created_at']),
             models.Index(fields=['comment_type']),
             models.Index(fields=['is_pinned']),
         ]
 
     def __str__(self):
-        return f"Comment by {self.user.full_name} on {self.task.title}"
+        return f"Comment by {self.user.full_name} on {self.task_from_flow.task_name}"
 
 
 class TaskTemplate(models.Model):
@@ -602,10 +256,10 @@ class TaskTemplate(models.Model):
     # Template details
     name = models.CharField(max_length=255)
     description = models.TextField()
-    task_type = models.CharField(max_length=20, choices=Task.TASK_TYPE)
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE)
     
     # Default values
-    default_priority = models.CharField(max_length=20, choices=Task.TASK_PRIORITY, default='medium')
+    default_priority = models.CharField(max_length=20, choices=TASK_PRIORITY, default='medium')
     default_estimated_hours = models.DecimalField(
         max_digits=6,
         decimal_places=2,
@@ -666,7 +320,7 @@ class TaskTemplate(models.Model):
         # Remove None values
         task_data = {k: v for k, v in task_data.items() if v is not None}
         
-        task = Task.objects.create(**task_data)
+        task = TaskFromFlow.objects.create(**task_data)
         
         # Increment usage count
         self.usage_count += 1
@@ -726,7 +380,7 @@ class FlowActivity(models.Model):
     # Activity details
     activity_name = models.CharField(max_length=255)
     description = models.TextField(blank=True, default="")  # Make description optional
-    activity_type = models.CharField(max_length=50, choices=Task.TASK_TYPE)
+    activity_type = models.CharField(max_length=50, choices=TASK_TYPE)
     
     # Sequence and dependencies
     sequence_order = models.IntegerField()
@@ -825,7 +479,7 @@ class FlowInstance(models.Model):
     
     # References
     flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='instances')
-    task_id = models.UUIDField(help_text="Reference to the task this flow instance is tracking")
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='flow_instances')
     
     # Instance state
     status = models.CharField(
@@ -856,11 +510,12 @@ class FlowInstance(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.flow_template.name} for task {self.task_id}"
+        return f"{self.flow_template.name} for task {self.task_from_flow.task_id}"
 
 
 class TaskFromFlow(models.Model):
     """Main task created from a flow template for a site group"""
+    
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     
     # Task ID fields
@@ -876,8 +531,9 @@ class TaskFromFlow(models.Model):
     tenant = models.ForeignKey('tenants.Tenant', on_delete=models.CASCADE, related_name='flow_tasks')
     
     # Task-level status and priority
-    status = models.CharField(max_length=25, choices=Task.TASK_STATUS, default='pending')
-    priority = models.CharField(max_length=20, choices=Task.TASK_PRIORITY, default='medium')
+    status = models.CharField(max_length=25, choices=TASK_STATUS, default='pending')
+    priority = models.CharField(max_length=20, choices=TASK_PRIORITY, default='medium')
+    task_type = models.CharField(max_length=20, choices=TASK_TYPE, default='maintenance')
     
     # Scheduling
     scheduled_start = models.DateTimeField(null=True, blank=True)
@@ -935,7 +591,7 @@ class TaskSubActivity(models.Model):
     
     # Sub-task details
     sequence_order = models.IntegerField(help_text="Local sequence order within this task")
-    activity_type = models.CharField(max_length=50, choices=Task.TASK_TYPE)
+    activity_type = models.CharField(max_length=50, choices=TASK_TYPE)
     activity_name = models.CharField(max_length=255)
     description = models.TextField()
     
@@ -957,7 +613,7 @@ class TaskSubActivity(models.Model):
     parallel_execution = models.BooleanField(default=False, help_text="Can this activity run in parallel")
     
     # Status tracking
-    status = models.CharField(max_length=25, choices=Task.TASK_STATUS, default='pending')
+    status = models.CharField(max_length=25, choices=TASK_STATUS, default='pending')
     actual_start = models.DateTimeField(null=True, blank=True)
     actual_end = models.DateTimeField(null=True, blank=True)
     
@@ -1044,3 +700,310 @@ class BulkTaskCreationJob(models.Model):
         from django.utils import timezone
         end_time = self.completed_at or timezone.now()
         return end_time - self.started_at 
+
+
+class TaskAllocation(models.Model):
+    """Task allocation to vendors or internal teams"""
+    
+    ALLOCATION_TYPE_CHOICES = (
+        ('vendor', 'Vendor'),
+        ('internal_team', 'Internal Team'),
+    )
+    
+    ALLOCATION_STATUS_CHOICES = (
+        ('allocated', 'Allocated'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+        ('reallocated', 'Reallocated'),
+    )
+    
+    # Core fields
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='allocations')
+    
+    # Allocation details
+    allocation_type = models.CharField(max_length=20, choices=ALLOCATION_TYPE_CHOICES)
+    status = models.CharField(max_length=20, choices=ALLOCATION_STATUS_CHOICES, default='allocated')
+    
+    # Vendor allocation (when allocation_type = 'vendor')
+    vendor_relationship = models.ForeignKey(
+        'tenants.ClientVendorRelationship', 
+        on_delete=models.CASCADE, 
+        related_name='task_allocations',
+        null=True, 
+        blank=True
+    )
+    
+    # Internal team allocation (when allocation_type = 'internal_team')
+    internal_team = models.ForeignKey(
+        'teams.Team', 
+        on_delete=models.CASCADE, 
+        related_name='task_allocations',
+        null=True, 
+        blank=True
+    )
+    
+    # Sub-activities allocation
+    allocated_sub_activities = models.ManyToManyField(
+        'TaskSubActivity',
+        through='TaskSubActivityAllocation',
+        related_name='allocations'
+    )
+    
+    # Allocation metadata
+    allocation_notes = models.TextField(blank=True)
+    estimated_duration_hours = models.DecimalField(
+        max_digits=8, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Estimated duration in hours"
+    )
+    actual_duration_hours = models.DecimalField(
+        max_digits=8, 
+        decimal_places=2, 
+        null=True, 
+        blank=True,
+        help_text="Actual duration in hours"
+    )
+    
+    # Scheduling
+    allocated_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # User tracking
+    allocated_by = models.ForeignKey(
+        'apps_users.User', 
+        on_delete=models.CASCADE, 
+        related_name='allocated_tasks'
+    )
+    updated_by = models.ForeignKey(
+        'apps_users.User', 
+        on_delete=models.CASCADE, 
+        related_name='updated_task_allocations'
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'task_allocations'
+        verbose_name = _('Task Allocation')
+        verbose_name_plural = _('Task Allocations')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['task']),
+            models.Index(fields=['allocation_type']),
+            models.Index(fields=['status']),
+            models.Index(fields=['vendor_relationship']),
+            models.Index(fields=['internal_team']),
+            models.Index(fields=['allocated_by']),
+        ]
+    
+    def __str__(self):
+        if self.allocation_type == 'vendor' and self.vendor_relationship:
+            return f"Task {self.task_from_flow.task_id} → {self.vendor_relationship.vendor_tenant.organization_name if self.vendor_relationship.vendor_tenant else 'Unknown Vendor'}"
+        elif self.allocation_type == 'internal_team' and self.internal_team:
+            return f"Task {self.task_from_flow.task_id} → {self.internal_team.name}"
+        else:
+            return f"Task {self.task_from_flow.task_id} → {self.allocation_type}"
+    
+    def clean(self):
+        """Validate allocation data"""
+        from django.core.exceptions import ValidationError
+        
+        if self.allocation_type == 'vendor' and not self.vendor_relationship:
+            raise ValidationError("Vendor relationship is required for vendor allocation")
+        
+        if self.allocation_type == 'internal_team' and not self.internal_team:
+            raise ValidationError("Internal team is required for internal team allocation")
+        
+        if self.vendor_relationship and self.internal_team:
+            raise ValidationError("Cannot have both vendor relationship and internal team")
+    
+    @property
+    def allocated_to_name(self):
+        """Get the name of who the task is allocated to"""
+        if self.allocation_type == 'vendor' and self.vendor_relationship:
+            return self.vendor_relationship.vendor_tenant.organization_name if self.vendor_relationship.vendor_tenant else 'Unknown Vendor'
+        elif self.allocation_type == 'internal_team' and self.internal_team:
+            return self.internal_team.name
+        return 'Unknown'
+
+
+class TaskSubActivityAllocation(models.Model):
+    """Many-to-many relationship between TaskAllocation and TaskSubActivity with additional metadata"""
+    
+    allocation = models.ForeignKey('TaskAllocation', on_delete=models.CASCADE, related_name='sub_activity_allocations')
+    sub_activity = models.ForeignKey('TaskSubActivity', on_delete=models.CASCADE, related_name='allocation_details')
+    
+    # Allocation status for this specific sub-activity
+    status = models.CharField(
+        max_length=20, 
+        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
+        default='allocated'
+    )
+    
+    # Progress tracking
+    progress_percentage = models.DecimalField(
+        max_digits=5, 
+        decimal_places=2, 
+        default=0,
+        validators=[MinValueValidator(0), MinValueValidator(100)]
+    )
+    
+    # Timing
+    estimated_duration_hours = models.DecimalField(
+        max_digits=8, 
+        decimal_places=2, 
+        null=True, 
+        blank=True
+    )
+    actual_duration_hours = models.DecimalField(
+        max_digits=8, 
+        decimal_places=2, 
+        null=True, 
+        blank=True
+    )
+    
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Notes and metadata
+    notes = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'task_sub_activity_allocations'
+        verbose_name = _('Task Sub-Activity Allocation')
+        verbose_name_plural = _('Task Sub-Activity Allocations')
+        unique_together = ['allocation', 'sub_activity']
+        indexes = [
+            models.Index(fields=['allocation']),
+            models.Index(fields=['sub_activity']),
+            models.Index(fields=['status']),
+        ]
+    
+    def __str__(self):
+        return f"{self.allocation} - {self.sub_activity}"
+
+
+class TaskAllocationHistory(models.Model):
+    """Track changes to task allocations for audit purposes"""
+    
+    ACTION_CHOICES = (
+        ('created', 'Created'),
+        ('updated', 'Updated'),
+        ('status_changed', 'Status Changed'),
+        ('reallocated', 'Reallocated'),
+        ('cancelled', 'Cancelled'),
+        ('completed', 'Completed'),
+    )
+    
+    allocation = models.ForeignKey('TaskAllocation', on_delete=models.CASCADE, related_name='history')
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    
+    # Change details
+    previous_status = models.CharField(
+        max_length=20, 
+        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
+        null=True, 
+        blank=True
+    )
+    new_status = models.CharField(
+        max_length=20, 
+        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
+        null=True, 
+        blank=True
+    )
+    
+    # User who made the change
+    changed_by = models.ForeignKey(
+        'apps_users.User', 
+        on_delete=models.CASCADE, 
+        related_name='allocation_changes'
+    )
+    
+    # Change metadata
+    change_reason = models.TextField(blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        db_table = 'task_allocation_history'
+        verbose_name = _('Task Allocation History')
+        verbose_name_plural = _('Task Allocation History')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['allocation']),
+            models.Index(fields=['action']),
+            models.Index(fields=['changed_by']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def __str__(self):
+        return f"{self.allocation} - {self.action} by {self.changed_by} at {self.created_at}" 
+
+
+class TaskTimeline(models.Model):
+    """Track task lifecycle events and timeline"""
+    
+    EVENT_TYPE_CHOICES = (
+        ('created', 'Task Created'),
+        ('allocated', 'Allocated to Vendor'),
+        ('assigned', 'Assigned to Internal Team'),
+        ('work_started', 'Work Started'),
+        ('work_completed', 'Work Completed'),
+        ('cancelled', 'Cancelled'),
+        ('reallocated', 'Reallocated'),
+        ('status_changed', 'Status Changed'),
+        ('progress_updated', 'Progress Updated'),
+        ('comment_added', 'Comment Added'),
+        ('equipment_verified', 'Equipment Verified'),
+    )
+    
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='timeline_events')
+    event_type = models.CharField(max_length=50, choices=EVENT_TYPE_CHOICES)
+    event_data = models.JSONField(default=dict, blank=True, help_text="Store relevant event data")
+    timestamp = models.DateTimeField(auto_now_add=True)
+    user = models.ForeignKey('apps_users.User', on_delete=models.CASCADE, related_name='task_timeline_events')
+    
+    class Meta:
+        db_table = 'task_timeline'
+        verbose_name = _('Task Timeline Event')
+        verbose_name_plural = _('Task Timeline Events')
+        ordering = ['timestamp']
+        indexes = [
+            models.Index(fields=['task']),
+            models.Index(fields=['event_type']),
+            models.Index(fields=['timestamp']),
+            models.Index(fields=['user']),
+        ]
+    
+    def __str__(self):
+        return f"{self.task_from_flow.task_id} - {self.event_type} at {self.timestamp}"
+    
+    @property
+    def event_description(self):
+        """Get human-readable event description"""
+        descriptions = {
+            'created': 'Task was created',
+            'allocated': 'Task was allocated to vendor',
+            'assigned': 'Task was assigned to internal team',
+            'work_started': 'Work on task was started',
+            'work_completed': 'Work on task was completed',
+            'cancelled': 'Task was cancelled',
+            'reallocated': 'Task was reallocated',
+            'status_changed': 'Task status was changed',
+            'progress_updated': 'Task progress was updated',
+            'comment_added': 'Comment was added to task',
+            'equipment_verified': 'Equipment was verified',
+        }
+        return descriptions.get(self.event_type, self.event_type) 

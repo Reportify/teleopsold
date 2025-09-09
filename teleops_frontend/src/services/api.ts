@@ -136,6 +136,25 @@ export const API_ENDPOINTS = {
       USAGE: (id: string) => `/tasks/flow-templates/${id}/usage/`,
       STATISTICS: "/tasks/flow-templates/statistics/",
     },
+    ALLOCATIONS: {
+      LIST: "/tasks/task-allocations/",
+      CREATE: "/tasks/task-allocations/",
+      DETAIL: (id: string) => `/tasks/task-allocations/${id}/`,
+      UPDATE: (id: string) => `/tasks/task-allocations/${id}/`,
+      DELETE: (id: string) => `/tasks/task-allocations/${id}/`,
+      START_WORK: (id: string) => `/tasks/task-allocations/${id}/start_work/`,
+      COMPLETE_WORK: (id: string) => `/tasks/task-allocations/${id}/complete_work/`,
+      CANCEL: (id: string) => `/tasks/task-allocations/${id}/cancel_allocation/`,
+      HISTORY: (id: string) => `/tasks/task-allocations/${id}/history/`,
+      BY_PROJECT: "/tasks/task-allocations/by_project/",
+      BY_VENDOR: "/tasks/task-allocations/by_vendor/",
+      STATISTICS: "/tasks/task-allocations/statistics/",
+    },
+    TIMELINE: {
+      LIST: "/tasks/task-timeline/",
+      BY_TASK: (id: string) => `/tasks/tasks/${id}/timeline/`,
+      RECENT_ACTIVITY: "/tasks/task-timeline/recent_activity/",
+    },
   },
   EQUIPMENT: {
     ITEMS: {

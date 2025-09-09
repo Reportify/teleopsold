@@ -42,6 +42,7 @@ import VendorInvitationPreviewPage from "./pages/VendorInvitationPreviewPage";
 import TasksPage from "./pages/TasksPage";
 import TaskDetailsPage from "./pages/TaskDetailsPage";
 import TaskCreatePage from "./pages/TaskCreatePage";
+import TaskAllocationPage from "./pages/TaskAllocationPage";
 import TaskCreateFromProjectPage from "./pages/TaskCreateFromProjectPage";
 import FlowBuilderPage from "./pages/FlowBuilderPage";
 
@@ -386,6 +387,14 @@ const AppInner: React.FC = () => {
           element={
             <ProtectedRoute>
               <TasksPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tasks/allocation"
+          element={
+            <ProtectedRoute>
+              <TaskAllocationPage />
             </ProtectedRoute>
           }
         />

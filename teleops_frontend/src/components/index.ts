@@ -13,3 +13,9 @@ export { default as Pagination } from "./common/Pagination";
 // Export types
 export type { Column, RowAction } from "./common/DataTable";
 export type { BreadcrumbItem } from "./common/Breadcrumbs";
+
+// Export components
+export { default as TaskAllocationCard } from "./TaskAllocationCard";
+export { default as VendorSelectionDialog } from "./VendorSelectionDialog";
+export { default as AllocationTypeDialog } from "./AllocationTypeDialog";
+export { default as InternalTeamAssignmentDialog } from "./InternalTeamAssignmentDialog";

@@ -5,7 +5,8 @@ from .views import (
     TaskViewSet, TaskCommentViewSet, TaskTemplateViewSet,
     FlowTemplateViewSet, FlowInstanceViewSet, FlowTemplateSearchView,
     FlowTemplateUsageView, FlowTemplateStatisticsView, CreateTaskFromFlowView,
-    TaskFromFlowViewSet, AsyncBulkTaskCreationView, BulkTaskCreationJobStatusView
+    TaskFromFlowViewSet, AsyncBulkTaskCreationView, BulkTaskCreationJobStatusView,
+    TaskAllocationViewSet, TaskSubActivityAllocationViewSet, TaskTimelineViewSet
 )
 
 # Create router and register viewsets
@@ -16,6 +17,9 @@ router.register(r'task-templates', TaskTemplateViewSet, basename='tasktemplate')
 router.register(r'flow-templates', FlowTemplateViewSet, basename='flowtemplate')
 router.register(r'flow-instances', FlowInstanceViewSet, basename='flowinstance')
 router.register(r'tasks-from-flow', TaskFromFlowViewSet, basename='taskfromflow')
+router.register(r'task-allocations', TaskAllocationViewSet, basename='taskallocation')
+router.register(r'sub-activity-allocations', TaskSubActivityAllocationViewSet, basename='subactivityallocation')
+router.register(r'task-timeline', TaskTimelineViewSet, basename='tasktimeline')
 
 # URL patterns
 urlpatterns = [

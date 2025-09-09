@@ -56,13 +56,18 @@ import {
   Warning,
   Info,
   Error,
+  AccountTree,
 } from "@mui/icons-material";
 import { useParams, useNavigate } from "react-router-dom";
-import { TaskFromFlow, TaskSiteGroup, TaskSubActivity } from "../types/task";
+import { TaskFromFlow, TaskSiteGroup, TaskSubActivity, Vendor, Task } from "../types/task";
 import { taskService } from "../services/taskService";
 import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
+import VendorSelectionDialog from "../components/VendorSelectionDialog";
+import AllocationTypeDialog, { AllocationType } from "../components/AllocationTypeDialog";
+import InternalTeamAssignmentDialog from "../components/InternalTeamAssignmentDialog";
+import vendorService from "../services/vendorService";
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -97,6 +102,18 @@ const TaskDetailsPage: React.FC = () => {
   const [progressValue, setProgressValue] = useState(0);
   const [progressNotes, setProgressNotes] = useState("");
 
+  // Allocation state
+  const [allocationTypeDialogOpen, setAllocationTypeDialogOpen] = useState(false);
+  const [allocationDialogOpen, setAllocationDialogOpen] = useState(false);
+  const [internalTeamDialogOpen, setInternalTeamDialogOpen] = useState(false);
+  const [selectedTaskForAllocation, setSelectedTaskForAllocation] = useState<TaskFromFlow | null>(null);
+  const [allocationType, setAllocationType] = useState<AllocationType | null>(null);
+
+  // Real vendors from backend
+  const [vendors, setVendors] = useState<Vendor[]>([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [vendorsError, setVendorsError] = useState<string | null>(null);
+
   // Feature permissions
   const { hasPermission } = useFeaturePermissions();
   const canEditTasks = hasPermission("tasks.edit");
@@ -108,6 +125,30 @@ const TaskDetailsPage: React.FC = () => {
       loadTaskData();
     }
   }, [taskId]);
+
+  // Fetch vendors on component mount
+  useEffect(() => {
+    if (task?.project) {
+      console.log("Fetching vendors for project:", task.project);
+      const fetchProjectVendors = async () => {
+        setVendorsLoading(true);
+        try {
+          const projectVendors = await vendorService.getProjectVendors(task.project);
+          console.log("Project vendors fetched:", projectVendors);
+          setVendors(projectVendors);
+        } catch (error) {
+          console.error("Error fetching project vendors:", error);
+          setVendorsError("Failed to fetch project vendors");
+        } finally {
+          setVendorsLoading(false);
+        }
+      };
+
+      fetchProjectVendors();
+    } else {
+      console.log("No project ID found in task:", task);
+    }
+  }, [task?.project]);
 
   const loadTaskData = async () => {
     try {
@@ -232,11 +273,108 @@ const TaskDetailsPage: React.FC = () => {
     }
   };
 
-  const handleAssignSubTask = (subActivity: TaskSubActivity) => {
-    // TODO: Implement subtask assignment logic
-    console.log("Assigning subtask:", subActivity.id, subActivity.activity_name);
-    // This could open a dialog to select users/teams to assign the subtask to
-    // For now, just log the action
+  const handleAllocateSubTask = (subActivity: TaskSubActivity) => {
+    setSelectedSubActivity(subActivity);
+    setSelectedTaskForAllocation(task);
+    setAllocationTypeDialogOpen(true);
+  };
+
+  const handleAllocationTypeSelection = (type: AllocationType) => {
+    setAllocationType(type);
+    if (type === "vendor") {
+      setAllocationDialogOpen(true);
+    } else if (type === "internal_team") {
+      setInternalTeamDialogOpen(true);
+    }
+  };
+
+  // Convert TaskFromFlow to Task for the VendorSelectionDialog
+  const convertTaskFromFlowToTask = (taskFlow: TaskFromFlow): Task => {
+    return {
+      id: taskFlow.id, // Keep as UUID string
+      task_id: taskFlow.task_id, // Add the missing task_id field
+      task_name: taskFlow.task_name,
+      task_type: "2G_DISMANTLE" as any, // Default type
+      project_id: taskFlow.project,
+      project_name: taskFlow.project_name,
+      client_name: "Client", // Default client name
+      status: taskFlow.status as any,
+      progress_percentage: taskFlow.sub_activities.reduce((acc, sa) => acc + sa.progress_percentage, 0) / taskFlow.sub_activities.length || 0,
+      sites_count: taskFlow.site_groups.length,
+      requires_coordination: taskFlow.site_groups.length > 1,
+      estimated_duration_hours: 48, // Default duration
+      created_at: taskFlow.created_at,
+      created_by: taskFlow.created_by_name,
+      sub_activities: taskFlow.sub_activities.map((sa) => ({
+        id: sa.id, // Keep as UUID string
+        sub_activity_name: sa.activity_name,
+        activity_type: sa.activity_type as any,
+        sequence_order: sa.sequence_order,
+        assignment_type: "VENDOR_ALLOCATION" as any,
+        status: sa.status as any,
+        progress_percentage: sa.progress_percentage,
+        assigned_site: typeof sa.assigned_site === "string" ? parseInt(sa.assigned_site) : sa.assigned_site,
+        site_name: sa.site_name,
+        site_global_id: sa.site_global_id,
+        site_business_id: sa.site_business_id,
+        execution_dependencies: sa.dependencies.map((d) => parseInt(d)),
+        estimated_duration_hours: 8, // Default duration
+        work_instructions: sa.notes || "",
+      })),
+      sites: taskFlow.site_groups.map((sg) => ({
+        id: parseInt(sg.id),
+        site_id: sg.site,
+        site_name: sg.site_name,
+        site_role: "Primary" as any,
+        sequence_order: sg.assignment_order,
+        location: {
+          latitude: 0, // Default values
+          longitude: 0,
+          address: "Site location",
+        },
+        work_instructions: "Site-specific instructions",
+        estimated_duration_hours: 8,
+      })),
+    };
+  };
+
+  const handleAllocationComplete = (task: Task, vendor: Vendor | null, allocation?: any) => {
+    console.log("Task allocation completed:", { task, vendor, allocation });
+
+    // Update the task status to show it's been allocated
+    setTask((prevTask) => {
+      if (!prevTask) return prevTask;
+      return {
+        ...prevTask,
+        status: allocation?.allocation_type === "vendor" ? "allocated" : "assigned",
+        sub_activities: prevTask.sub_activities.map((sa) => (sa.id === selectedSubActivity?.id ? { ...sa, status: "allocated" } : sa)),
+      };
+    });
+
+    setAllocationDialogOpen(false);
+    setSelectedTaskForAllocation(null);
+    setSelectedSubActivity(null);
+
+    // Show success message
+    alert(`Task successfully ${allocation?.allocation_type === "vendor" ? "allocated to vendor" : "assigned to internal team"}!`);
+  };
+
+  const handleInternalTeamAssignmentComplete = (memberId: number, estimatedStartDate: string, notes: string) => {
+    // Update the task status to show it's been assigned to internal team
+    setTask((prevTask) => {
+      if (!prevTask) return prevTask;
+      return {
+        ...prevTask,
+        sub_activities: prevTask.sub_activities.map((sa) => (sa.id === selectedSubActivity?.id ? { ...sa, status: "assigned" } : sa)),
+      };
+    });
+
+    setInternalTeamDialogOpen(false);
+    setSelectedTaskForAllocation(null);
+    setSelectedSubActivity(null);
+
+    // Show success message (you can implement a snackbar here)
+    console.log(`Task assigned to internal team member ${memberId} with start date ${estimatedStartDate} and notes: ${notes}`);
   };
 
   const getStatusColor = (status: string) => {
@@ -357,8 +495,16 @@ const TaskDetailsPage: React.FC = () => {
                 Delete
               </Button>
             )}
-            <Button variant="contained" startIcon={<Assignment />} onClick={() => navigate(`/tasks/${taskId}/assign`)}>
-              Assign
+            <Button
+              variant="contained"
+              startIcon={<Assignment />}
+              onClick={() => {
+                setSelectedTaskForAllocation(task);
+                setAllocationTypeDialogOpen(true);
+              }}
+              disabled={vendorsLoading}
+            >
+              {vendorsLoading ? "Loading..." : "Allocate"}
             </Button>
           </Stack>
         </Box>
@@ -695,7 +841,8 @@ const TaskDetailsPage: React.FC = () => {
                                 variant="outlined"
                                 size="medium"
                                 startIcon={<Assignment />}
-                                onClick={() => handleAssignSubTask(subActivity)}
+                                onClick={() => handleAllocateSubTask(subActivity)}
+                                disabled={vendorsLoading}
                                 sx={{
                                   minWidth: 140,
                                   borderRadius: 2,
@@ -704,34 +851,53 @@ const TaskDetailsPage: React.FC = () => {
                                   px: 3,
                                 }}
                               >
-                                Assign
+                                {vendorsLoading ? "Loading..." : "Allocate"}
                               </Button>
+                              {/* Dependencies Section - Minimalist Design */}
+                              {subActivity.dependencies.length > 0 && (
+                                <Box sx={{ mt: 2, px: 3 }}>
+                                  <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
+                                    <AccountTree
+                                      sx={{
+                                        fontSize: 16,
+                                        color: "primary.main",
+                                        opacity: 0.8,
+                                      }}
+                                    />
+                                    <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 500, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                                      Depends on
+                                    </Typography>
+                                  </Box>
+                                  <Box sx={{ mt: 1, pl: 2.5 }}>
+                                    {subActivity.dependencies.map((depId) => {
+                                      const dependentSubActivity = task?.sub_activities.find((sub) => sub.id === depId);
+                                      if (dependentSubActivity) {
+                                        return (
+                                          <Box
+                                            key={depId}
+                                            sx={{
+                                              display: "flex",
+                                              alignItems: "flex-start",
+                                              flexDirection: "column",
+                                              gap: 1,
+                                              py: 0.5,
+                                            }}
+                                          >
+                                            <Typography variant="body2" color="text.primary" sx={{ fontWeight: 500 }}>
+                                              {dependentSubActivity.activity_name}
+                                            </Typography>
+                                            <Chip label={dependentSubActivity.site_name} size="small" sx={{ fontSize: "0.7rem", height: 20 }} />
+                                          </Box>
+                                        );
+                                      }
+                                      return null;
+                                    })}
+                                  </Box>
+                                </Box>
+                              )}
                             </Box>
                           </Box>
                         </Box>
-
-                        {/* Dependencies Section - Below if exists */}
-                        {subActivity.dependencies.length > 0 && (
-                          <Box sx={{ mt: 2, px: 3 }}>
-                            <Box
-                              sx={{
-                                p: 2,
-                                backgroundColor: "warning.light",
-                                borderRadius: 2,
-                                border: "1px solid",
-                                borderColor: "warning.main",
-                                maxWidth: "fit-content",
-                              }}
-                            >
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                                <Info fontSize="small" color="warning" />
-                                <Typography variant="body2" color="warning.dark" fontWeight="medium">
-                                  Depends on: {subActivity.dependencies.join(", ")}
-                                </Typography>
-                              </Box>
-                            </Box>
-                          </Box>
-                        )}
                       </CardContent>
                     </Card>
                   ))}
@@ -944,6 +1110,34 @@ const TaskDetailsPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Allocation Type Selection Dialog */}
+      <AllocationTypeDialog
+        open={allocationTypeDialogOpen}
+        onClose={() => setAllocationTypeDialogOpen(false)}
+        onSelectType={handleAllocationTypeSelection}
+        taskName={selectedTaskForAllocation?.task_name}
+      />
+
+      {/* Task Allocation Dialog */}
+      {allocationType && (
+        <VendorSelectionDialog
+          open={allocationDialogOpen}
+          onClose={() => setAllocationDialogOpen(false)}
+          task={selectedTaskForAllocation ? convertTaskFromFlowToTask(selectedTaskForAllocation) : null}
+          vendors={vendors}
+          allocationType={allocationType}
+          onAllocationComplete={handleAllocationComplete}
+        />
+      )}
+
+      {/* Internal Team Assignment Dialog */}
+      <InternalTeamAssignmentDialog
+        open={internalTeamDialogOpen}
+        onClose={() => setInternalTeamDialogOpen(false)}
+        onAssignmentComplete={handleInternalTeamAssignmentComplete}
+        taskName={selectedTaskForAllocation?.task_name}
+      />
     </Box>
   );
 };

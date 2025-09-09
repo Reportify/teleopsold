@@ -1,7 +1,8 @@
 // Task Management TypeScript Interfaces
 
 export interface Task {
-  id: number;
+  id: string; // UUID string
+  task_id: string; // Human-readable task identifier (e.g., "AD485_2025_1_1")
   task_name: string;
   task_type: TaskType;
   project_id: number;
@@ -83,13 +84,19 @@ export interface TaskSubActivity {
 }
 
 export interface SubActivity {
-  id: number;
+  id: string; // UUID string
   sub_activity_name: string;
   activity_type: ActivityType;
   sequence_order: number;
   assignment_type: AssignmentType;
   status: SubActivityStatus;
   progress_percentage: number;
+
+  // Site assignment info
+  assigned_site?: number; // Site ID this sub-activity is assigned to
+  site_name?: string; // Site name for this sub-activity
+  site_global_id?: string; // Site global ID
+  site_business_id?: string; // Site business ID
 
   // Allocation info (for vendor path)
   allocated_vendor?: {
@@ -145,11 +152,20 @@ export interface TimelineEvent {
 export interface Vendor {
   id: number;
   name: string;
+  vendor_code: string;
   type: string;
+  contact_person: {
+    name: string;
+    email: string;
+    phone: string;
+  };
   contact_info?: {
     email?: string;
     phone?: string;
   };
+  specializations?: string[];
+  rating?: number;
+  status?: "active" | "inactive" | "suspended";
 }
 
 export interface Team {
@@ -164,7 +180,7 @@ export interface Team {
 // Enums and Union Types
 export type TaskType = "2G_DISMANTLE" | "MW_DISMANTLE" | "INSTALLATION_COMMISSIONING" | "EMF_SURVEY" | "DEGROW" | "RELOCATION";
 
-export type TaskStatus = "CREATED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+export type TaskStatus = "CREATED" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED" | "allocated" | "assigned";
 
 export type ActivityType = "DISMANTLE" | "PACKAGING" | "TRANSPORTATION" | "RF_SURVEY" | "INSTALLATION" | "COMMISSIONING" | "RSA" | "EMF_SURVEY" | "DEVIATION_EMAIL";
 

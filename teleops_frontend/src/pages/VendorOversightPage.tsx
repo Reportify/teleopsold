@@ -1,5 +1,5 @@
 // Vendor Oversight Page for Corporate Tenants
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Box,
   Typography,
@@ -31,12 +31,33 @@ import {
   Select,
   LinearProgress,
   Divider,
+  Alert,
 } from "@mui/material";
 import { SupervisorAccount, MoreVert, TrendingUp, TrendingDown, Star, Warning, CheckCircle, Business, Assessment, Email, Phone, Add, FilterList } from "@mui/icons-material";
 import { useAuth } from "../contexts/AuthContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
 import { StatsCard, ModernSnackbar } from "../components";
 import { useDarkMode } from "../contexts/ThemeContext";
+
+interface VendorData {
+  id: string;
+  name: string;
+  vendor_code: string;
+  vendor_type: string;
+  circles?: string[];
+  services?: string[];
+  performance_rating: number;
+  total_projects: number;
+  active_projects: number;
+  compliance_score: number;
+  monthly_revenue: number;
+  contact_person: string;
+  contact_email: string;
+  contact_phone: string;
+  status: string;
+  contract_expiry: string;
+  risk_level: string;
+}
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -57,7 +78,7 @@ const VendorOversightPage: React.FC = () => {
   const { darkMode } = useDarkMode();
   const [tabValue, setTabValue] = useState(0);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
-  const [selectedVendor, setSelectedVendor] = useState<any>(null);
+  const [selectedVendor, setSelectedVendor] = useState<VendorData | null>(null);
   const [newVendorDialogOpen, setNewVendorDialogOpen] = useState(false);
   const [snackbar, setSnackbar] = useState({
     open: false,
@@ -67,82 +88,26 @@ const VendorOversightPage: React.FC = () => {
 
   const currentTenant = getCurrentTenant();
 
-  // Mock vendor data across circles
-  const mockVendors = [
-    {
-      id: "1",
-      name: "TechTower Infrastructure Pvt Ltd",
-      vendor_code: "TT001",
-      vendor_type: "Primary",
-      circles: ["MPCG", "UPE"],
-      services: ["Dismantling", "Installation", "Survey"],
-      performance_rating: 4.8,
-      total_projects: 78,
-      active_projects: 12,
-      compliance_score: 96,
-      monthly_revenue: 2850000,
-      contact_person: "Suresh Mehta",
-      contact_email: "suresh@techtower.com",
-      contact_phone: "+91 98765 43220",
-      status: "Active",
-      contract_expiry: "2025-12-31",
-      risk_level: "Low",
-    },
-    {
-      id: "2",
-      name: "Gujarat Infra Solutions",
-      vendor_code: "GIS002",
-      vendor_type: "Preferred",
-      circles: ["GJ"],
-      services: ["Dismantling", "Transportation"],
-      performance_rating: 4.5,
-      total_projects: 34,
-      active_projects: 6,
-      compliance_score: 88,
-      monthly_revenue: 1620000,
-      contact_person: "Rajesh Patel",
-      contact_email: "rajesh@gujaratinfra.com",
-      contact_phone: "+91 98765 43221",
-      status: "Active",
-      contract_expiry: "2025-06-30",
-      risk_level: "Medium",
-    },
-    {
-      id: "3",
-      name: "Central Equipment Services",
-      vendor_code: "CES003",
-      vendor_type: "Subcontractor",
-      circles: ["MPCG"],
-      services: ["Equipment Recovery", "Logistics"],
-      performance_rating: 4.2,
-      total_projects: 19,
-      active_projects: 3,
-      compliance_score: 82,
-      monthly_revenue: 980000,
-      contact_person: "Amit Singh",
-      contact_email: "amit@centralequip.com",
-      contact_phone: "+91 98765 43222",
-      status: "Under Review",
-      contract_expiry: "2024-12-31",
-      risk_level: "High",
-    },
-  ];
+  // Real vendor data from backend
+  const [vendors, setVendors] = useState<VendorData[]>([]);
+  const [vendorsLoading, setVendorsLoading] = useState(false);
+  const [vendorsError, setVendorsError] = useState<string | null>(null);
 
   // Corporate vendor metrics
   const vendorMetrics = {
-    total_vendors: mockVendors.length,
-    active_vendors: mockVendors.filter((v) => v.status === "Active").length,
-    total_monthly_spend: mockVendors.reduce((sum, v) => sum + v.monthly_revenue, 0),
-    average_performance: mockVendors.reduce((sum, v) => sum + v.performance_rating, 0) / mockVendors.length,
-    total_active_projects: mockVendors.reduce((sum, v) => sum + v.active_projects, 0),
-    high_risk_vendors: mockVendors.filter((v) => v.risk_level === "High").length,
+    total_vendors: vendors.length,
+    active_vendors: vendors.filter((v) => v.status === "Active").length,
+    total_monthly_spend: vendors.reduce((sum, v) => sum + (v.monthly_revenue || 0), 0),
+    average_performance: vendors.length > 0 ? vendors.reduce((sum, v) => sum + (v.performance_rating || 0), 0) / vendors.length : 0,
+    total_active_projects: vendors.reduce((sum, v) => sum + (v.active_projects || 0), 0),
+    high_risk_vendors: vendors.filter((v) => v.risk_level === "High").length,
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);
   };
 
-  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, vendor: any) => {
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>, vendor: VendorData) => {
     setMenuAnchorEl(event.currentTarget);
     setSelectedVendor(vendor);
   };
@@ -170,6 +135,26 @@ const VendorOversightPage: React.FC = () => {
         return "default";
     }
   };
+
+  // Fetch vendors on component mount
+  useEffect(() => {
+    const fetchVendors = async () => {
+      setVendorsLoading(true);
+      setVendorsError(null);
+      try {
+        // For now, using empty array until backend integration is complete
+        // TODO: Replace with actual vendor service call
+        setVendors([]);
+      } catch (error) {
+        console.error("Error fetching vendors:", error);
+        setVendorsError("Failed to fetch vendors. Please try again.");
+      } finally {
+        setVendorsLoading(false);
+      }
+    };
+
+    fetchVendors();
+  }, []);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -319,70 +304,97 @@ const VendorOversightPage: React.FC = () => {
 
           {/* Vendor Directory Tab */}
           <TabPanel value={tabValue} index={0}>
-            <TableContainer>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Vendor</TableCell>
-                    <TableCell>Type</TableCell>
-                    <TableCell>Circles</TableCell>
-                    <TableCell>Performance</TableCell>
-                    <TableCell>Active Projects</TableCell>
-                    <TableCell>Monthly Spend</TableCell>
-                    <TableCell>Status</TableCell>
-                    <TableCell>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {mockVendors.map((vendor) => (
-                    <TableRow key={vendor.id} hover>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center" }}>
-                          <Avatar sx={{ bgcolor: "primary.main", mr: 2, width: 40, height: 40 }}>
-                            <SupervisorAccount />
-                          </Avatar>
-                          <Box>
-                            <Typography variant="subtitle2">{vendor.name}</Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {vendor.vendor_code}
-                            </Typography>
-                          </Box>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={vendor.vendor_type} size="small" variant="outlined" />
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-                          {vendor.circles.map((circle) => (
-                            <Chip key={circle} label={circle} size="small" color="primary" variant="filled" />
-                          ))}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                          <Chip icon={<Star />} label={vendor.performance_rating.toFixed(1)} size="small" color={getPerformanceColor(vendor.performance_rating)} />
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">{vendor.active_projects}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2">{formatCurrency(vendor.monthly_revenue)}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Chip label={vendor.status} size="small" color={getStatusColor(vendor.status)} />
-                      </TableCell>
-                      <TableCell>
-                        <IconButton size="small" onClick={(e) => handleMenuOpen(e, vendor)}>
-                          <MoreVert />
-                        </IconButton>
-                      </TableCell>
+            {vendorsLoading && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Loading vendors...
+                </Typography>
+              </Box>
+            )}
+
+            {vendorsError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {vendorsError}
+              </Alert>
+            )}
+
+            {!vendorsLoading && !vendorsError && vendors.length === 0 && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="h6" color="text.secondary">
+                  No vendors available
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  No vendors have been configured yet
+                </Typography>
+              </Box>
+            )}
+
+            {!vendorsLoading && !vendorsError && vendors.length > 0 && (
+              <TableContainer>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Vendor</TableCell>
+                      <TableCell>Type</TableCell>
+                      <TableCell>Circles</TableCell>
+                      <TableCell>Performance</TableCell>
+                      <TableCell>Active Projects</TableCell>
+                      <TableCell>Monthly Spend</TableCell>
+                      <TableCell>Status</TableCell>
+                      <TableCell>Actions</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                  </TableHead>
+                  <TableBody>
+                    {vendors.map((vendor) => (
+                      <TableRow key={vendor.id} hover>
+                        <TableCell>
+                          <Box sx={{ display: "flex", alignItems: "center" }}>
+                            <Avatar sx={{ bgcolor: "primary.main", mr: 2, width: 40, height: 40 }}>
+                              <SupervisorAccount />
+                            </Avatar>
+                            <Box>
+                              <Typography variant="subtitle2">{vendor.name}</Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                {vendor.vendor_code}
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Chip label={vendor.vendor_type} size="small" variant="outlined" />
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+                            {vendor.circles?.map((circle: string) => (
+                              <Chip key={circle} label={circle} size="small" color="primary" variant="filled" />
+                            ))}
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                            <Chip icon={<Star />} label={vendor.performance_rating.toFixed(1)} size="small" color={getPerformanceColor(vendor.performance_rating)} />
+                          </Box>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{vendor.active_projects}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2">{formatCurrency(vendor.monthly_revenue)}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Chip label={vendor.status} size="small" color={getStatusColor(vendor.status)} />
+                        </TableCell>
+                        <TableCell>
+                          <IconButton size="small" onClick={(e) => handleMenuOpen(e, vendor)}>
+                            <MoreVert />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
           </TabPanel>
 
           {/* Performance Dashboard Tab */}
@@ -438,45 +450,72 @@ const VendorOversightPage: React.FC = () => {
               Monitor vendor contracts, renewals, and compliance across all circles.
             </Typography>
 
-            <Grid container spacing={3}>
-              {mockVendors.map((vendor) => (
-                <Grid size={{ xs: 12, md: 6 }} key={vendor.id}>
-                  <Card>
-                    <CardContent>
-                      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2 }}>
-                        <Typography variant="h6">{vendor.name}</Typography>
-                        <Chip label={vendor.status} size="small" color={getStatusColor(vendor.status)} />
-                      </Box>
+            {vendorsLoading && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Loading vendors...
+                </Typography>
+              </Box>
+            )}
 
-                      <Typography variant="body2" color="text.secondary" gutterBottom>
-                        Contract Details
-                      </Typography>
+            {vendorsError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {vendorsError}
+              </Alert>
+            )}
 
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="caption" color="text.secondary">
-                          Contract Expiry
-                        </Typography>
-                        <Typography variant="body2">{vendor.contract_expiry}</Typography>
-                      </Box>
+            {!vendorsLoading && !vendorsError && vendors.length === 0 && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="h6" color="text.secondary">
+                  No vendors available
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  No vendors have been configured yet
+                </Typography>
+              </Box>
+            )}
 
-                      <Box sx={{ mb: 2 }}>
-                        <Typography variant="caption" color="text.secondary">
-                          Compliance Score
-                        </Typography>
-                        <Box sx={{ display: "flex", alignItems: "center", mt: 0.5 }}>
-                          <LinearProgress variant="determinate" value={vendor.compliance_score} sx={{ flexGrow: 1, mr: 1 }} />
-                          <Typography variant="caption">{vendor.compliance_score}%</Typography>
+            {!vendorsLoading && !vendorsError && vendors.length > 0 && (
+              <Grid container spacing={3}>
+                {vendors.map((vendor) => (
+                  <Grid size={{ xs: 12, md: 6 }} key={vendor.id}>
+                    <Card>
+                      <CardContent>
+                        <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2 }}>
+                          <Typography variant="h6">{vendor.name}</Typography>
+                          <Chip label={vendor.status} size="small" color={getStatusColor(vendor.status)} />
                         </Box>
-                      </Box>
 
-                      <Button variant="outlined" size="small" fullWidth>
-                        View Contract Details
-                      </Button>
-                    </CardContent>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                          Contract Details
+                        </Typography>
+
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            Contract Expiry
+                          </Typography>
+                          <Typography variant="body2">{vendor.contract_expiry}</Typography>
+                        </Box>
+
+                        <Box sx={{ mb: 2 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            Compliance Score
+                          </Typography>
+                          <Box sx={{ display: "flex", alignItems: "center", mt: 0.5 }}>
+                            <LinearProgress variant="determinate" value={vendor.compliance_score} sx={{ flexGrow: 1, mr: 1 }} />
+                            <Typography variant="caption">{vendor.compliance_score}%</Typography>
+                          </Box>
+                        </Box>
+
+                        <Button variant="outlined" size="small" fullWidth>
+                          View Contract Details
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </Grid>
+                ))}
+              </Grid>
+            )}
           </TabPanel>
 
           {/* Risk Assessment Tab */}
@@ -488,58 +527,85 @@ const VendorOversightPage: React.FC = () => {
               Monitor and assess vendor risks across operational, financial, and compliance dimensions.
             </Typography>
 
-            <TableContainer component={Paper}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Vendor</TableCell>
-                    <TableCell>Risk Level</TableCell>
-                    <TableCell>Performance Risk</TableCell>
-                    <TableCell>Financial Risk</TableCell>
-                    <TableCell>Compliance Risk</TableCell>
-                    <TableCell>Contract Status</TableCell>
-                    <TableCell>Actions</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {mockVendors.map((vendor) => (
-                    <TableRow key={vendor.id}>
-                      <TableCell>{vendor.name}</TableCell>
-                      <TableCell>
-                        <Chip label={vendor.risk_level} size="small" color={getRiskColor(vendor.risk_level)} />
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={vendor.performance_rating >= 4.5 ? "Low" : vendor.performance_rating >= 4.0 ? "Medium" : "High"}
-                          size="small"
-                          color={getPerformanceColor(vendor.performance_rating)}
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Chip label="Low" size="small" color="success" variant="outlined" />
-                      </TableCell>
-                      <TableCell>
-                        <Chip
-                          label={vendor.compliance_score >= 90 ? "Low" : vendor.compliance_score >= 80 ? "Medium" : "High"}
-                          size="small"
-                          color={vendor.compliance_score >= 90 ? "success" : vendor.compliance_score >= 80 ? "warning" : "error"}
-                          variant="outlined"
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="caption">{vendor.contract_expiry}</Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Button variant="outlined" size="small">
-                          View Details
-                        </Button>
-                      </TableCell>
+            {vendorsLoading && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="body2" color="text.secondary">
+                  Loading vendors...
+                </Typography>
+              </Box>
+            )}
+
+            {vendorsError && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {vendorsError}
+              </Alert>
+            )}
+
+            {!vendorsLoading && !vendorsError && vendors.length === 0 && (
+              <Box sx={{ textAlign: "center", py: 4 }}>
+                <Typography variant="h6" color="text.secondary">
+                  No vendors available
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  No vendors have been configured yet
+                </Typography>
+              </Box>
+            )}
+
+            {!vendorsLoading && !vendorsError && vendors.length > 0 && (
+              <TableContainer component={Paper}>
+                <Table>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Vendor</TableCell>
+                      <TableCell>Risk Level</TableCell>
+                      <TableCell>Performance Risk</TableCell>
+                      <TableCell>Financial Risk</TableCell>
+                      <TableCell>Compliance Risk</TableCell>
+                      <TableCell>Contract Status</TableCell>
+                      <TableCell>Actions</TableCell>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                  </TableHead>
+                  <TableBody>
+                    {vendors.map((vendor) => (
+                      <TableRow key={vendor.id}>
+                        <TableCell>{vendor.name}</TableCell>
+                        <TableCell>
+                          <Chip label={vendor.risk_level} size="small" color={getRiskColor(vendor.risk_level)} />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={vendor.performance_rating >= 4.5 ? "Low" : vendor.performance_rating >= 4.0 ? "Medium" : "High"}
+                            size="small"
+                            color={getPerformanceColor(vendor.performance_rating)}
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Chip label="Low" size="small" color="success" variant="outlined" />
+                        </TableCell>
+                        <TableCell>
+                          <Chip
+                            label={vendor.compliance_score >= 90 ? "Low" : vendor.compliance_score >= 80 ? "Medium" : "High"}
+                            size="small"
+                            color={vendor.compliance_score >= 90 ? "success" : vendor.compliance_score >= 80 ? "warning" : "error"}
+                            variant="outlined"
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="caption">{vendor.contract_expiry}</Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Button variant="outlined" size="small">
+                            View Details
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
           </TabPanel>
         </Paper>
 

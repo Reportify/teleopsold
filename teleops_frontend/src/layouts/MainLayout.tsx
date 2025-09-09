@@ -147,6 +147,13 @@ const unifiedNavigationItems = [
     permission: "tasks.view",
     description: "Task management and execution",
   },
+  {
+    text: "Task Allocation",
+    icon: <Assignment />,
+    path: "/tasks/allocation",
+    permission: "tasks.allocate",
+    description: "Allocate tasks to vendors and teams",
+  },
 
   {
     text: "Sites",

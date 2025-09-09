@@ -3,16 +3,18 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.db import models, transaction
+from django.db.models import Q, Count, Sum
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q, Count, Sum
 from rest_framework.views import APIView
 import pandas as pd
 
 from .models import (
     Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate,
     FlowTemplate, FlowInstance, TaskFromFlow, TaskSiteGroup, TaskSubActivity,
-    BulkTaskCreationJob
+    BulkTaskCreationJob, TaskAllocation, TaskSubActivityAllocation, TaskAllocationHistory,
+    TaskTimeline
 )
 from .serializers import (
     TaskSerializer, TaskDetailSerializer, TaskCreateSerializer,
@@ -20,7 +22,9 @@ from .serializers import (
     TaskCommentSerializer, TaskTemplateSerializer, TaskStatsSerializer,
     FlowTemplateCreateSerializer, FlowTemplateUpdateSerializer, FlowTemplateSerializer, 
     FlowInstanceSerializer, TaskFromFlowSerializer, TaskCreationRequestSerializer,
-    BulkTaskCreationJobSerializer
+    BulkTaskCreationJobSerializer, TaskAllocationSerializer, TaskAllocationCreateSerializer, 
+    TaskAllocationUpdateSerializer, TaskAllocationHistorySerializer, TaskSubActivityAllocationSerializer,
+    TaskTimelineSerializer
 )
 from core.permissions.tenant_permissions import TenantScopedPermission, TaskPermission, EquipmentVerificationPermission
 from core.pagination import StandardResultsSetPagination, LargeResultsSetPagination
@@ -28,8 +32,6 @@ from .utils import TaskIDGenerator, TaskCreationValidator
 from django.core.exceptions import ValidationError
 from apps.projects.models import Project, ProjectSite
 from apps.sites.models import Site
-
-
 
 
 
@@ -207,7 +209,21 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        old_progress = task.progress_percentage
         task.update_progress(progress, notes)
+        
+        # Create timeline event for progress update
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='progress_updated',
+            event_data={
+                'previous_progress': old_progress,
+                'new_progress': progress,
+                'notes': notes,
+                'changed_by': request.user.get_full_name()
+            },
+            user=request.user
+        )
         
         return Response(TaskSerializer(task).data)
 
@@ -226,6 +242,18 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         task.mark_equipment_verified(request.user)
         
+        # Create timeline event for equipment verification
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='equipment_verified',
+            event_data={
+                'verified_by': request.user.get_full_name(),
+                'verification_time': task.equipment_verified_at.isoformat() if task.equipment_verified_at else None,
+                'notes': verification_notes
+            },
+            user=request.user
+        )
+        
         # Add comment about verification
         if verification_notes:
             TaskComment.objects.create(
@@ -239,7 +267,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         return Response({
             'message': 'Equipment verified successfully',
             'verified_at': task.equipment_verified_at,
-            'verified_by': task.equipment_verified_by.full_name
+            'verified_by': task.equipment_verified_by.get_full_name()
         })
 
     @action(detail=True, methods=['post'])
@@ -273,6 +301,19 @@ class TaskViewSet(viewsets.ModelViewSet):
             task.cancellation_reason = status_notes
         
         task.save()
+        
+        # Create timeline event for status change
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='status_changed',
+            event_data={
+                'previous_status': old_status,
+                'new_status': new_status,
+                'reason': status_notes,
+                'changed_by': request.user.get_full_name()
+            },
+            user=request.user
+        )
         
         # Add status change comment
         TaskComment.objects.create(
@@ -440,10 +481,35 @@ class TaskViewSet(viewsets.ModelViewSet):
         
         serializer = TaskCommentSerializer(data=data)
         if serializer.is_valid():
-            serializer.save()
+            comment = serializer.save()
+            
+            # Create timeline event for comment added
+            TaskTimeline.objects.create(
+                task=task,
+                event_type='comment_added',
+                event_data={
+                    'comment_id': comment.id,
+                    'comment_type': comment.comment_type,
+                    'is_internal': comment.is_internal,
+                    'comment_preview': comment.comment[:100] + '...' if len(comment.comment) > 100 else comment.comment
+                },
+                user=request.user
+            )
+            
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def timeline(self, request, pk=None):
+        """Get task timeline events"""
+        task = self.get_object()
+        
+        timeline_events = task.timeline_events.all().order_by('timestamp')
+        
+        from .serializers import TaskTimelineSerializer
+        serializer = TaskTimelineSerializer(timeline_events, many=True)
+        return Response(serializer.data)
 
     def _can_view_internal_comments(self, user, task):
         """Check if user can view internal comments"""
@@ -578,7 +644,7 @@ class TaskTemplateViewSet(viewsets.ModelViewSet):
 class FlowTemplateViewSet(viewsets.ModelViewSet):
     """ViewSet for FlowTemplate CRUD operations"""
     serializer_class = FlowTemplateSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantScopedPermission]
     
     def get_queryset(self):
         """Filter flows by tenant and handle search/filtering"""
@@ -783,7 +849,7 @@ class FlowTemplateStatisticsView(APIView):
 class FlowInstanceViewSet(viewsets.ModelViewSet):
     """ViewSet for FlowInstance CRUD operations"""
     serializer_class = FlowInstanceSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantScopedPermission]
     
     def get_queryset(self):
         """Filter flow instances by tenant and related data"""
@@ -919,10 +985,10 @@ class CreateTaskFromFlowView(APIView):
                     tenant=tenant
                 )
             except Project.DoesNotExist:
-                return Response({
-                    'success': False,
-                    'message': 'Project not found'
-                }, status=400)
+                return Response(
+                    {'success': False, 'message': 'Project not found'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Validate site groups against flow template
             is_valid, error_msg = TaskCreationValidator.validate_site_groups(
@@ -977,10 +1043,10 @@ class CreateTaskFromFlowView(APIView):
                 }, status=201)
                 
         except Exception as e:
-            return Response({
-                'success': False,
-                'message': f'An error occurred: {str(e)}'
-            }, status=500)
+            return Response(
+                {'success': False, 'message': f'An error occurred: {str(e)}'},
+                status=500
+            )
     
     def _create_task_from_site_group(self, flow_template, project, site_group, task_naming, tenant, user):
         """Create a single task from a site group"""
@@ -1614,3 +1680,472 @@ class BulkTaskCreationJobStatusView(APIView):
                 {"success": False, "message": f"An error occurred: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             ) 
+
+# ============================================================================
+# Task Allocation Views
+# ============================================================================
+
+class TaskAllocationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing task allocations"""
+    permission_classes = [IsAuthenticated, TenantScopedPermission]
+    
+    queryset = TaskAllocation.objects.all()
+    serializer_class = TaskAllocationSerializer
+    
+    def get_serializer_class(self):
+        """Return appropriate serializer class based on action"""
+        if self.action == 'create':
+            return TaskAllocationCreateSerializer
+        elif self.action in ['update', 'partial_update']:
+            return TaskAllocationUpdateSerializer
+        return TaskAllocationSerializer
+    
+    def get_queryset(self):
+        """Filter queryset based on user permissions and request parameters"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return TaskAllocation.objects.none()
+        
+        queryset = TaskAllocation.objects.filter(task__tenant=tenant)
+        
+        # Filter by task if specified
+        task_id = self.request.query_params.get('task_id')
+        if task_id:
+            queryset = queryset.filter(task_id=task_id)
+        
+        # Filter by allocation type
+        allocation_type = self.request.query_params.get('allocation_type')
+        if allocation_type:
+            queryset = queryset.filter(allocation_type=allocation_type)
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        # Filter by vendor if specified
+        vendor_id = self.request.query_params.get('vendor_id')
+        if vendor_id:
+            queryset = queryset.filter(vendor_relationship_id=vendor_id)
+        
+        # Filter by project if specified
+        project_id = self.request.query_params.get('project_id')
+        if project_id:
+            queryset = queryset.filter(task__project_id=project_id)
+        
+        # Add select_related for performance
+        queryset = queryset.select_related(
+            'task', 'task__project', 'vendor_relationship', 'vendor_relationship__vendor_tenant',
+            'internal_team', 'allocated_by', 'updated_by'
+        ).prefetch_related(
+            'allocated_sub_activities', 'sub_activity_allocations', 'sub_activity_allocations__sub_activity'
+        )
+        
+        return queryset
+    
+    @action(detail=True, methods=['get'])
+    def history(self, request, pk=None):
+        """Get allocation history for a specific allocation"""
+        allocation = self.get_object()
+        history = allocation.history.all().order_by('-created_at')
+        
+        serializer = TaskAllocationHistorySerializer(history, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def start_work(self, request, pk=None):
+        """Mark allocation as started"""
+        allocation = self.get_object()
+        
+        if allocation.status != 'allocated':
+            return Response(
+                {'error': 'Only allocated tasks can be started'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        allocation.status = 'in_progress'
+        allocation.started_at = timezone.now()
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Update task status to in_progress
+        task = allocation.task_from_flow
+        old_task_status = task.status
+        task.status = 'in_progress'
+        task.save()
+        
+        # Create timeline event for task status change
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='status_changed',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'previous_status': old_task_status,
+                'new_status': 'in_progress',
+                'reason': 'Work started on allocation'
+            },
+            user=request.user
+        )
+        
+        # Create timeline event for work started
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='work_started',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'allocated_to': allocation.allocated_to_name
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        TaskAllocationHistory.objects.create(
+            allocation=allocation,
+            action='status_changed',
+            previous_status='allocated',
+            new_status='in_progress',
+            changed_by=request.user,
+            change_reason='Work started'
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def complete_work(self, request, pk=None):
+        """Mark allocation as completed"""
+        allocation = self.get_object()
+        
+        if allocation.status != 'in_progress':
+            return Response(
+                {'error': 'Only in-progress tasks can be completed'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        allocation.status = 'completed'
+        allocation.completed_at = timezone.now()
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Update task status to completed
+        task = allocation.task_from_flow
+        old_task_status = task.status
+        task.status = 'completed'
+        task.completed_at = timezone.now()
+        task.save()
+        
+        # Create timeline event for task status change
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='status_changed',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'previous_status': old_task_status,
+                'new_status': 'completed',
+                'reason': 'Work completed on allocation'
+            },
+            user=request.user
+        )
+        
+        # Create timeline event for work completed
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='work_completed',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'allocated_to': allocation.allocated_to_name,
+                'completion_time': allocation.completed_at.isoformat()
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        TaskAllocationHistory.objects.create(
+            allocation=allocation,
+            action='status_changed',
+            previous_status='in_progress',
+            new_status='completed',
+            changed_by=request.user,
+            change_reason='Work completed'
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def cancel_allocation(self, request, pk=None):
+        """Cancel an allocation"""
+        allocation = self.get_object()
+        
+        if allocation.status in ['completed', 'cancelled']:
+            return Response(
+                {'error': 'Cannot cancel completed or already cancelled allocations'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_status = allocation.status
+        allocation.status = 'cancelled'
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Update task status back to pending (or appropriate status)
+        task = allocation.task_from_flow
+        old_task_status = task.status
+        
+        # Determine appropriate task status based on allocation type
+        if allocation.allocation_type == 'vendor':
+            task.status = 'pending'  # Back to pending for vendor allocation
+        else:
+            task.status = 'pending'  # Back to pending for internal team assignment
+        
+        task.save()
+        
+        # Create timeline event for task status change
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='status_changed',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'previous_status': old_task_status,
+                'new_status': task.status,
+                'reason': f'Allocation cancelled: {request.data.get("reason", "No reason provided")}'
+            },
+            user=request.user
+        )
+        
+        # Create timeline event for allocation cancelled
+        TaskTimeline.objects.create(
+            task=task,
+            event_type='cancelled',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'allocated_to': allocation.allocated_to_name,
+                'cancellation_reason': request.data.get('reason', 'No reason provided')
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        TaskAllocationHistory.objects.create(
+            allocation=allocation,
+            action='cancelled',
+            previous_status=old_status,
+            new_status='cancelled',
+            changed_by=request.user,
+            change_reason=request.data.get('reason', 'Allocation cancelled')
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def by_project(self, request):
+        """Get all allocations for a specific project"""
+        project_id = request.query_params.get('project_id')
+        if not project_id:
+            return Response(
+                {'error': 'project_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        allocations = self.get_queryset().filter(task__project_id=project_id)
+        serializer = self.get_serializer(allocations, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def by_vendor(self, request):
+        """Get all allocations for a specific vendor"""
+        vendor_id = request.query_params.get('vendor_id')
+        if not vendor_id:
+            return Response(
+                {'error': 'vendor_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        allocations = self.get_queryset().filter(vendor_relationship_id=vendor_id)
+        serializer = self.get_serializer(allocations, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """Get allocation statistics"""
+        queryset = self.get_queryset()
+        
+        # Count by status
+        status_counts = queryset.values('status').annotate(
+            count=Count('id')
+        ).order_by('status')
+        
+        # Count by allocation type
+        type_counts = queryset.values('allocation_type').annotate(
+            count=Count('id')
+        ).order_by('allocation_type')
+        
+        # Recent allocations
+        recent_allocations = queryset.order_by('-created_at')[:10]
+        recent_serializer = self.get_serializer(recent_allocations, many=True)
+        
+        return Response({
+            'status_counts': status_counts,
+            'type_counts': type_counts,
+            'recent_allocations': recent_serializer.data,
+            'total_allocations': queryset.count()
+        })
+
+
+class TaskSubActivityAllocationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing sub-activity allocations"""
+    permission_classes = [IsAuthenticated, TenantScopedPermission]
+    
+    queryset = TaskSubActivityAllocation.objects.all()
+    serializer_class = TaskSubActivityAllocationSerializer
+    
+    def get_queryset(self):
+        """Filter queryset based on request parameters"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return TaskSubActivityAllocation.objects.none()
+        
+        queryset = TaskSubActivityAllocation.objects.filter(
+            allocation__task__tenant=tenant
+        )
+        
+        # Filter by allocation if specified
+        allocation_id = self.request.query_params.get('allocation_id')
+        if allocation_id:
+            queryset = queryset.filter(allocation_id=allocation_id)
+        
+        # Filter by sub-activity if specified
+        sub_activity_id = self.request.query_params.get('sub_activity_id')
+        if sub_activity_id:
+            queryset = queryset.filter(sub_activity_id=sub_activity_id)
+        
+        # Filter by status
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+        
+        # Add select_related for performance
+        queryset = queryset.select_related(
+            'allocation', 'allocation__task', 'sub_activity'
+        )
+        
+        return queryset
+    
+    @action(detail=True, methods=['post'])
+    def update_progress(self, request, pk=None):
+        """Update progress for a sub-activity allocation"""
+        sub_activity_allocation = self.get_object()
+        
+        progress = request.data.get('progress_percentage')
+        if progress is not None:
+            if not (0 <= progress <= 100):
+                return Response(
+                    {'error': 'Progress must be between 0 and 100'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            sub_activity_allocation.progress_percentage = progress
+            
+            # Update status based on progress
+            if progress == 100:
+                sub_activity_allocation.status = 'completed'
+                sub_activity_allocation.completed_at = timezone.now()
+            elif progress > 0:
+                sub_activity_allocation.status = 'in_progress'
+                if not sub_activity_allocation.started_at:
+                    sub_activity_allocation.started_at = timezone.now()
+            
+            sub_activity_allocation.save()
+        
+        serializer = self.get_serializer(sub_activity_allocation)
+        return Response(serializer.data) 
+
+
+class TaskTimelineViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing task timeline events"""
+    permission_classes = [IsAuthenticated, TenantScopedPermission]
+    serializer_class = TaskTimelineSerializer
+    
+    def get_queryset(self):
+        """Filter timeline events by tenant through task relationship"""
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            return TaskTimeline.objects.none()
+        
+        queryset = TaskTimeline.objects.filter(
+            task__tenant=tenant
+        ).select_related('task', 'user')
+        
+        # Filter by task if specified
+        task_id = self.request.query_params.get('task_id')
+        if task_id:
+            queryset = queryset.filter(task_id=task_id)
+        
+        # Filter by event type
+        event_type = self.request.query_params.get('event_type')
+        if event_type:
+            queryset = queryset.filter(event_type=event_type)
+        
+        # Filter by user
+        user_id = self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        # Filter by date range
+        start_date = self.request.query_params.get('start_date')
+        if start_date:
+            queryset = queryset.filter(timestamp__gte=start_date)
+        
+        end_date = self.request.query_params.get('end_date')
+        if end_date:
+            queryset = queryset.filter(timestamp__lte=end_date)
+        
+        return queryset.order_by('-timestamp')
+    
+    @action(detail=False, methods=['get'])
+    def by_task(self, request):
+        """Get timeline events for a specific task"""
+        task_id = request.query_params.get('task_id')
+        if not task_id:
+            return Response(
+                {'error': 'task_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        events = self.get_queryset().filter(task_id=task_id)
+        serializer = self.get_serializer(events, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def by_user(self, request):
+        """Get timeline events for a specific user"""
+        user_id = request.query_params.get('user_id')
+        if not user_id:
+            return Response(
+                {'error': 'user_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        events = self.get_queryset().filter(user_id=user_id)
+        serializer = self.get_serializer(events, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def recent_activity(self, request):
+        """Get recent timeline activity across all tasks"""
+        limit = request.query_params.get('limit', 20)
+        try:
+            limit = int(limit)
+        except ValueError:
+            limit = 20
+        
+        events = self.get_queryset()[:limit]
+        serializer = self.get_serializer(events, many=True)
+        return Response(serializer.data) 
