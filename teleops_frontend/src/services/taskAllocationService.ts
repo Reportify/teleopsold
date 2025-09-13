@@ -1,4 +1,4 @@
-import { Task, Vendor } from "../types/task";
+import { Task, Vendor, AllocationStatus } from "../types/task";
 import { API_ENDPOINTS } from "./api";
 import api from "./api";
 
@@ -19,7 +19,7 @@ export interface TaskAllocation {
   task_name: string;
   project_name: string;
   allocation_type: "vendor" | "internal_team";
-  status: "allocated" | "in_progress" | "completed" | "cancelled" | "reallocated";
+  status: AllocationStatus;
   vendor_relationship?: number;
   internal_team?: number;
   vendor_name?: string;
@@ -52,7 +52,7 @@ export interface SubActivityAllocation {
   sub_activity: string;
   sub_activity_name: string;
   sub_activity_type: string;
-  status: "allocated" | "in_progress" | "completed" | "cancelled" | "reallocated";
+  status: AllocationStatus;
   progress_percentage: number;
   estimated_duration_hours?: number;
   actual_duration_hours?: number;
@@ -67,7 +67,7 @@ export interface SubActivityAllocation {
 export interface TaskAllocationHistory {
   id: string;
   allocation: string;
-  action: "created" | "updated" | "status_changed" | "reallocated" | "cancelled" | "completed";
+  action: "created" | "updated" | "status_changed" | "deallocated" | "cancelled" | "completed";
   previous_status?: string;
   new_status?: string;
   changed_by: number;
@@ -80,7 +80,7 @@ export interface TaskAllocationHistory {
 export interface TaskTimelineEvent {
   id: string;
   task: string;
-  event_type: "created" | "allocated" | "assigned" | "work_started" | "work_completed" | "cancelled" | "reallocated" | "status_changed" | "progress_updated" | "comment_added" | "equipment_verified";
+  event_type: "created" | "allocated" | "assigned" | "work_started" | "work_completed" | "cancelled" | "deallocated" | "status_changed" | "progress_updated" | "comment_added" | "equipment_verified";
   event_data: Record<string, any>;
   timestamp: string;
   user: number;

@@ -8,6 +8,7 @@ import type { Task, Vendor, TaskStatus } from "../types/task";
 import TaskAllocationCard from "../components/TaskAllocationCard";
 import VendorSelectionDialog from "../components/VendorSelectionDialog";
 import vendorService from "../services/vendorService";
+import taskService from "../services/taskService";
 
 // Mock tasks removed - now fetching real tasks from backend
 const mockTasks: Task[] = [];
@@ -78,12 +79,8 @@ const TaskAllocationPage: React.FC = () => {
       setTasksLoading(true);
       setTasksError(null);
       try {
-        // TODO: Replace with actual API call to fetch tasks
-        // const tasksData = await taskService.getTasks();
-        // setTasks(tasksData);
-
-        // For now, set empty array until we implement the task service
-        setTasks([]);
+        const tasksData = await taskService.getTasks();
+        setTasks(tasksData);
       } catch (error) {
         console.error("Error fetching tasks:", error);
         setTasksError("Failed to fetch tasks. Please try again.");

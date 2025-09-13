@@ -558,4 +558,4 @@ FRONTEND_URL = 'http://localhost:3000'
 AUTHENTICATION_BACKENDS = [
     'teleops_internal.users.backends.InternalUserBackend',
     'apps.users.backends.TenantUserBackend',
-] 
+]

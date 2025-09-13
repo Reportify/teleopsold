@@ -11,10 +11,12 @@ from rest_framework.views import APIView
 import pandas as pd
 
 from .models import (
-    Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate,
+    TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate,
     FlowTemplate, FlowInstance, TaskFromFlow, TaskSiteGroup, TaskSubActivity,
-    BulkTaskCreationJob, TaskAllocation, TaskSubActivityAllocation, TaskAllocationHistory,
-    TaskTimeline
+    BulkTaskCreationJob, TaskTimeline, AllocationStatus
+)
+from .allocation_models import (
+    TaskAllocation, SubActivityAllocation, AllocationHistory
 )
 from .serializers import (
     TaskSerializer, TaskDetailSerializer, TaskCreateSerializer,
@@ -23,9 +25,10 @@ from .serializers import (
     FlowTemplateCreateSerializer, FlowTemplateUpdateSerializer, FlowTemplateSerializer, 
     FlowInstanceSerializer, TaskFromFlowSerializer, TaskCreationRequestSerializer,
     BulkTaskCreationJobSerializer, TaskAllocationSerializer, TaskAllocationCreateSerializer, 
-    TaskAllocationUpdateSerializer, TaskAllocationHistorySerializer, TaskSubActivityAllocationSerializer,
+    TaskAllocationUpdateSerializer, TaskSubActivityAllocationSerializer,
     TaskTimelineSerializer
 )
+from .allocation_serializers import AllocationActionSerializer, ReallocationSerializer, AllocationHistorySerializer
 from core.permissions.tenant_permissions import TenantScopedPermission, TaskPermission, EquipmentVerificationPermission
 from core.pagination import StandardResultsSetPagination, LargeResultsSetPagination
 from .utils import TaskIDGenerator, TaskCreationValidator
@@ -55,12 +58,11 @@ class TaskViewSet(viewsets.ModelViewSet):
         """Filter tasks by tenant"""
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
-            return Task.objects.none()
+            return TaskFromFlow.objects.none()
         
-        queryset = Task.objects.filter(tenant=tenant).select_related(
-            'primary_site', 'project', 'assigned_to', 'supervisor',
-            'equipment_verified_by', 'created_by'
-        ).prefetch_related('additional_sites', 'assigned_team')
+        queryset = TaskFromFlow.objects.filter(tenant=tenant).select_related(
+            'project', 'created_by'
+        ).prefetch_related('site_assignments')
         
         # Additional filtering options
         project_id = self.request.query_params.get('project')
@@ -70,17 +72,14 @@ class TaskViewSet(viewsets.ModelViewSet):
         site_id = self.request.query_params.get('site')
         if site_id:
             queryset = queryset.filter(
-                models.Q(primary_site_id=site_id) |
-                models.Q(additional_sites__id=site_id)
+                site_assignments__site_id=site_id
             ).distinct()
         
         # Filter by assignment
         my_tasks = self.request.query_params.get('my_tasks')
         if my_tasks == 'true':
             queryset = queryset.filter(
-                models.Q(assigned_to=self.request.user) |
-                models.Q(supervisor=self.request.user) |
-                models.Q(assigned_team=self.request.user)
+                team_assignments__user=self.request.user
             ).distinct()
         
 
@@ -1711,7 +1710,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         # Filter by task if specified
         task_id = self.request.query_params.get('task_id')
         if task_id:
-            queryset = queryset.filter(task_id=task_id)
+            queryset = queryset.filter(task_from_flow_id=task_id)
         
         # Filter by allocation type
         allocation_type = self.request.query_params.get('allocation_type')
@@ -1749,7 +1748,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         allocation = self.get_object()
         history = allocation.history.all().order_by('-created_at')
         
-        serializer = TaskAllocationHistorySerializer(history, many=True)
+        serializer = AllocationHistorySerializer(history, many=True)
         return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
@@ -1757,13 +1756,13 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         """Mark allocation as started"""
         allocation = self.get_object()
         
-        if allocation.status != 'allocated':
+        if allocation.status != AllocationStatus.ALLOCATED:
             return Response(
                 {'error': 'Only allocated tasks can be started'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        allocation.status = 'in_progress'
+        allocation.status = AllocationStatus.IN_PROGRESS
         allocation.started_at = timezone.now()
         allocation.updated_by = request.user
         allocation.save()
@@ -1776,7 +1775,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for task status change
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='status_changed',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1790,7 +1789,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for work started
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='work_started',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1801,11 +1800,11 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         )
         
         # Create history record
-        TaskAllocationHistory.objects.create(
+        AllocationHistory.objects.create(
             allocation=allocation,
             action='status_changed',
-            previous_status='allocated',
-            new_status='in_progress',
+            previous_status=AllocationStatus.ALLOCATED,
+            new_status=AllocationStatus.IN_PROGRESS,
             changed_by=request.user,
             change_reason='Work started'
         )
@@ -1818,13 +1817,13 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         """Mark allocation as completed"""
         allocation = self.get_object()
         
-        if allocation.status != 'in_progress':
+        if allocation.status != AllocationStatus.IN_PROGRESS:
             return Response(
                 {'error': 'Only in-progress tasks can be completed'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        allocation.status = 'completed'
+        allocation.status = AllocationStatus.COMPLETED
         allocation.completed_at = timezone.now()
         allocation.updated_by = request.user
         allocation.save()
@@ -1838,7 +1837,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for task status change
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='status_changed',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1852,7 +1851,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for work completed
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='work_completed',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1864,11 +1863,11 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         )
         
         # Create history record
-        TaskAllocationHistory.objects.create(
+        AllocationHistory.objects.create(
             allocation=allocation,
             action='status_changed',
-            previous_status='in_progress',
-            new_status='completed',
+            previous_status=AllocationStatus.IN_PROGRESS,
+            new_status=AllocationStatus.COMPLETED,
             changed_by=request.user,
             change_reason='Work completed'
         )
@@ -1881,14 +1880,14 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         """Cancel an allocation"""
         allocation = self.get_object()
         
-        if allocation.status in ['completed', 'cancelled']:
+        if allocation.status in [AllocationStatus.COMPLETED, AllocationStatus.CANCELLED]:
             return Response(
                 {'error': 'Cannot cancel completed or already cancelled allocations'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
         old_status = allocation.status
-        allocation.status = 'cancelled'
+        allocation.status = AllocationStatus.CANCELLED
         allocation.updated_by = request.user
         allocation.save()
         
@@ -1906,7 +1905,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for task status change
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='status_changed',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1920,7 +1919,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         
         # Create timeline event for allocation cancelled
         TaskTimeline.objects.create(
-            task=task,
+            task_from_flow=task,
             event_type='cancelled',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1932,17 +1931,185 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         )
         
         # Create history record
-        TaskAllocationHistory.objects.create(
+        AllocationHistory.objects.create(
             allocation=allocation,
             action='cancelled',
             previous_status=old_status,
-            new_status='cancelled',
+            new_status=AllocationStatus.CANCELLED,
             changed_by=request.user,
             change_reason=request.data.get('reason', 'Allocation cancelled')
         )
         
         serializer = self.get_serializer(allocation)
         return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def assign_task(self, request, pk=None):
+        """Assign an allocated task to a team"""
+        allocation = self.get_object()
+        
+        if allocation.status != AllocationStatus.ALLOCATED:
+            return Response(
+                {'error': 'Only allocated tasks can be assigned'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_status = allocation.status
+        allocation.status = AllocationStatus.ASSIGNED
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Create timeline event
+        TaskTimeline.objects.create(
+            task_from_flow=allocation.task_from_flow,
+            event_type='assigned',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'assigned_to': allocation.allocated_to_name,
+                'reason': request.data.get('reason', 'Task assigned')
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        AllocationHistory.objects.create(
+            allocation=allocation,
+            action='assigned',
+            previous_status=old_status,
+            new_status=AllocationStatus.ASSIGNED,
+            changed_by=request.user,
+            change_reason=request.data.get('reason', 'Task assigned')
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def mark_in_issue(self, request, pk=None):
+        """Mark allocation as having an issue"""
+        allocation = self.get_object()
+        
+        if allocation.status not in [AllocationStatus.ASSIGNED, AllocationStatus.IN_PROGRESS]:
+            return Response(
+                {'error': 'Only assigned or in-progress tasks can be marked as having issues'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_status = allocation.status
+        allocation.status = AllocationStatus.IN_ISSUE
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Create timeline event
+        TaskTimeline.objects.create(
+            task_from_flow=allocation.task_from_flow,
+            event_type='issue_reported',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'issue_description': request.data.get('reason', 'Issue reported'),
+                'previous_status': old_status
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        AllocationHistory.objects.create(
+            allocation=allocation,
+            action='issue_reported',
+            previous_status=old_status,
+            new_status=AllocationStatus.IN_ISSUE,
+            changed_by=request.user,
+            change_reason=request.data.get('reason', 'Issue reported')
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def deallocate(self, request, pk=None):
+        """Deallocate a task (for reallocation scenarios)"""
+        allocation = self.get_object()
+        
+        if allocation.status in [AllocationStatus.COMPLETED, AllocationStatus.CANCELLED, AllocationStatus.DEALLOCATED]:
+            return Response(
+                {'error': 'Cannot deallocate completed, cancelled, or already deallocated tasks'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        old_status = allocation.status
+        allocation.status = AllocationStatus.DEALLOCATED
+        allocation.updated_by = request.user
+        allocation.save()
+        
+        # Create timeline event
+        TaskTimeline.objects.create(
+            task_from_flow=allocation.task_from_flow,
+            event_type='deallocated',
+            event_data={
+                'allocation_id': str(allocation.id),
+                'allocation_type': allocation.allocation_type,
+                'deallocated_from': allocation.allocated_to_name,
+                'reason': request.data.get('reason', 'Task deallocated for reallocation'),
+                'previous_status': old_status
+            },
+            user=request.user
+        )
+        
+        # Create history record
+        AllocationHistory.objects.create(
+            allocation=allocation,
+            action='deallocated',
+            previous_status=old_status,
+            new_status=AllocationStatus.DEALLOCATED,
+            changed_by=request.user,
+            change_reason=request.data.get('reason', 'Task deallocated for reallocation')
+        )
+        
+        serializer = self.get_serializer(allocation)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def reallocate(self, request, pk=None):
+        """Reallocate a task to a new vendor or team"""
+        allocation = self.get_object()
+        
+        serializer = ReallocationSerializer(data=request.data)
+        if serializer.is_valid():
+            new_allocation = serializer.save(current_allocation=allocation, user=request.user)
+            response_serializer = self.get_serializer(new_allocation)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=True, methods=['post'])
+    def perform_action(self, request, pk=None):
+        """Perform various allocation actions using AllocationActionSerializer"""
+        allocation = self.get_object()
+        
+        serializer = AllocationActionSerializer(data=request.data)
+        if serializer.is_valid():
+            action = serializer.validated_data['action']
+            reason = serializer.validated_data.get('reason', '')
+            
+            if action == 'assign':
+                return self.assign_task(request, pk)
+            elif action == 'mark_in_progress':
+                return self.start_work(request, pk)
+            elif action == 'mark_done':
+                return self.complete_work(request, pk)
+            elif action == 'mark_in_issue':
+                return self.mark_in_issue(request, pk)
+            elif action == 'deallocate':
+                return self.deallocate(request, pk)
+            else:
+                return Response(
+                    {'error': f'Unknown action: {action}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['get'])
     def by_project(self, request):
@@ -2003,16 +2170,16 @@ class TaskSubActivityAllocationViewSet(viewsets.ModelViewSet):
     """ViewSet for managing sub-activity allocations"""
     permission_classes = [IsAuthenticated, TenantScopedPermission]
     
-    queryset = TaskSubActivityAllocation.objects.all()
+    queryset = SubActivityAllocation.objects.all()
     serializer_class = TaskSubActivityAllocationSerializer
     
     def get_queryset(self):
         """Filter queryset based on request parameters"""
         tenant = getattr(self.request, 'tenant', None)
         if not tenant:
-            return TaskSubActivityAllocation.objects.none()
+            return SubActivityAllocation.objects.none()
         
-        queryset = TaskSubActivityAllocation.objects.filter(
+        queryset = SubActivityAllocation.objects.filter(
             allocation__task__tenant=tenant
         )
         
@@ -2080,8 +2247,8 @@ class TaskTimelineViewSet(viewsets.ReadOnlyModelViewSet):
             return TaskTimeline.objects.none()
         
         queryset = TaskTimeline.objects.filter(
-            task__tenant=tenant
-        ).select_related('task', 'user')
+            task_from_flow__tenant=tenant
+        ).select_related('task_from_flow', 'user')
         
         # Filter by task if specified
         task_id = self.request.query_params.get('task_id')
@@ -2119,7 +2286,7 @@ class TaskTimelineViewSet(viewsets.ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        events = self.get_queryset().filter(task_id=task_id)
+        events = self.get_queryset().filter(task_from_flow_id=task_id)
         serializer = self.get_serializer(events, many=True)
         return Response(serializer.data)
     
@@ -2148,4 +2315,4 @@ class TaskTimelineViewSet(viewsets.ReadOnlyModelViewSet):
         
         events = self.get_queryset()[:limit]
         serializer = self.get_serializer(events, many=True)
-        return Response(serializer.data) 
+        return Response(serializer.data)

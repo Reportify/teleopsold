@@ -188,6 +188,8 @@ export type SubActivityStatus = "UNALLOCATED" | "ALLOCATED" | "ASSIGNING" | "ASS
 
 export type AssignmentType = "VENDOR_ALLOCATION" | "DIRECT_ASSIGNMENT";
 
+export type AllocationStatus = "pending" | "allocated" | "in_progress" | "completed" | "cancelled" | "deallocated";
+
 export type SiteRole = "Primary" | "Far_End" | "Near_End" | "Source_Site" | "Target_Site";
 
 // Request/Response Types for API

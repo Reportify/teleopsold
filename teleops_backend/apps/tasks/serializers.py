@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.utils import timezone
 from django.db import models
 
-from .models import Task, TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate
+from .models import TaskSiteAssignment, TaskTeamAssignment, TaskComment, TaskTemplate, TASK_STATUS, TASK_PRIORITY, TASK_TYPE
 from apps.users.serializers import UserSerializer
 from apps.sites.serializers import SiteSerializer
 from apps.projects.serializers import ProjectSerializer
@@ -12,7 +12,7 @@ from apps.sites.models import Site
 from apps.users.models import User
 from .models import FlowSite, FlowActivity, FlowTemplate, FlowInstance, FlowActivitySite, TaskFromFlow, TaskSiteGroup, TaskSubActivity
 from apps.tasks.models import BulkTaskCreationJob
-from apps.tasks.models import TaskSubActivityAllocation, TaskAllocation, TaskAllocationHistory
+from .allocation_models import SubActivityAllocation as TaskSubActivityAllocation, TaskAllocation, AllocationHistory as TaskAllocationHistory
 from apps.tasks.models import TaskTimeline
 
 
@@ -51,9 +51,9 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     """Serializer for TaskAllocation model"""
     
     # Related field data
-    task_id = serializers.CharField(source='task_from_flow.task_id', read_only=True)
-    task_name = serializers.CharField(source='task_from_flow.task_name', read_only=True)
-    project_name = serializers.CharField(source='task_from_flow.project.name', read_only=True)
+    task_id = serializers.CharField(source='task.task_id', read_only=True)
+    task_name = serializers.CharField(source='task.task_name', read_only=True)
+    project_name = serializers.CharField(source='task.project.name', read_only=True)
     
     # Vendor information
     vendor_name = serializers.CharField(source='vendor_relationship.vendor_tenant.organization_name', read_only=True)
@@ -84,7 +84,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'vendor_name', 'vendor_code', 'vendor_contact_person',
             'team_name', 'team_type',
             'allocated_sub_activities', 'sub_activity_allocations',
-            'allocation_notes', 'estimated_duration_hours', 'actual_duration_hours',
+            'actual_duration_hours',
             'allocated_at', 'started_at', 'completed_at',
             'allocated_by', 'allocated_by_name', 'updated_by', 'updated_by_name',
             'allocated_to_name', 'total_sub_activities', 'completed_sub_activities',
@@ -198,7 +198,7 @@ class TaskCommentSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskComment
         fields = [
-            'id', 'task', 'user', 'user_full_name', 'user_email', 'comment_type',
+            'id', 'task_from_flow', 'user', 'user_full_name', 'user_email', 'comment_type',
             'comment', 'is_internal', 'attachments', 'is_pinned', 'visibility_scope',
             'created_at', 'updated_at', 'edited_at'
         ]
@@ -233,10 +233,10 @@ class TaskSerializer(serializers.ModelSerializer):
     recent_timeline_events = serializers.SerializerMethodField()
     
     class Meta:
-        model = Task
+        model = TaskFromFlow
         fields = [
-            'id', 'task_id', 'title', 'task_type', 'status', 'priority',
-            'progress_percentage', 'primary_site_name', 'project_name',
+            'id', 'task_id', 'task_name', 'task_type', 'status', 'priority',
+            'progress_percentage', 'project_name',
             'assigned_to_name', 'supervisor_name', 'scheduled_start',
             'scheduled_end', 'created_at', 'recent_timeline_events'
         ]
@@ -281,17 +281,13 @@ class TaskDetailSerializer(serializers.ModelSerializer):
     days_until_due = serializers.SerializerMethodField()
     
     class Meta:
-        model = Task
+        model = TaskFromFlow
         fields = [
-            'id', 'task_id', 'title', 'description', 'status', 'priority', 'task_type',
-            'project', 'project_name', 'primary_site', 'primary_site_name', 'primary_site_global_id',
+            'id', 'task_id', 'task_name', 'description', 'status', 'priority',
+            'project', 'project_name',
             'assigned_to', 'assigned_to_name', 'supervisor', 'supervisor_name',
-            'scheduled_start', 'scheduled_end', 'actual_start', 'actual_end',
-            'estimated_hours', 'actual_hours', 'progress_percentage',
-            'equipment_verification_required', 'equipment_verification_status',
-            'mobile_accessible', 'offline_capable', 'gps_required',
+            'scheduled_start', 'scheduled_end',
             'created_by', 'created_by_name', 'created_at', 'updated_at',
-            'sites_count', 'team_members_count', 'duration_hours',
             'timeline_events', 'allocations'
         ]
     
@@ -331,16 +327,11 @@ class TaskCreateSerializer(serializers.ModelSerializer):
     )
     
     class Meta:
-        model = Task
+        model = TaskFromFlow
         fields = [
-            'title', 'description', 'status', 'priority', 'task_type',
-            'project', 'primary_site', 'additional_sites',
-            'assigned_to', 'supervisor', 'team_members',
-            'due_date', 'scheduled_start', 'scheduled_end',
-            'estimated_hours', 'estimated_cost',
-            'equipment_verification_required',
-            'mobile_accessible', 'offline_capable', 'gps_required',
-            'instructions', 'safety_requirements', 'compliance_notes'
+            'task_name', 'description', 'status', 'priority',
+            'project', 'assigned_to', 'supervisor',
+            'scheduled_start', 'scheduled_end'
         ]
     
     def __init__(self, *args, **kwargs):
@@ -412,15 +403,10 @@ class TaskUpdateSerializer(serializers.ModelSerializer):
     """Serializer for updating tasks"""
     
     class Meta:
-        model = Task
+        model = TaskFromFlow
         fields = [
-            'title', 'description', 'status', 'priority', 'task_type',
-            'assigned_to', 'supervisor', 'scheduled_start', 'scheduled_end',
-            'estimated_hours', 'actual_hours', 'progress_percentage',
-            'estimated_cost', 'actual_cost', 'equipment_verification_required',
-            'mobile_accessible', 'offline_capable', 'gps_required',
-            'instructions', 'completion_notes', 'safety_requirements',
-            'compliance_notes', 'quality_score'
+            'task_name', 'description', 'status', 'priority',
+            'assigned_to', 'supervisor', 'scheduled_start', 'scheduled_end'
         ]
     
     def validate(self, data):
@@ -509,14 +495,14 @@ class TaskBulkUpdateSerializer(serializers.Serializer):
         min_length=1,
         max_length=100
     )
-    status = serializers.ChoiceField(choices=Task.TASK_STATUS)
+    status = serializers.ChoiceField(choices=TASK_STATUS)
     
     def validate_task_ids(self, value):
         """Validate task IDs belong to the current tenant"""
         request = self.context.get('request')
         if request and hasattr(request, 'tenant'):
             tenant = request.tenant
-            existing_tasks = Task.objects.filter(
+            existing_tasks = TaskFromFlow.objects.filter(
                 id__in=value, tenant=tenant
             ).values_list('id', flat=True)
             
@@ -532,13 +518,13 @@ class TaskSearchSerializer(serializers.Serializer):
     """Serializer for advanced task search"""
     search = serializers.CharField(required=False, allow_blank=True)
     status = serializers.MultipleChoiceField(
-        choices=Task.TASK_STATUS, required=False
+        choices=TASK_STATUS, required=False
     )
     priority = serializers.MultipleChoiceField(
-        choices=Task.TASK_PRIORITY, required=False
+        choices=TASK_PRIORITY, required=False
     )
     task_type = serializers.MultipleChoiceField(
-        choices=Task.TASK_TYPE, required=False
+        choices=TASK_TYPE, required=False
     )
     project_id = serializers.UUIDField(required=False)
     site_id = serializers.UUIDField(required=False)
@@ -1050,13 +1036,13 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskAllocation
         fields = [
-            'task_from_flow', 'allocation_type', 'vendor_relationship', 'internal_team',
-            'sub_activity_ids', 'allocation_notes', 'estimated_duration_hours'
+            'task', 'allocation_type', 'vendor_relationship', 'internal_team',
+            'sub_activity_ids'
         ]
     
     def validate(self, data):
         """Validate allocation data"""
-        task_from_flow = data.get('task_from_flow')
+        task = data.get('task')
         allocation_type = data.get('allocation_type')
         vendor_relationship = data.get('vendor_relationship')
         internal_team = data.get('internal_team')
@@ -1073,8 +1059,8 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Cannot have both vendor relationship and internal team")
         
         # Validate sub-activities belong to the task
-        if task_from_flow and sub_activity_ids:
-            task_sub_activities = set(str(sa.id) for sa in task_from_flow.sub_activities.all())
+        if task and sub_activity_ids:
+            task_sub_activities = set(str(sa.id) for sa in task.sub_activities.all())
             provided_sub_activities = set(str(sa_id) for sa_id in sub_activity_ids)
             
             if not provided_sub_activities.issubset(task_sub_activities):
@@ -1102,17 +1088,17 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
             )
         
         # UPDATE TASK STATUS BASED ON ALLOCATION TYPE
-        task_from_flow = allocation.task_from_flow
+        task = allocation.task
         if allocation.allocation_type == 'vendor':
-            task_from_flow.status = 'allocated'  # Change to 'allocated'
+            task.status = 'allocated'  # Change to 'allocated'
         elif allocation.allocation_type == 'internal_team':
-            task_from_flow.status = 'assigned'   # Change to 'assigned'
+            task.status = 'assigned'   # Change to 'assigned'
         
-        task_from_flow.save()
+        task.save()
         
         # Create timeline event for task status change
         TaskTimeline.objects.create(
-            task_from_flow=task_from_flow,
+            task_from_flow=task,
             event_type='allocated' if allocation.allocation_type == 'vendor' else 'assigned',
             event_data={
                 'allocation_id': str(allocation.id),
@@ -1120,7 +1106,7 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
                 'allocated_to': allocation.allocated_to_name,
                 'sub_activities_count': len(sub_activity_ids),
                 'previous_status': 'pending',  # Assuming task was pending before
-                'new_status': task_from_flow.status
+                'new_status': task.status
             },
             user=self.context['request'].user
         )
@@ -1142,8 +1128,7 @@ class TaskAllocationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskAllocation
         fields = [
-            'status', 'allocation_notes', 'estimated_duration_hours', 
-            'actual_duration_hours', 'started_at', 'completed_at'
+            'status', 'actual_duration_hours', 'started_at', 'completed_at'
         ]
     
     def update(self, instance, validated_data):
@@ -1190,4 +1175,4 @@ class TaskAllocationHistorySerializer(serializers.ModelSerializer):
             'id', 'allocation', 'action', 'previous_status', 'new_status',
             'changed_by', 'changed_by_name', 'change_reason', 'metadata', 'created_at'
         ]
-        read_only_fields = ['id', 'created_at'] 
+        read_only_fields = ['id', 'created_at']

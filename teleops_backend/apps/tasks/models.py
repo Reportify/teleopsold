@@ -4,6 +4,20 @@ from django.core.validators import MinValueValidator
 from django.utils import timezone
 import uuid
 
+# Import allocation models to register them with Django
+from .allocation_models import TaskAllocation, SubActivityAllocation, AllocationHistory
+
+
+class AllocationStatus(models.TextChoices):
+    """Status choices for task allocations"""
+    PENDING = 'pending', 'Pending'
+    ALLOCATED = 'allocated', 'Allocated'
+    IN_PROGRESS = 'in_progress', 'In Progress'
+    COMPLETED = 'completed', 'Completed'
+    CANCELLED = 'cancelled', 'Cancelled'
+    DEALLOCATED = 'deallocated', 'Deallocated'
+    IN_ISSUE = 'in_issue', 'In Issue'
+
 
 # Task model removed - using TaskFromFlow as the main task model
 # All task functionality is now handled by TaskFromFlow
@@ -479,7 +493,7 @@ class FlowInstance(models.Model):
     
     # References
     flow_template = models.ForeignKey(FlowTemplate, on_delete=models.CASCADE, related_name='instances')
-    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='flow_instances')
+    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='flow_instances', null=True, blank=True)
     
     # Instance state
     status = models.CharField(
@@ -702,254 +716,7 @@ class BulkTaskCreationJob(models.Model):
         return end_time - self.started_at 
 
 
-class TaskAllocation(models.Model):
-    """Task allocation to vendors or internal teams"""
-    
-    ALLOCATION_TYPE_CHOICES = (
-        ('vendor', 'Vendor'),
-        ('internal_team', 'Internal Team'),
-    )
-    
-    ALLOCATION_STATUS_CHOICES = (
-        ('allocated', 'Allocated'),
-        ('in_progress', 'In Progress'),
-        ('completed', 'Completed'),
-        ('cancelled', 'Cancelled'),
-        ('reallocated', 'Reallocated'),
-    )
-    
-    # Core fields
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    task_from_flow = models.ForeignKey('TaskFromFlow', on_delete=models.CASCADE, related_name='allocations')
-    
-    # Allocation details
-    allocation_type = models.CharField(max_length=20, choices=ALLOCATION_TYPE_CHOICES)
-    status = models.CharField(max_length=20, choices=ALLOCATION_STATUS_CHOICES, default='allocated')
-    
-    # Vendor allocation (when allocation_type = 'vendor')
-    vendor_relationship = models.ForeignKey(
-        'tenants.ClientVendorRelationship', 
-        on_delete=models.CASCADE, 
-        related_name='task_allocations',
-        null=True, 
-        blank=True
-    )
-    
-    # Internal team allocation (when allocation_type = 'internal_team')
-    internal_team = models.ForeignKey(
-        'teams.Team', 
-        on_delete=models.CASCADE, 
-        related_name='task_allocations',
-        null=True, 
-        blank=True
-    )
-    
-    # Sub-activities allocation
-    allocated_sub_activities = models.ManyToManyField(
-        'TaskSubActivity',
-        through='TaskSubActivityAllocation',
-        related_name='allocations'
-    )
-    
-    # Allocation metadata
-    allocation_notes = models.TextField(blank=True)
-    estimated_duration_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        help_text="Estimated duration in hours"
-    )
-    actual_duration_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        help_text="Actual duration in hours"
-    )
-    
-    # Scheduling
-    allocated_at = models.DateTimeField(auto_now_add=True)
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    
-    # User tracking
-    allocated_by = models.ForeignKey(
-        'apps_users.User', 
-        on_delete=models.CASCADE, 
-        related_name='allocated_tasks'
-    )
-    updated_by = models.ForeignKey(
-        'apps_users.User', 
-        on_delete=models.CASCADE, 
-        related_name='updated_task_allocations'
-    )
-    
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'task_allocations'
-        verbose_name = _('Task Allocation')
-        verbose_name_plural = _('Task Allocations')
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['task']),
-            models.Index(fields=['allocation_type']),
-            models.Index(fields=['status']),
-            models.Index(fields=['vendor_relationship']),
-            models.Index(fields=['internal_team']),
-            models.Index(fields=['allocated_by']),
-        ]
-    
-    def __str__(self):
-        if self.allocation_type == 'vendor' and self.vendor_relationship:
-            return f"Task {self.task_from_flow.task_id} → {self.vendor_relationship.vendor_tenant.organization_name if self.vendor_relationship.vendor_tenant else 'Unknown Vendor'}"
-        elif self.allocation_type == 'internal_team' and self.internal_team:
-            return f"Task {self.task_from_flow.task_id} → {self.internal_team.name}"
-        else:
-            return f"Task {self.task_from_flow.task_id} → {self.allocation_type}"
-    
-    def clean(self):
-        """Validate allocation data"""
-        from django.core.exceptions import ValidationError
-        
-        if self.allocation_type == 'vendor' and not self.vendor_relationship:
-            raise ValidationError("Vendor relationship is required for vendor allocation")
-        
-        if self.allocation_type == 'internal_team' and not self.internal_team:
-            raise ValidationError("Internal team is required for internal team allocation")
-        
-        if self.vendor_relationship and self.internal_team:
-            raise ValidationError("Cannot have both vendor relationship and internal team")
-    
-    @property
-    def allocated_to_name(self):
-        """Get the name of who the task is allocated to"""
-        if self.allocation_type == 'vendor' and self.vendor_relationship:
-            return self.vendor_relationship.vendor_tenant.organization_name if self.vendor_relationship.vendor_tenant else 'Unknown Vendor'
-        elif self.allocation_type == 'internal_team' and self.internal_team:
-            return self.internal_team.name
-        return 'Unknown'
-
-
-class TaskSubActivityAllocation(models.Model):
-    """Many-to-many relationship between TaskAllocation and TaskSubActivity with additional metadata"""
-    
-    allocation = models.ForeignKey('TaskAllocation', on_delete=models.CASCADE, related_name='sub_activity_allocations')
-    sub_activity = models.ForeignKey('TaskSubActivity', on_delete=models.CASCADE, related_name='allocation_details')
-    
-    # Allocation status for this specific sub-activity
-    status = models.CharField(
-        max_length=20, 
-        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
-        default='allocated'
-    )
-    
-    # Progress tracking
-    progress_percentage = models.DecimalField(
-        max_digits=5, 
-        decimal_places=2, 
-        default=0,
-        validators=[MinValueValidator(0), MinValueValidator(100)]
-    )
-    
-    # Timing
-    estimated_duration_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
-    )
-    actual_duration_hours = models.DecimalField(
-        max_digits=8, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
-    )
-    
-    started_at = models.DateTimeField(null=True, blank=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-    
-    # Notes and metadata
-    notes = models.TextField(blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        db_table = 'task_sub_activity_allocations'
-        verbose_name = _('Task Sub-Activity Allocation')
-        verbose_name_plural = _('Task Sub-Activity Allocations')
-        unique_together = ['allocation', 'sub_activity']
-        indexes = [
-            models.Index(fields=['allocation']),
-            models.Index(fields=['sub_activity']),
-            models.Index(fields=['status']),
-        ]
-    
-    def __str__(self):
-        return f"{self.allocation} - {self.sub_activity}"
-
-
-class TaskAllocationHistory(models.Model):
-    """Track changes to task allocations for audit purposes"""
-    
-    ACTION_CHOICES = (
-        ('created', 'Created'),
-        ('updated', 'Updated'),
-        ('status_changed', 'Status Changed'),
-        ('reallocated', 'Reallocated'),
-        ('cancelled', 'Cancelled'),
-        ('completed', 'Completed'),
-    )
-    
-    allocation = models.ForeignKey('TaskAllocation', on_delete=models.CASCADE, related_name='history')
-    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
-    
-    # Change details
-    previous_status = models.CharField(
-        max_length=20, 
-        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
-        null=True, 
-        blank=True
-    )
-    new_status = models.CharField(
-        max_length=20, 
-        choices=TaskAllocation.ALLOCATION_STATUS_CHOICES, 
-        null=True, 
-        blank=True
-    )
-    
-    # User who made the change
-    changed_by = models.ForeignKey(
-        'apps_users.User', 
-        on_delete=models.CASCADE, 
-        related_name='allocation_changes'
-    )
-    
-    # Change metadata
-    change_reason = models.TextField(blank=True)
-    metadata = models.JSONField(default=dict, blank=True)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    
-    class Meta:
-        db_table = 'task_allocation_history'
-        verbose_name = _('Task Allocation History')
-        verbose_name_plural = _('Task Allocation History')
-        ordering = ['-created_at']
-        indexes = [
-            models.Index(fields=['allocation']),
-            models.Index(fields=['action']),
-            models.Index(fields=['changed_by']),
-            models.Index(fields=['created_at']),
-        ]
-    
-    def __str__(self):
-        return f"{self.allocation} - {self.action} by {self.changed_by} at {self.created_at}" 
+ 
 
 
 class TaskTimeline(models.Model):
@@ -981,7 +748,7 @@ class TaskTimeline(models.Model):
         verbose_name_plural = _('Task Timeline Events')
         ordering = ['timestamp']
         indexes = [
-            models.Index(fields=['task']),
+            models.Index(fields=['task_from_flow']),
             models.Index(fields=['event_type']),
             models.Index(fields=['timestamp']),
             models.Index(fields=['user']),
@@ -1006,4 +773,4 @@ class TaskTimeline(models.Model):
             'comment_added': 'Comment was added to task',
             'equipment_verified': 'Equipment was verified',
         }
-        return descriptions.get(self.event_type, self.event_type) 
+        return descriptions.get(self.event_type, self.event_type)
