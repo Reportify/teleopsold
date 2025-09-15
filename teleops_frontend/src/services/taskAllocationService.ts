@@ -117,7 +117,7 @@ class TaskAllocationService {
 
       const url = `${API_ENDPOINTS.TASKS.ALLOCATIONS.LIST}${params.toString() ? "?" + params.toString() : ""}`;
       const response = await api.get(url);
-      return response.data;
+      return response.data.results || response.data;
     } catch (error) {
       console.error("Error fetching task allocations:", error);
       throw error;

@@ -114,46 +114,12 @@ class TaskAllocation(models.Model):
         default='medium'
     )
     
-    # Scheduling
-    scheduled_start = models.DateTimeField(null=True, blank=True)
-    scheduled_end = models.DateTimeField(null=True, blank=True)
-    estimated_duration_hours = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
-    )
-    
-    # Execution tracking
-    actual_start = models.DateTimeField(null=True, blank=True)
-    actual_end = models.DateTimeField(null=True, blank=True)
-    actual_duration_hours = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
-    )
-    
     # Progress tracking
     progress_percentage = models.DecimalField(
         max_digits=5, 
         decimal_places=2, 
         default=Decimal('0.00'),
         help_text="Overall progress of this allocation"
-    )
-    
-    # Financial tracking
-    estimated_cost = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
-    )
-    actual_cost = models.DecimalField(
-        max_digits=12, 
-        decimal_places=2, 
-        null=True, 
-        blank=True
     )
     
     # Notes and instructions
@@ -235,15 +201,7 @@ class TaskAllocation(models.Model):
             if self.vendor_relationship:
                 raise ValidationError("Vendor relationship must be null for internal team allocation")
         
-        # Validate scheduling
-        if self.scheduled_start and self.scheduled_end:
-            if self.scheduled_start >= self.scheduled_end:
-                raise ValidationError("Scheduled start must be before scheduled end")
-        
-        # Validate actual times
-        if self.actual_start and self.actual_end:
-            if self.actual_start >= self.actual_end:
-                raise ValidationError("Actual start must be before actual end")
+
     
     def save(self, *args, **kwargs):
         self.clean()
@@ -317,7 +275,6 @@ class TaskAllocation(models.Model):
         
         self.status = AllocationStatus.IN_PROGRESS
         self.started_at = timezone.now()
-        self.actual_start = timezone.now()
         self.updated_by = user
         self.save()
         
@@ -331,7 +288,6 @@ class TaskAllocation(models.Model):
         
         self.status = AllocationStatus.COMPLETED
         self.completed_at = timezone.now()
-        self.actual_end = timezone.now()
         self.progress_percentage = Decimal('100.00')
         if completion_notes:
             self.completion_notes = completion_notes

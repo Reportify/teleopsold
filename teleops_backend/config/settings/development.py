@@ -22,7 +22,7 @@ DEBUG = True
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = 'django-insecure-development-secret-key-change-in-production'
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0']
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'testserver']
 
 # Remove django_ratelimit for development (doesn't work with locmem cache)
 INSTALLED_APPS = [app for app in INSTALLED_APPS if app != 'django_ratelimit']
@@ -166,4 +166,4 @@ REST_FRAMEWORK['DEFAULT_THROTTLE_RATES'] = {
 
 # Create logs directory if it doesn't exist
 import os
-os.makedirs(BASE_DIR / 'logs', exist_ok=True) 
+os.makedirs(BASE_DIR / 'logs', exist_ok=True)

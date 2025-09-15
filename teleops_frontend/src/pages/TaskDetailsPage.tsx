@@ -61,6 +61,7 @@ import {
 import { useParams, useNavigate } from "react-router-dom";
 import { TaskFromFlow, TaskSiteGroup, TaskSubActivity, Vendor, Task } from "../types/task";
 import { taskService } from "../services/taskService";
+import taskAllocationService, { TaskAllocation } from "../services/taskAllocationService";
 import { useAuth } from "../contexts/AuthContext";
 import { useDarkMode } from "../contexts/ThemeContext";
 import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
@@ -114,6 +115,16 @@ const TaskDetailsPage: React.FC = () => {
   const [vendorsLoading, setVendorsLoading] = useState(false);
   const [vendorsError, setVendorsError] = useState<string | null>(null);
 
+  // Allocation details state
+  const [allocations, setAllocations] = useState<TaskAllocation[]>([]);
+  const [allocationsLoading, setAllocationsLoading] = useState(false);
+  const [allocationsError, setAllocationsError] = useState<string | null>(null);
+
+  // Timeline state
+  const [timelineEvents, setTimelineEvents] = useState<any[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
+
   // Feature permissions
   const { hasPermission } = useFeaturePermissions();
   const canEditTasks = hasPermission("tasks.edit");
@@ -150,6 +161,40 @@ const TaskDetailsPage: React.FC = () => {
     }
   }, [task?.project]);
 
+  const loadAllocationData = async () => {
+    if (!taskId) return;
+    
+    try {
+      setAllocationsLoading(true);
+      setAllocationsError(null);
+      
+      const allocationData = await taskAllocationService.getTaskAllocations({ task_id: taskId });
+      setAllocations(allocationData);
+    } catch (err) {
+      console.error("Error loading allocations:", err);
+      setAllocationsError("Failed to load allocation details");
+    } finally {
+      setAllocationsLoading(false);
+    }
+  };
+
+  const loadTimelineData = async () => {
+    if (!taskId) return;
+    
+    try {
+      setTimelineLoading(true);
+      setTimelineError(null);
+      
+      const timelineData = await taskAllocationService.getTaskTimeline(taskId);
+      setTimelineEvents(timelineData);
+    } catch (err) {
+      console.error("Error loading timeline:", err);
+      setTimelineError("Failed to load timeline data");
+    } finally {
+      setTimelineLoading(false);
+    }
+  };
+
   const loadTaskData = async () => {
     try {
       setLoading(true);
@@ -165,6 +210,9 @@ const TaskDetailsPage: React.FC = () => {
 
       if (taskData) {
         setTask(taskData);
+        // Load allocation and timeline data after task is loaded
+        loadAllocationData();
+        loadTimelineData();
       } else {
         setError("Task not found");
       }
@@ -179,6 +227,7 @@ const TaskDetailsPage: React.FC = () => {
   const handleRefresh = async () => {
     setRefreshing(true);
     await loadTaskData();
+    await loadAllocationData();
     setRefreshing(false);
   };
 
@@ -420,6 +469,110 @@ const TaskDetailsPage: React.FC = () => {
     }
   };
 
+  const getEventColor = (eventType: string) => {
+    switch (eventType.toLowerCase()) {
+      case "created":
+        return "primary.main";
+      case "allocated":
+      case "assigned":
+        return "info.main";
+      case "work_started":
+        return "warning.main";
+      case "work_completed":
+        return "success.main";
+      case "cancelled":
+      case "deallocated":
+        return "error.main";
+      case "status_changed":
+      case "progress_updated":
+        return "secondary.main";
+      default:
+        return "grey.500";
+    }
+  };
+
+  const getEventIcon = (eventType: string) => {
+    switch (eventType.toLowerCase()) {
+      case "created":
+        return <Assignment />;
+      case "allocated":
+      case "assigned":
+        return <Person />;
+      case "work_started":
+        return <PlayArrow />;
+      case "work_completed":
+        return <CheckCircle />;
+      case "cancelled":
+      case "deallocated":
+        return <Cancel />;
+      case "status_changed":
+        return <Edit />;
+      case "progress_updated":
+        return <Schedule />;
+      case "comment_added":
+        return <Description />;
+      default:
+        return <Info />;
+    }
+  };
+
+  const renderEventDetails = (eventData: any) => {
+    if (!eventData || Object.keys(eventData).length === 0) {
+      return null;
+    }
+
+    // Special formatting for allocation events
+    if (eventData.allocated_to && eventData.allocation_type) {
+      return (
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>Allocated to:</strong> {eventData.allocated_to}
+          </Typography>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>Allocation Type:</strong> {eventData.allocation_type === 'vendor' ? 'External Vendor' : 'Internal Team'}
+          </Typography>
+          {eventData.previous_status && (
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Status Change:</strong> {eventData.previous_status} → {eventData.new_status}
+            </Typography>
+          )}
+          {eventData.sub_activities_count && (
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Sub-activities:</strong> {eventData.sub_activities_count} activities allocated
+            </Typography>
+          )}
+        </Box>
+      );
+    }
+
+    // Special formatting for status change events
+    if (eventData.previous_status && eventData.new_status) {
+      return (
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="body2" sx={{ mb: 1 }}>
+            <strong>Status Change:</strong> {eventData.previous_status} → {eventData.new_status}
+          </Typography>
+          {eventData.reason && (
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>Reason:</strong> {eventData.reason}
+            </Typography>
+          )}
+        </Box>
+      );
+    }
+
+    // Default formatting for other event types
+    return (
+      <Box sx={{ mt: 1 }}>
+        {Object.entries(eventData).map(([key, value]) => (
+          <Typography key={key} variant="body2" sx={{ mb: 0.5 }}>
+            <strong>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> {String(value)}
+          </Typography>
+        ))}
+      </Box>
+    );
+  };
+
   if (loading) {
     return (
       <Box sx={{ p: 3 }}>
@@ -522,6 +675,7 @@ const TaskDetailsPage: React.FC = () => {
                 <Tab label="Sub-Activities" />
                 <Tab label="Sites" />
                 <Tab label="Timeline" />
+                <Tab label="Allocation Details" />
                 <Tab label="Settings" />
               </Tabs>
             </Box>
@@ -948,25 +1102,268 @@ const TaskDetailsPage: React.FC = () => {
               {/* Timeline Tab */}
               <Card variant="outlined">
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
-                    Task Timeline
-                  </Typography>
-
-                  <Alert severity="info" sx={{ mb: 2 }}>
-                    Timeline feature will be implemented in future updates. This will show task progress, status changes, and activity updates over time.
-                  </Alert>
-
-                  <Box sx={{ textAlign: "center", py: 4 }}>
-                    <Timeline sx={{ fontSize: 48, color: "text.secondary", mb: 2 }} />
-                    <Typography variant="body1" color="text.secondary">
-                      Timeline view coming soon
+                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                    <Typography variant="h6">
+                      Task Timeline
                     </Typography>
+                    <IconButton onClick={() => loadTimelineData()} disabled={timelineLoading}>
+                      <Refresh />
+                    </IconButton>
                   </Box>
+
+                  {timelineLoading && (
+                    <Box sx={{ py: 2 }}>
+                      <Skeleton variant="rectangular" height={60} sx={{ mb: 1 }} />
+                      <Skeleton variant="rectangular" height={60} sx={{ mb: 1 }} />
+                      <Skeleton variant="rectangular" height={60} />
+                    </Box>
+                  )}
+
+                  {timelineError && (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                      {timelineError}
+                    </Alert>
+                  )}
+
+                  {!timelineLoading && !timelineError && timelineEvents.length === 0 && (
+                    <Box sx={{ textAlign: "center", py: 4 }}>
+                      <Timeline sx={{ fontSize: 48, color: "text.secondary", mb: 2 }} />
+                      <Typography variant="body1" color="text.secondary">
+                        No timeline events found
+                      </Typography>
+                    </Box>
+                  )}
+
+                  {!timelineLoading && !timelineError && timelineEvents.length > 0 && (
+                    <List>
+                      {timelineEvents.map((event, index) => (
+                        <React.Fragment key={event.id}>
+                          <ListItem alignItems="flex-start">
+                            <ListItemAvatar>
+                              <Avatar sx={{ bgcolor: getEventColor(event.event_type) }}>
+                                {getEventIcon(event.event_type)}
+                              </Avatar>
+                            </ListItemAvatar>
+                            <ListItemText
+                              primary={
+                                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                                  <Typography variant="subtitle2">
+                                    {event.event_description}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {new Date(event.timestamp).toLocaleString()}
+                                  </Typography>
+                                </Box>
+                              }
+                              secondary={
+                                <Box sx={{ mt: 1 }}>
+                                  <Chip 
+                                    label={event.event_type.replace('_', ' ').toUpperCase()} 
+                                    size="small" 
+                                    sx={{ mr: 1, mb: 1 }}
+                                  />
+                                  {event.user_name && (
+                                    <Chip 
+                                      label={`By: ${event.user_name}`} 
+                                      size="small" 
+                                      variant="outlined"
+                                      sx={{ mb: 1 }}
+                                    />
+                                  )}
+                                  {event.event_data && Object.keys(event.event_data).length > 0 && (
+                                    <Box sx={{ mt: 1, p: 1, bgcolor: "grey.50", borderRadius: 1 }}>
+                                      <Typography variant="caption" color="text.secondary">
+                                        Additional Details:
+                                      </Typography>
+                                      {renderEventDetails(event.event_data)}
+                                    </Box>
+                                  )}
+                                </Box>
+                              }
+                            />
+                          </ListItem>
+                          {index < timelineEvents.length - 1 && <Divider variant="inset" component="li" />}
+                        </React.Fragment>
+                      ))}
+                    </List>
+                  )}
                 </CardContent>
               </Card>
             </TabPanel>
 
             <TabPanel value={currentTab} index={4}>
+              {/* Allocation Details Tab */}
+              <Card variant="outlined">
+                <CardContent>
+                  <Typography variant="h6" gutterBottom>
+                    Allocation Details
+                  </Typography>
+
+                  {allocationsLoading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                      <Skeleton variant="rectangular" width="100%" height={200} />
+                    </Box>
+                  ) : allocationsError ? (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                      {allocationsError}
+                    </Alert>
+                  ) : allocations.length === 0 ? (
+                    <Box sx={{ textAlign: 'center', py: 4 }}>
+                      <Assignment sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+                      <Typography variant="body1" color="text.secondary">
+                        No allocations found for this task
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <Grid container spacing={2}>
+                      {allocations.map((allocation) => (
+                        <Grid size={{ xs: 12 }} key={allocation.id}>
+                          <Card variant="outlined" sx={{ mb: 2 }}>
+                            <CardContent>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+                                <Typography variant="h6">
+                                  Allocation #{allocation.id}
+                                </Typography>
+                                <Chip 
+                                   label={allocation.status}
+                                   color={allocation.status === 'allocated' ? 'success' : allocation.status === 'pending' ? 'warning' : allocation.status === 'in_progress' ? 'info' : 'default'}
+                                   size="small"
+                                 />
+                              </Box>
+                              
+                              <Grid container spacing={2}>
+                                <Grid size={{ xs: 12, md: 6 }}>
+                                  <List dense>
+                                    <ListItem>
+                                      <ListItemIcon><Business /></ListItemIcon>
+                                      <ListItemText 
+                                        primary="Allocation Type" 
+                                        secondary={allocation.allocation_type}
+                                      />
+                                    </ListItem>
+                                    <ListItem>
+                                      <ListItemIcon><Person /></ListItemIcon>
+                                      <ListItemText 
+                                         primary="Allocated To" 
+                                         secondary={allocation.vendor_name || allocation.team_name || 'N/A'}
+                                       />
+                                    </ListItem>
+                                    <ListItem>
+                                      <ListItemIcon><Schedule /></ListItemIcon>
+                                      <ListItemText 
+                                        primary="Created" 
+                                        secondary={new Date(allocation.created_at).toLocaleString()}
+                                      />
+                                    </ListItem>
+                                  </List>
+                                </Grid>
+                                
+                                <Grid size={{ xs: 12, md: 6 }}>
+                                   <List dense>
+                                     {allocation.started_at && (
+                                       <ListItem>
+                                         <ListItemIcon><PlayArrow /></ListItemIcon>
+                                         <ListItemText 
+                                           primary="Started At" 
+                                           secondary={new Date(allocation.started_at).toLocaleString()}
+                                         />
+                                       </ListItem>
+                                     )}
+                                     {allocation.completed_at && (
+                                       <ListItem>
+                                         <ListItemIcon><Stop /></ListItemIcon>
+                                         <ListItemText 
+                                           primary="Completed At" 
+                                           secondary={new Date(allocation.completed_at).toLocaleString()}
+                                         />
+                                       </ListItem>
+                                     )}
+                                     <ListItem>
+                                       <ListItemIcon><Info /></ListItemIcon>
+                                       <ListItemText 
+                                         primary="Sub-Activities" 
+                                         secondary={`${allocation.completed_sub_activities}/${allocation.total_sub_activities} completed`}
+                                       />
+                                     </ListItem>
+                                   </List>
+                                 </Grid>
+                              </Grid>
+                              
+                              {/* Sub-Activities Details */}
+                              {allocation.sub_activity_allocations && allocation.sub_activity_allocations.length > 0 && (
+                                <Box sx={{ mt: 2 }}>
+                                  <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 'bold' }}>
+                                    Sub-Activity Details
+                                  </Typography>
+                                  <List dense>
+                                    {allocation.sub_activity_allocations.map((subAllocation) => (
+                                      <ListItem key={subAllocation.id} sx={{ pl: 0 }}>
+                                        <ListItemIcon>
+                                          <AccountTree fontSize="small" />
+                                        </ListItemIcon>
+                                        <ListItemText
+                                          primary={
+                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                              <Typography variant="body2" component="span">
+                                                {subAllocation.sub_activity_name || `Sub-Activity ${subAllocation.sub_activity}`}
+                                              </Typography>
+                                              <Chip
+                                                label={subAllocation.status}
+                                                size="small"
+                                                color={
+                                                  subAllocation.status === 'completed' ? 'success' :
+                                                  subAllocation.status === 'in_progress' ? 'info' :
+                                                  subAllocation.status === 'allocated' ? 'primary' :
+                                                  'default'
+                                                }
+                                                sx={{ fontSize: '0.7rem', height: '20px' }}
+                                              />
+                                            </Box>
+                                          }
+                                          secondary={
+                                             <Box>
+                                               <Typography variant="caption" color="text.secondary">
+                                                  Site: {subAllocation.metadata?.site_name || 'Not assigned'}
+                                                </Typography>
+                                               {subAllocation.progress_percentage > 0 && (
+                                                 <Box sx={{ mt: 0.5 }}>
+                                                   <Typography variant="caption" color="text.secondary">
+                                                     Progress: {subAllocation.progress_percentage}%
+                                                   </Typography>
+                                                   <LinearProgress
+                                                     variant="determinate"
+                                                     value={subAllocation.progress_percentage}
+                                                     sx={{ mt: 0.5, height: 4 }}
+                                                   />
+                                                 </Box>
+                                               )}
+                                             </Box>
+                                           }
+                                        />
+                                      </ListItem>
+                                    ))}
+                                  </List>
+                                </Box>
+                              )}
+                               
+                               {allocation.allocation_notes && (
+                                 <Box sx={{ mt: 2, p: 2, backgroundColor: 'rgba(0,0,0,0.02)', borderRadius: 1 }}>
+                                   <Typography variant="body2" color="text.secondary">
+                                     <strong>Notes:</strong> {allocation.allocation_notes}
+                                   </Typography>
+                                 </Box>
+                               )}
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      ))}
+                    </Grid>
+                  )}
+                </CardContent>
+              </Card>
+            </TabPanel>
+
+            <TabPanel value={currentTab} index={5}>
               {/* Settings Tab */}
               <Card variant="outlined">
                 <CardContent>

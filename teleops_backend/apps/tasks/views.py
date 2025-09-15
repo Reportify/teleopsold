@@ -44,8 +44,7 @@ class TaskViewSet(viewsets.ModelViewSet):
     pagination_class = LargeResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = [
-        'status', 'priority', 'task_type', 'assigned_to', 'supervisor',
-        'equipment_verification_status', 'equipment_verification_required'
+        'status', 'priority', 'task_type', 'assigned_to', 'supervisor'
     ]
     search_fields = ['title', 'description', 'task_id', 'instructions']
     ordering_fields = [
@@ -335,7 +334,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        tasks = Task.objects.filter(tenant=tenant)
+        tasks = TaskFromFlow.objects.filter(tenant=tenant)
         
         # Calculate statistics
         total_tasks = tasks.count()
@@ -346,16 +345,10 @@ class TaskViewSet(viewsets.ModelViewSet):
         cancelled_tasks = tasks.filter(status='cancelled').count()
 
         
-        # Equipment verification stats
-        verification_required = tasks.filter(equipment_verification_required=True).count()
-        verification_pending = tasks.filter(
-            equipment_verification_required=True,
-            equipment_verification_status='pending'
-        ).count()
-        verification_completed = tasks.filter(
-            equipment_verification_required=True,
-            equipment_verification_status='verified'
-        ).count()
+        # Equipment verification stats (fields not available in TaskFromFlow model)
+        verification_required = 0
+        verification_pending = 0
+        verification_completed = 0
         
         # Task type breakdown
         task_types = tasks.values('task_type').annotate(
@@ -403,7 +396,7 @@ class TaskViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        if new_status not in dict(Task.TASK_STATUS):
+        if new_status not in dict(TaskFromFlow.TASK_STATUS):
             return Response(
                 {'error': 'Invalid status'},
                 status=status.HTTP_400_BAD_REQUEST
@@ -414,7 +407,7 @@ class TaskViewSet(viewsets.ModelViewSet):
         # Update tasks
         updated_count = 0
         with transaction.atomic():
-            tasks = Task.objects.filter(
+            tasks = TaskFromFlow.objects.filter(
                 id__in=task_ids,
                 tenant=tenant
             )
@@ -1710,7 +1703,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         # Filter by task if specified
         task_id = self.request.query_params.get('task_id')
         if task_id:
-            queryset = queryset.filter(task_from_flow_id=task_id)
+            queryset = queryset.filter(task_id=task_id)
         
         # Filter by allocation type
         allocation_type = self.request.query_params.get('allocation_type')
@@ -1737,7 +1730,7 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
             'task', 'task__project', 'vendor_relationship', 'vendor_relationship__vendor_tenant',
             'internal_team', 'allocated_by', 'updated_by'
         ).prefetch_related(
-            'allocated_sub_activities', 'sub_activity_allocations', 'sub_activity_allocations__sub_activity'
+            'sub_activity_allocations', 'sub_activity_allocations__sub_activity'
         )
         
         return queryset
@@ -2253,7 +2246,7 @@ class TaskTimelineViewSet(viewsets.ReadOnlyModelViewSet):
         # Filter by task if specified
         task_id = self.request.query_params.get('task_id')
         if task_id:
-            queryset = queryset.filter(task_id=task_id)
+            queryset = queryset.filter(task_from_flow_id=task_id)
         
         # Filter by event type
         event_type = self.request.query_params.get('event_type')

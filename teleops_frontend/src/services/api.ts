@@ -152,7 +152,7 @@ export const API_ENDPOINTS = {
     },
     TIMELINE: {
       LIST: "/tasks/task-timeline/",
-      BY_TASK: (id: string) => `/tasks/tasks/${id}/timeline/`,
+      BY_TASK: (id: string) => `/tasks/task-timeline/by_task/?task_id=${id}`,
       RECENT_ACTIVITY: "/tasks/task-timeline/recent_activity/",
     },
   },

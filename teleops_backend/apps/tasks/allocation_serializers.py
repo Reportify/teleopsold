@@ -72,9 +72,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'allocation_type', 'status', 'priority', 'allocation_reference',
             'vendor_relationship', 'vendor_name', 'vendor_code', 'vendor_contact',
             'internal_team', 'team_name', 'team_type',
-            'scheduled_start', 'scheduled_end', 'estimated_duration_hours',
-            'actual_start', 'actual_end', 'actual_duration_hours',
-            'progress_percentage', 'estimated_cost', 'actual_cost',
+            'progress_percentage',
             'allocation_notes', 'completion_notes',
             'allocated_by', 'allocated_by_name', 'updated_by', 'updated_by_name',
             'allocated_at', 'accepted_at', 'started_at', 'completed_at', 'cancelled_at',
@@ -102,8 +100,7 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
         model = TaskAllocation
         fields = [
             'task', 'allocation_type', 'vendor_relationship', 'internal_team',
-            'priority', 'allocation_reference', 'scheduled_start', 'scheduled_end',
-            'estimated_duration_hours', 'estimated_cost', 'allocation_notes',
+            'priority', 'allocation_reference', 'allocation_notes',
             'sub_activity_ids'
         ]
     
@@ -165,15 +162,7 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
                     'sub_activity_ids': f'Sub-activities {list(allocated_names)} are already allocated to active allocations'
                 })
         
-        # Validate scheduling
-        scheduled_start = data.get('scheduled_start')
-        scheduled_end = data.get('scheduled_end')
-        
-        if scheduled_start and scheduled_end:
-            if scheduled_start >= scheduled_end:
-                raise serializers.ValidationError({
-                    'scheduled_end': 'Scheduled end must be after scheduled start'
-                })
+
         
         return data
     
@@ -197,12 +186,12 @@ class TaskAllocationCreateSerializer(serializers.ModelSerializer):
             sub_allocation = SubActivityAllocation.objects.create(
                 allocation=allocation,
                 sub_activity_id=sub_activity_id,
-                status=AllocationStatus.ALLOCATED
+                status='allocated'
             )
             sub_activity_allocations.append(sub_allocation)
         
         # Update allocation status
-        allocation.status = AllocationStatus.ALLOCATED
+        allocation.status = TaskAllocationStatus.ALLOCATED
         allocation.save()
         
         # Create timeline event
@@ -235,22 +224,10 @@ class TaskAllocationUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = TaskAllocation
         fields = [
-            'priority', 'scheduled_start', 'scheduled_end', 'estimated_duration_hours',
-            'estimated_cost', 'allocation_notes', 'actual_duration_hours', 'actual_cost'
+            'priority', 'allocation_notes'
         ]
     
-    def validate(self, data):
-        """Validate update data"""
-        scheduled_start = data.get('scheduled_start', self.instance.scheduled_start)
-        scheduled_end = data.get('scheduled_end', self.instance.scheduled_end)
-        
-        if scheduled_start and scheduled_end:
-            if scheduled_start >= scheduled_end:
-                raise serializers.ValidationError({
-                    'scheduled_end': 'Scheduled end must be after scheduled start'
-                })
-        
-        return data
+
     
     def update(self, instance, validated_data):
         """Update allocation and track changes"""
@@ -523,7 +500,7 @@ class ReallocationSerializer(serializers.Serializer):
             })
         
         # Mark current allocation as deallocated
-        current_allocation.status = AllocationStatus.DEALLOCATED
+        current_allocation.status = TaskAllocationStatus.DEALLOCATED
         current_allocation.save()
         
         # Create history entry for deallocation
@@ -531,7 +508,7 @@ class ReallocationSerializer(serializers.Serializer):
             allocation=current_allocation,
             action='deallocated',
             previous_status=current_allocation.status,
-            new_status=AllocationStatus.DEALLOCATED,
+            new_status=TaskAllocationStatus.DEALLOCATED,
             changed_by=self.context['request'].user,
             change_reason=validated_data['reallocation_reason']
         )
@@ -540,7 +517,7 @@ class ReallocationSerializer(serializers.Serializer):
         new_allocation_data = {
             'task': current_allocation.task,
             'allocation_type': validated_data['new_allocation_type'],
-            'status': AllocationStatus.ALLOCATED,
+            'status': TaskAllocationStatus.ALLOCATED,
             'priority': validated_data.get('priority', 'medium'),
             'allocation_notes': validated_data.get('allocation_notes', ''),
             'allocated_by': self.context['request'].user,
@@ -560,8 +537,7 @@ class ReallocationSerializer(serializers.Serializer):
             SubActivityAllocation.objects.create(
                 allocation=new_allocation,
                 sub_activity=sub_allocation.sub_activity,
-                status=AllocationStatus.ALLOCATED,
-                estimated_duration_hours=sub_allocation.estimated_duration_hours,
+                status=TaskAllocationStatus.ALLOCATED,
                 notes=f"Reallocated from previous allocation: {current_allocation.id}"
             )
         
@@ -569,7 +545,7 @@ class ReallocationSerializer(serializers.Serializer):
         AllocationHistory.objects.create(
             allocation=new_allocation,
             action='created',
-            new_status=AllocationStatus.ALLOCATED,
+            new_status=TaskAllocationStatus.ALLOCATED,
             changed_by=self.context['request'].user,
             change_reason=f"Reallocated from allocation {current_allocation.id}: {validated_data['reallocation_reason']}"
         )
