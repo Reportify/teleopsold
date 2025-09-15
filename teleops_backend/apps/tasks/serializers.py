@@ -34,17 +34,38 @@ class TaskTimelineSerializer(serializers.ModelSerializer):
 class TaskSubActivityAllocationSerializer(serializers.ModelSerializer):
     """Serializer for TaskSubActivityAllocation model"""
     
-    sub_activity_name = serializers.CharField(source='sub_activity.sub_activity_name', read_only=True)
+    sub_activity_name = serializers.CharField(source='sub_activity.activity_name', read_only=True)
     sub_activity_type = serializers.CharField(source='sub_activity.activity_type', read_only=True)
+    site_name = serializers.CharField(source='sub_activity.assigned_site.site_name', read_only=True)
+    site_business_id = serializers.CharField(source='sub_activity.assigned_site.site_id', read_only=True)
+    site_global_id = serializers.CharField(source='sub_activity.assigned_site.global_id', read_only=True)
+    
+    def to_representation(self, instance):
+        """Override to include site information in metadata"""
+        data = super().to_representation(instance)
+        
+        # Ensure metadata includes site information
+        if not data.get('metadata'):
+            data['metadata'] = {}
+        
+        # Add site information to metadata
+        if instance.sub_activity and instance.sub_activity.assigned_site:
+            data['metadata']['site_name'] = instance.sub_activity.assigned_site.site_name
+            data['metadata']['site_business_id'] = instance.sub_activity.assigned_site.site_id
+            data['metadata']['site_global_id'] = instance.sub_activity.assigned_site.global_id
+            data['metadata']['site_id'] = str(instance.sub_activity.assigned_site.id)
+        
+        return data
     
     class Meta:
         model = TaskSubActivityAllocation
         fields = [
             'id', 'allocation', 'sub_activity', 'sub_activity_name', 'sub_activity_type',
-            'status', 'progress_percentage', 'estimated_duration_hours', 'actual_duration_hours',
-            'started_at', 'completed_at', 'notes', 'metadata', 'created_at', 'updated_at'
+            'site_name', 'site_business_id', 'site_global_id', 'status', 'progress_percentage', 
+            'estimated_duration_hours', 'actual_duration_hours', 'started_at', 'completed_at', 
+            'notes', 'metadata', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'site_name', 'site_business_id', 'site_global_id']
 
 
 class TaskAllocationSerializer(serializers.ModelSerializer):
@@ -83,8 +104,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'allocation_type', 'status', 'vendor_relationship', 'internal_team',
             'vendor_name', 'vendor_code', 'vendor_contact_person',
             'team_name', 'team_type',
-            'allocated_sub_activities', 'sub_activity_allocations',
-            'actual_duration_hours',
+            'sub_activity_allocations',
             'allocated_at', 'started_at', 'completed_at',
             'allocated_by', 'allocated_by_name', 'updated_by', 'updated_by_name',
             'allocated_to_name', 'total_sub_activities', 'completed_sub_activities',
@@ -94,7 +114,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     
     def get_total_sub_activities(self, obj):
         """Get total number of allocated sub-activities"""
-        return obj.allocated_sub_activities.count()
+        return obj.sub_activity_allocations.count()
     
     def get_completed_sub_activities(self, obj):
         """Get number of completed sub-activities"""
@@ -375,7 +395,7 @@ class TaskCreateSerializer(serializers.ModelSerializer):
         team_members = validated_data.pop('team_members', [])
         
         # Create the task
-        task = Task.objects.create(**validated_data)
+        task = TaskFromFlow.objects.create(**validated_data)
         
         # Add additional sites
         for i, site in enumerate(additional_sites):
