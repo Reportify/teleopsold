@@ -140,13 +140,13 @@ const MyPermissionsPage: React.FC = () => {
     try {
       // Get current user's effective permissions
       const userProfile = await rbacAPI.getCurrentUserProfile();
-      console.log("Current user profile:", userProfile);
+
 
       // Get effective permissions using the comprehensive dashboard API
       const effectivePerms = await rbacAPI.getComprehensiveDashboard("user_analysis", {
         user_id: userProfile.user_id,
       });
-      console.log("Effective permissions response:", effectivePerms);
+      
 
       setEffectivePermissions(effectivePerms);
 

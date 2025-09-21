@@ -349,8 +349,13 @@ const TaskCreatePage: React.FC = () => {
     `;
     document.head.appendChild(style);
     return () => {
-      if (document.head.contains(style)) {
-        document.head.removeChild(style);
+      try {
+        if (style && style.parentNode === document.head) {
+          document.head.removeChild(style);
+        }
+      } catch (error) {
+        // Ignore errors if the element is already removed
+
       }
     };
   }, []);
@@ -500,12 +505,9 @@ const TaskCreatePage: React.FC = () => {
       setLoadingProjectSites(true);
       setApiError(null);
 
-      console.log("Loading project sites for project:", projectId);
       const response = await siteService.listProjectSites(projectId, { page_size: 100 });
-      console.log("Raw API response:", response);
 
       const sitesData = Array.isArray(response) ? response : response.results || [];
-      console.log("Processed sites data:", sitesData);
 
       setProjectSites(sitesData);
 
@@ -529,8 +531,6 @@ const TaskCreatePage: React.FC = () => {
             selected: false,
           };
         });
-
-      console.log("Site builders:", siteBuilders);
 
       setTaskBuilder((prev) => ({
         ...prev,
@@ -899,13 +899,7 @@ const TaskCreatePage: React.FC = () => {
           if (lines[i].trim()) {
             const values = lines[i].split(",").map((v) => v.trim().replace(/"/g, ""));
 
-            // Debug logging for CSV parsing
-            console.log(`🚨 CSV ROW ${i} DEBUG:`, {
-              rawValues: values,
-              taskUniqueId: values[0],
-              hasTaskUniqueId: !!values[0],
-              rowNumber: i,
-            });
+
 
             const row: any = {
               task_unique_id: values[0] || "",
@@ -968,19 +962,6 @@ const TaskCreatePage: React.FC = () => {
 
       // Add the task name from step 1
       formData.append("task_name", taskBuilder.task_name);
-
-      // Debug logging
-      console.log("🚨 BULK UPLOAD DEBUG - FormData contents:");
-      console.log("CSV File:", csvFile);
-      console.log("Flow Template ID:", selectedFlowTemplate.id);
-      console.log("Project ID:", taskBuilder.project_id);
-      console.log("Auto-ID Prefix:", taskNaming.auto_id_prefix);
-      console.log("Auto-ID Start:", taskNaming.auto_id_start);
-      console.log("Task Name:", taskBuilder.task_name);
-      console.log("Uploaded Data Sample:", uploadedData.slice(0, 3));
-
-      // Log what's in the CSV content
-      console.log("Generated CSV Content:", csvContent);
 
       // Call backend API using API service
       const tenantContext = AuthService.getTenantContext();
@@ -1076,15 +1057,11 @@ const TaskCreatePage: React.FC = () => {
 
   // Job polling functions
   const startJobPolling = (jobId: number) => {
-    console.log(`🚨 Starting job polling for job ${jobId} 🚨`);
-
     // Stop any existing polling first
     stopJobPolling();
 
     setBulkUploadJobId(jobId);
     setIsPolling(true);
-
-    console.log(`📝 Set states: bulkUploadJobId=${jobId}, isPolling=true`);
 
     // Track if this job is still active
     let isJobActive = true;
@@ -1092,18 +1069,14 @@ const TaskCreatePage: React.FC = () => {
     const interval = setInterval(async () => {
       // Check if job is still active
       if (!isJobActive) {
-        console.log(`🛑 Job ${jobId} is no longer active, cleaning up interval`);
         clearInterval(interval);
         return;
       }
-
-      console.log(`🔍 Interval check: bulkUploadJobId=${bulkUploadJobId}, jobId=${jobId}, isPolling=${isPolling}`);
 
       // Simple check - just verify we're still polling for the same job
       // The interval will be cleared when the job completes or fails
 
       try {
-        console.log(`🔄 Polling job ${jobId} status...`);
         const tenantContext = AuthService.getTenantContext();
         const headers: Record<string, string> = {
           Authorization: `Bearer ${localStorage.getItem("access_token")}`,
@@ -1118,14 +1091,11 @@ const TaskCreatePage: React.FC = () => {
         });
 
         const jobData = await response.json();
-        console.log(`📊 Job ${jobId} status:`, jobData);
 
         if (jobData.success) {
           setJobStatus(jobData.data);
 
           if (jobData.data.status === "completed" || jobData.data.status === "failed") {
-            console.log(`🏁 Job ${jobId} finished with status: ${jobData.data.status} - STOPPING POLLING`);
-
             // Mark job as inactive to stop polling
             isJobActive = false;
 
@@ -1178,7 +1148,6 @@ const TaskCreatePage: React.FC = () => {
             }
           } else if (jobData.data.status === "processing") {
             // Update progress for ongoing processing
-            console.log(`📊 Job ${jobId} progress: ${jobData.data.processed_rows}/${jobData.data.total_rows} (${jobData.data.progress_percentage}%)`);
           }
         }
       } catch (error) {
@@ -1709,7 +1678,6 @@ const TaskCreatePage: React.FC = () => {
   };
 
   const handleCreateTask = () => {
-    console.log("Creating task:", taskBuilder);
     // Here you would call the API to create the task
     navigate("/tasks");
   };

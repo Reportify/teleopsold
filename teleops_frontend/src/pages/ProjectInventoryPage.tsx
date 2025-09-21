@@ -224,17 +224,7 @@ const ProjectInventoryPage: React.FC = () => {
           params.search = currentFilters.search.trim();
         }
 
-        console.log("📊 Loading inventory data:", {
-          projectId: id,
-          page: currentPage,
-          params,
-          endpoint: API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)),
-        });
-
         const res: any = await apiHelpers.get(API_ENDPOINTS.PROJECTS.INVENTORY.SITE_SERIALS(String(id)), { params });
-
-        console.log("🔍 Raw API response:", res);
-        console.log("🔍 Response type:", typeof res, "Is array:", Array.isArray(res));
 
         // Handle both paginated and non-paginated responses
         let list: SerialRow[] = [];
@@ -253,13 +243,6 @@ const ProjectInventoryPage: React.FC = () => {
           totalPages = Math.max(1, Math.ceil(count / pagination.page_size));
         }
 
-        console.log("✅ Processed data:", {
-          listLength: list.length,
-          count,
-          totalPages,
-          sampleItem: list[0],
-        });
-
         setRows(list);
         setPagination((prev) => ({
           ...prev,
@@ -270,8 +253,6 @@ const ProjectInventoryPage: React.FC = () => {
 
         // Update URL params
         updateURLParams(currentFilters, currentPage);
-
-        console.log("✅ Inventory data loaded:", { count, totalPages, page: currentPage });
 
         // Fetch linked project sites once to enrich left list with global_id and site_name
         try {
@@ -291,32 +272,13 @@ const ProjectInventoryPage: React.FC = () => {
           console.warn("Failed to load site enrichment data:", e);
         }
       } catch (error: any) {
-        console.error("❌ Failed to load inventory data:", error);
-        console.error("❌ Error details:", {
-          status: error?.response?.status,
-          statusText: error?.response?.statusText,
-          data: error?.response?.data,
-          message: error?.message,
-          projectId: id,
-        });
-
-        let errorMessage = "Failed to load inventory data";
-        if (error?.response?.status === 404) {
-          errorMessage = "Project not found or you don't have access to this project";
-        } else if (error?.response?.data?.error?.message) {
-          errorMessage = error.response.data.error.message;
-        } else if (error?.response?.data?.detail) {
-          errorMessage = error.response.data.detail;
-        } else if (error?.message) {
-          errorMessage = error.message;
-        }
-
-        setError(errorMessage);
+        console.error("Failed to load inventory data:", error);
+        setError(`Failed to load inventory data: ${error?.response?.data?.detail || error?.message || "Unknown error"}`);
       } finally {
         setLoading(false);
       }
     },
-    [id, pagination.page_size, filters, updateURLParams]
+    [id, pagination.page_size]
   );
 
   // Load filter options
@@ -414,15 +376,10 @@ const ProjectInventoryPage: React.FC = () => {
 
   // Aggregate by site with robust data validation
   const { sites, bySite } = useMemo(() => {
-    console.log("🔍 Aggregating sites from rows:", rows.length, "rows");
-
     // Validate data structure first
     if (!Array.isArray(rows) || rows.length === 0) {
-      console.warn("⚠️ No valid rows data for site aggregation");
       return { sites: [], bySite: {} };
     }
-
-    console.log("📊 Sample row data:", rows[0]);
 
     const map: Record<string, { total: number; items: SerialRow[] }> = {};
     const invalidRows: any[] = [];
@@ -445,23 +402,14 @@ const ProjectInventoryPage: React.FC = () => {
         site = r.site_details.global_id.trim();
       }
 
-      console.log("🏠 Processing row:", {
-        id: r.id,
-        site_id_business: r.site_id_business,
-        site_details: r.site_details,
-        resolved_site: site,
-      });
-
       if (!map[site]) map[site] = { total: 0, items: [] };
       map[site].total += 1;
       map[site].items.push(r);
     }
 
     if (invalidRows.length > 0) {
-      console.warn("⚠️ Found invalid rows during aggregation:", invalidRows);
+      console.warn("Found invalid rows during aggregation:", invalidRows);
     }
-
-    console.log("🗺️ Site map created:", Object.keys(map));
 
     // Apply client-side site filtering if a specific site filter is applied
     let siteList = Object.keys(map);
@@ -474,7 +422,6 @@ const ProjectInventoryPage: React.FC = () => {
     siteList = siteSort === "alpha" ? siteList.sort((a, b) => a.localeCompare(b)) : siteList.sort((a, b) => map[b].total - map[a].total || a.localeCompare(b));
 
     const siteTuples = siteList.map((s) => ({ site: s, total: map[s].total }));
-    console.log("📋 Final sites list:", siteTuples);
     return { sites: siteTuples, bySite: map };
   }, [rows, filters.site_id, siteSort]);
 
@@ -525,9 +472,6 @@ const ProjectInventoryPage: React.FC = () => {
   const handleBulkUpload = async () => {
     if (!file || !id) return;
 
-    console.log(`🚨🚨🚨 PROJECT INVENTORY: Upload clicked! 🚨🚨🚨`);
-    console.log(`🚨🚨🚨 File:`, file.name, `Size:`, file.size);
-
     setUploading(true);
     setError(null);
     setUploadResult(null);
@@ -546,14 +490,6 @@ const ProjectInventoryPage: React.FC = () => {
 
       // Always use async for better progress tracking and user experience
       const useAsync = true; // Force async for all files - provides better UX, progress tracking, and performance
-      console.log(`🚀 FORCING ASYNC: Using async endpoint for all files (better UX & progress tracking)`);
-
-      console.log(`🚨🚨🚨 File Analysis:`, {
-        sizeMB: fileSizeMB.toFixed(2),
-        estimatedRows,
-        useAsync,
-        endpoint: useAsync ? "ASYNC" : "SYNC",
-      });
 
       setIsAsyncUpload(useAsync);
 
@@ -563,29 +499,15 @@ const ProjectInventoryPage: React.FC = () => {
       // Use appropriate endpoint
       const endpoint = useAsync ? API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD_ASYNC(String(id)) : API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD(String(id));
 
-      console.log(`🚨🚨🚨 CALLING ENDPOINT:`, endpoint);
-
       const res = await apiHelpers.post<UploadResult>(endpoint, formData, {
         headers: { "Content-Type": "multipart/form-data" },
         timeout: useAsync ? 120000 : 60000, // 2 min async, 1 min sync
-      });
-
-      console.log(`🚨🚨🚨 RESPONSE:`, res);
-      console.log(`🚨🚨🚨 RESPONSE STRUCTURE:`, {
-        hasJobId: !!res.job_id,
-        jobId: res.job_id,
-        status: res.status,
-        message: res.message,
-        created: res.created,
-        skipped: res.skipped,
-        estimatedRows: res.estimated_rows,
       });
 
       setUploadResult(res);
 
       if (res.job_id) {
         // Start polling for async jobs (always async now)
-        console.log(`🚨🚨🚨 Starting job polling for async upload 🚨🚨🚨`);
         startJobStatusPolling(res.job_id);
         // Don't close modal for async uploads so user can see progress
       } else {
@@ -622,8 +544,6 @@ const ProjectInventoryPage: React.FC = () => {
 
   // Start polling for job status
   const startJobStatusPolling = (jobId: number) => {
-    console.log(`🔄 Starting polling for inventory job ${jobId}`);
-
     // Clear any existing intervals
     stopJobStatusPolling();
 
@@ -644,7 +564,6 @@ const ProjectInventoryPage: React.FC = () => {
 
     // Set a 30-minute timeout for safety
     const timeout = setTimeout(() => {
-      console.log("⚠️ Inventory job polling timed out after 30 minutes");
       stopJobStatusPolling();
       setError("Upload timed out. Please check the status manually.");
     }, 30 * 60 * 1000); // 30 minutes
@@ -654,8 +573,6 @@ const ProjectInventoryPage: React.FC = () => {
 
   // Stop polling
   const stopJobStatusPolling = () => {
-    console.log("🛑 Stopping inventory job polling");
-
     if (jobStatusInterval) {
       clearInterval(jobStatusInterval);
       setJobStatusInterval(null);
@@ -675,7 +592,6 @@ const ProjectInventoryPage: React.FC = () => {
   const checkJobStatus = async (jobId: number) => {
     // Prevent stale calls
     if (activeJobIdRef.current !== jobId) {
-      console.log(`🚫 Skipping stale job status check for job ${jobId}`);
       return;
     }
 
@@ -684,7 +600,6 @@ const ProjectInventoryPage: React.FC = () => {
 
       // Safety check for excessive polling
       if (pollCountRef.current > 100) {
-        console.log("⚠️ Stopping inventory job polling after 100 attempts");
         stopJobStatusPolling();
         setError("Polling limit reached. Please refresh to check status.");
         return;
@@ -692,17 +607,15 @@ const ProjectInventoryPage: React.FC = () => {
 
       const jobData = await apiHelpers.get<UploadResult>(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_UPLOAD_JOB_DETAIL(String(id), jobId));
 
-      console.log(`📊 Inventory Job ${jobId} status: ${jobData.status} (${jobData.progress_percentage || 0}%)`);
-
       // Enhanced logging for debugging
       if (jobData.status === "failed") {
-        console.error(`🚨🚨🚨 INVENTORY JOB FAILED 🚨🚨🚨`);
-        console.error(`🚨 Job ID: ${jobId}`);
-        console.error(`🚨 Error Message:`, jobData.error_message);
-        console.error(`🚨 Message:`, jobData.message);
-        console.error(`🚨 Error Count:`, jobData.error_count);
-        console.error(`🚨 Detailed Errors:`, jobData.detailed_errors);
-        console.error(`🚨 Full Job Data:`, jobData);
+        console.error("Inventory job failed:", {
+          jobId,
+          errorMessage: jobData.error_message,
+          message: jobData.message,
+          errorCount: jobData.error_count,
+          detailedErrors: jobData.detailed_errors
+        });
       }
 
       setUploadResult((prev: any) => ({
@@ -713,17 +626,6 @@ const ProjectInventoryPage: React.FC = () => {
       }));
 
       if (jobData.status === "completed" || jobData.status === "failed") {
-        console.log(`🏁 Inventory Job ${jobId} finished with status: ${jobData.status}`);
-
-        if (jobData.status === "failed") {
-          console.log(`🔍 Failure Analysis:`);
-          console.log(`   - Total Rows: ${jobData.total_rows}`);
-          console.log(`   - Processed Rows: ${jobData.processed_rows}`);
-          console.log(`   - Created Count: ${jobData.created_count}`);
-          console.log(`   - Error Count: ${jobData.error_count}`);
-          console.log(`   - Duration: ${jobData.duration}`);
-        }
-
         stopJobStatusPolling();
         setUploading(false);
 
@@ -739,7 +641,7 @@ const ProjectInventoryPage: React.FC = () => {
         await load(); // Refresh data
       }
     } catch (error) {
-      console.error("❌ Error checking inventory job status:", error);
+      console.error("Error checking inventory job status:", error);
       stopJobStatusPolling();
       setError("Failed to check upload status");
       setUploading(false);
@@ -752,9 +654,7 @@ const ProjectInventoryPage: React.FC = () => {
 
     setDownloadingTemplate(true);
     try {
-      console.log(`📄 Starting template download for project ${id}`);
       await apiHelpers.download(API_ENDPOINTS.PROJECTS.INVENTORY.DISMANTLE_TEMPLATE(String(id)), "dismantle_planned_inventory_template.xlsx");
-      console.log(`✅ Template download completed successfully`);
     } catch (error) {
       console.error(`❌ Template download failed:`, error);
       // Could show a toast/alert here if needed

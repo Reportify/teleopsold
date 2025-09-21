@@ -243,9 +243,12 @@ const SitesPage: React.FC = () => {
     };
   }, []);
 
-  // Debug loading state changes
+  // Loading state effect for cleanup
   React.useEffect(() => {
-    console.log("🔒 Loading state changed to:", loading);
+    // Reset upload results when loading starts
+    if (loading) {
+      setUploadResults(null);
+    }
   }, [loading]);
 
   // Ref to track if loading is in progress
@@ -284,13 +287,11 @@ const SitesPage: React.FC = () => {
   // Load circle sites with pagination and caching
   const loadCircleSites = async (page = 1, filters: SiteFilters = {}, forceRefresh = false) => {
     if (loadingSitesRef.current) {
-      console.log("🚫 Sites already loading, skipping...");
       return;
     }
 
     // Check if filters changed - if so, clear cache
     if (filtersChanged(filters)) {
-      console.log("🔄 Filters changed, clearing cache");
       setCachedPages({});
       setCurrentFilters(filters);
     }
@@ -298,7 +299,6 @@ const SitesPage: React.FC = () => {
     // Check cache first (unless forcing refresh)
     const cacheKey = getCacheKey(page, filters);
     if (!forceRefresh && cachedPages[cacheKey]) {
-      console.log("✅ Loading from cache:", { page, cacheKey });
       setSites(cachedPages[cacheKey]);
       setPagination((prev) => ({ ...prev, page }));
       return; // No API call needed!
@@ -307,7 +307,6 @@ const SitesPage: React.FC = () => {
     try {
       loadingSitesRef.current = true;
       setLoading(true);
-      console.log("🌐 Loading sites from API...", { page, filters });
 
       // Build query parameters
       const params = new URLSearchParams();
@@ -340,7 +339,7 @@ const SitesPage: React.FC = () => {
           [cacheKey]: sitesData,
         }));
 
-        console.log("✅ Sites data loaded successfully:", sitesData.length, "sites on page", page, "(cached)");
+
       }
     } catch (error: any) {
       console.error("❌ Error loading circle sites:", error);
@@ -361,19 +360,16 @@ const SitesPage: React.FC = () => {
   // Load clusters for filtering
   const loadClusters = async () => {
     if (loadingClustersRef.current) {
-      console.log("🚫 Clusters already loading, skipping...");
       return;
     }
 
     try {
       loadingClustersRef.current = true;
-      console.log("🔄 Loading clusters data...");
       const response = await api.get("/sites/clusters/", {
         timeout: 15000, // 15 seconds timeout for clusters
       });
       if (response.data) {
         setClusters(response.data.clusters || []);
-        console.log("✅ Clusters loaded:", response.data.clusters?.length, "clusters");
       }
     } catch (error) {
       console.error("❌ Error loading clusters:", error);
@@ -386,18 +382,14 @@ const SitesPage: React.FC = () => {
   const checkJobStatus = async (jobId: number) => {
     // Increment poll count
     pollCountRef.current += 1;
-    console.log(`🔍 Checking job status for job ${jobId} (poll #${pollCountRef.current}, isPolling: ${isPolling})`);
-    console.log(`📊 Current uploadResults:`, uploadResults);
 
     // Check if this is still the active job
     if (activeJobIdRef.current !== jobId) {
-      console.log("🛑 Job ID mismatch, stopping polling for this job");
       return;
     }
 
     // Safety check: stop if we've polled too many times
     if (pollCountRef.current > 100) {
-      console.log("🛑 Maximum poll count reached, stopping automatically");
       stopJobStatusPolling();
       return;
     }
@@ -426,7 +418,6 @@ const SitesPage: React.FC = () => {
 
         // If job is completed, stop polling and refresh sites data
         if (jobData.status === "completed") {
-          console.log("✅ Job completed, stopping polling");
           stopJobStatusPolling();
 
           // Show completion message first
@@ -443,7 +434,6 @@ const SitesPage: React.FC = () => {
           // Wait a moment for backend to finish processing, then refresh sites
           setTimeout(async () => {
             try {
-              console.log("🔄 Refreshing sites data after bulk upload completion...");
               const filters: SiteFilters = {
                 search: searchTerm,
                 status: statusFilter,
@@ -469,7 +459,6 @@ const SitesPage: React.FC = () => {
           }
           // If there are errors, keep dialog open so user can view them
         } else if (jobData.status === "failed") {
-          console.log("❌ Job failed, stopping polling");
           stopJobStatusPolling();
           setUploadResults((prev: any) => ({
             ...prev,
@@ -492,7 +481,6 @@ const SitesPage: React.FC = () => {
 
   // Stop job status polling
   const stopJobStatusPolling = () => {
-    console.log("🛑 Stopping job status polling");
     if (jobStatusInterval) {
       clearInterval(jobStatusInterval);
       setJobStatusInterval(null);
@@ -508,8 +496,6 @@ const SitesPage: React.FC = () => {
 
   // Start job status polling
   const startJobStatusPolling = (jobId: number) => {
-    console.log(`🚀 Starting job status polling for job ${jobId}`);
-
     // Clear any existing interval
     if (jobStatusInterval) {
       clearInterval(jobStatusInterval);
@@ -525,7 +511,6 @@ const SitesPage: React.FC = () => {
       if (activeJobIdRef.current === jobId) {
         checkJobStatus(jobId);
       } else {
-        console.log("🛑 Polling stopped for inactive job");
         clearInterval(interval);
       }
     }, 5000);
@@ -533,14 +518,12 @@ const SitesPage: React.FC = () => {
 
     // Set a timeout to stop polling after 30 minutes (safety measure)
     const timeout = setTimeout(() => {
-      console.log("⏰ Polling timeout reached, stopping automatically");
       stopJobStatusPolling();
     }, 30 * 60 * 1000); // 30 minutes
     setPollingTimeout(timeout);
 
     // Check immediately - but use a small delay to ensure state is updated
     setTimeout(() => {
-      console.log("🔍 Making first immediate check for job status...");
       checkJobStatus(jobId);
     }, 100);
   };
@@ -548,13 +531,11 @@ const SitesPage: React.FC = () => {
   // Load geographic analysis on-demand
   const loadGeographicAnalysis = async () => {
     if (geographicAnalysisLoading) {
-      console.log("🚫 Geographic analysis already loading, skipping...");
       return;
     }
 
     try {
       setGeographicAnalysisLoading(true);
-      console.log("🔄 Loading geographic analysis...");
 
       const response = await api.get("/sites/geographic-analysis/");
 
@@ -566,7 +547,6 @@ const SitesPage: React.FC = () => {
           sites_with_coordinates: response.data.gps_statistics?.sites_with_coordinates || 0,
           sites_without_coordinates: response.data.gps_statistics?.sites_without_coordinates || 0,
         }));
-        console.log("✅ Geographic analysis loaded successfully");
       }
     } catch (error: any) {
       console.error("❌ Error loading geographic analysis:", error);
@@ -584,7 +564,6 @@ const SitesPage: React.FC = () => {
   // Load towns for filtering (optionally filtered by cluster) with pagination
   const loadTowns = async (cluster?: string) => {
     if (loadingTownsRef.current) {
-      console.log("🚫 Towns already loading, skipping...");
       return;
     }
 
@@ -600,7 +579,6 @@ const SitesPage: React.FC = () => {
       }
 
       const url = `/sites/towns/?${params.toString()}`;
-      console.log("🔄 Loading towns data...", cluster ? `for cluster: ${cluster}` : "all towns", "(first 100)");
 
       const response = await api.get(url, {
         timeout: 15000, // 15 seconds timeout for towns
@@ -608,7 +586,6 @@ const SitesPage: React.FC = () => {
 
       if (response.data) {
         setTowns(response.data.towns || []);
-        console.log("✅ Towns loaded:", response.data.towns?.length, "towns", response.data.pagination ? `(page 1 of ${response.data.pagination.total_pages})` : "");
       }
     } catch (error) {
       console.error("❌ Error loading towns:", error);
@@ -815,15 +792,7 @@ const SitesPage: React.FC = () => {
       // Use appropriate endpoint based on file size and estimated rows
       const endpoint = isLargeFile ? "/sites/bulk-upload-async/" : "/sites/bulk-upload/";
 
-      console.log(`📤 Uploading ${uploadFile.name} (${fileSizeMB.toFixed(2)}MB, ~${estimatedRows} estimated rows) using ${isLargeFile ? "async" : "sync"} endpoint`);
-      console.log(`📊 File details:`, {
-        name: uploadFile.name,
-        size: uploadFile.size,
-        sizeMB: fileSizeMB,
-        estimatedRows: estimatedRows,
-        isLargeFile: isLargeFile,
-        endpoint: endpoint,
-      });
+
 
       const response = await api.post(endpoint, formData, {
         headers: {
@@ -832,9 +801,6 @@ const SitesPage: React.FC = () => {
       });
 
       if (isLargeFile && response.status === 202) {
-        console.log("🔄 Async job started, setting initial state...");
-        console.log("🔒 Loading state before setting results:", loading);
-
         // Large file - show job tracking
         const initialResults = {
           message: `Starting bulk upload of ${response.data.total_rows} sites...`,
@@ -848,7 +814,6 @@ const SitesPage: React.FC = () => {
           isAsyncJob: true,
         };
 
-        console.log("📝 Setting initial upload results:", initialResults);
         setUploadResults(initialResults);
 
         // Start polling for job status immediately
@@ -856,7 +821,6 @@ const SitesPage: React.FC = () => {
 
         // Keep loading state active for async jobs - don't set loading to false here
         // Loading will be set to false when the job completes in checkJobStatus
-        console.log("🔒 Loading state after setting results (should still be true):", loading);
       } else {
         // Small file - show immediate results
         setUploadResults(response.data);
@@ -1814,7 +1778,6 @@ const SitesPage: React.FC = () => {
               onClick={() => {
                 // Stop any active polling when dialog is closed
                 if (isPolling) {
-                  console.log("🛑 Dialog closed, stopping polling");
                   stopJobStatusPolling();
                 }
                 setBulkUploadDialogOpen(false);

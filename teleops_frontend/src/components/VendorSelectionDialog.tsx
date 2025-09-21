@@ -53,12 +53,6 @@ const VendorSelectionDialog: React.FC<VendorSelectionDialogProps> = ({ open, onC
     if (allocationType) {
       setSelectedAllocationType(allocationType);
     }
-
-    // Debug: Log the task data to see what we're working with
-    console.log("Task data received in VendorSelectionDialog:", task);
-    console.log("Sub-activities:", task?.sub_activities);
-    console.log("Sites:", task?.sites);
-    console.log("Allocation type:", allocationType);
   }, [task, allocationType]);
 
   const handleSubActivityToggle = (subActivityId: string) => {
@@ -103,8 +97,6 @@ const VendorSelectionDialog: React.FC<VendorSelectionDialogProps> = ({ open, onC
 
       // Create the allocation via API
       const allocation = await taskAllocationService.createTaskAllocation(allocationData);
-
-      console.log("Task allocation created successfully:", allocation);
 
       // Call the parent callback with the allocation result
       onAllocationComplete(task, selectedVendor, allocation);

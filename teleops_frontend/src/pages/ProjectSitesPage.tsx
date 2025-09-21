@@ -73,8 +73,6 @@ const ProjectSitesPage: React.FC = () => {
 
   // Job status polling for async uploads
   const startJobPolling = (jobId: number) => {
-    console.log(`🚨🚨🚨 Starting job polling for job ${jobId} 🚨🚨🚨`);
-
     // Stop any existing polling first
     stopJobPolling();
 
@@ -85,14 +83,11 @@ const ProjectSitesPage: React.FC = () => {
       try {
         // Double-check if we should still be polling this job
         if (activeJobIdRef.current !== jobId) {
-          console.log(`🛑 Job ${jobId} is no longer active, stopping polling`);
           clearInterval(interval);
           return;
         }
 
-        console.log(`🔄 Polling job ${jobId} status...`);
         const jobStatus = await apiHelpers.get(API_ENDPOINTS.PROJECTS.SITES.IMPORT_JOB_DETAIL(String(id), jobId));
-        console.log(`📊 Job ${jobId} status:`, jobStatus);
 
         // Update the import result with job status
         setImportResult(jobStatus);
@@ -100,9 +95,6 @@ const ProjectSitesPage: React.FC = () => {
         // Type assertion for jobStatus to access properties safely
         const typedJobStatus = jobStatus as any;
         if (typedJobStatus.status === "completed" || typedJobStatus.status === "failed") {
-          console.log(`🏁 Job ${jobId} finished with status: ${typedJobStatus.status}`);
-          console.log(`🛑 STOPPING POLLING - Job completed!`);
-
           // Clear the interval immediately
           clearInterval(interval);
           setJobPollingInterval(null);
@@ -111,9 +103,7 @@ const ProjectSitesPage: React.FC = () => {
           setImportUploading(false);
 
           // Refresh data but only once
-          console.log(`🔄 Refreshing data after job completion...`);
           await loadData();
-          console.log(`✅ Data refresh completed`);
         }
       } catch (error) {
         console.error(`❌ Error polling job ${jobId}:`, error);
@@ -127,22 +117,15 @@ const ProjectSitesPage: React.FC = () => {
     }, 3000); // Poll every 3 seconds
 
     setJobPollingInterval(interval);
-    console.log(`🔄 Job polling started for job ${jobId}, interval ID:`, interval);
   };
 
   const stopJobPolling = () => {
-    console.log(`🛑 Stopping job polling`);
-    console.log(`🛑 Current interval:`, jobPollingInterval);
-    console.log(`🛑 Current active job:`, activeJobId);
-
     if (jobPollingInterval) {
       clearInterval(jobPollingInterval);
       setJobPollingInterval(null);
-      console.log(`🛑 Interval cleared`);
     }
     setActiveJobId(null);
     activeJobIdRef.current = null;
-    console.log(`🛑 Job polling stopped completely`);
   };
 
   const loadData = async () => {
@@ -446,9 +429,6 @@ const ProjectSitesPage: React.FC = () => {
             onClick={async () => {
               if (!importFile) return;
 
-              console.log(`🚨🚨🚨 PROJECT SITES MODAL: Upload clicked! 🚨🚨🚨`);
-              console.log(`🚨🚨🚨 File:`, importFile.name, `Size:`, importFile.size);
-
               setImportError(null);
               try {
                 // File size detection (copy from Master Sites logic)
@@ -464,13 +444,6 @@ const ProjectSitesPage: React.FC = () => {
                 // Always use async for better progress tracking and user experience
                 const useAsync = true; // Force async for all uploads to show proper progress tracking
 
-                console.log(`🚨🚨🚨 File Analysis:`, {
-                  sizeMB: fileSizeMB.toFixed(2),
-                  estimatedRows,
-                  useAsync,
-                  endpoint: useAsync ? "ASYNC" : "SYNC",
-                });
-
                 const form = new FormData();
                 form.append("file", importFile);
                 setImportUploading(true);
@@ -478,30 +451,15 @@ const ProjectSitesPage: React.FC = () => {
                 // Use appropriate endpoint
                 const endpoint = useAsync ? API_ENDPOINTS.PROJECTS.SITES.IMPORT_ASYNC(String(id)) : API_ENDPOINTS.PROJECTS.SITES.IMPORT(String(id));
 
-                console.log(`🚨🚨🚨 CALLING ENDPOINT:`, endpoint);
-
                 const res = await apiHelpers.post<any>(endpoint, form, {
                   headers: { "Content-Type": "multipart/form-data" },
                   timeout: useAsync ? 120000 : 60000, // 2 min async, 1 min sync
-                });
-
-                console.log(`🚨🚨🚨 RESPONSE:`, res);
-                console.log(`🚨🚨🚨 RESPONSE STRUCTURE:`, {
-                  hasJobId: !!res.job_id,
-                  jobId: res.job_id,
-                  status: res.status,
-                  message: res.message,
-                  createdMaster: res.created_master,
-                  linked: res.linked,
-                  skipped: res.skipped,
-                  estimatedRows: res.estimated_rows,
                 });
 
                 setImportResult(res);
 
                 if (useAsync && res.job_id) {
                   // Start polling for async jobs
-                  console.log(`🚨🚨🚨 Starting job polling for async upload 🚨🚨🚨`);
                   startJobPolling(res.job_id);
                   // Don't close modal for async uploads so user can see progress
                 } else {

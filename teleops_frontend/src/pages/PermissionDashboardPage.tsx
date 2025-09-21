@@ -176,7 +176,7 @@ const PermissionDashboardPage: React.FC = () => {
       const response = await getPermissions();
       setAvailablePermissions(response.results || response);
     } catch (err: any) {
-      console.error("Error loading permissions:", err);
+      // Error loading permissions - handled silently
     }
   };
 

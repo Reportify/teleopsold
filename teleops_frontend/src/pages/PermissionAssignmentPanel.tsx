@@ -108,8 +108,6 @@ const PermissionAssignmentPanel: React.FC = () => {
 
         // Load available users
         const usersResponse = await userManagementAPI.users.list();
-        console.log("Users Response:", usersResponse); // Debug log
-        console.log("First User:", usersResponse.results?.[0]); // Debug log
         setAvailableUsers(usersResponse.results || []);
       } catch (error) {
         console.error("Error loading data:", error);
@@ -168,8 +166,6 @@ const PermissionAssignmentPanel: React.FC = () => {
       // Call the API to assign users to the group
       const result = await rbacAPI.assignUsersToGroup(selectedGroup.id, userProfileIds);
 
-      console.log("Assignment result:", result);
-
       setSnackbar({
         open: true,
         message: `Successfully assigned ${selectedUsers.length} user(s) to ${selectedGroup.group_name}`,
@@ -218,8 +214,6 @@ const PermissionAssignmentPanel: React.FC = () => {
 
       // Call the API to assign users to the designation
       const result = await rbacAPI.assignUsersToDesignation(selectedDesignation.id, userProfileIds, assignmentData);
-
-      console.log("Designation assignment result:", result);
 
       setSnackbar({
         open: true,
@@ -272,8 +266,6 @@ const PermissionAssignmentPanel: React.FC = () => {
 
       // Call the API to assign permissions to the designation
       const result = await rbacAPI.assignPermissionsToDesignation(selectedDesignation.id, permissionIds, assignmentData);
-
-      console.log("Designation permission assignment result:", result);
 
       setSnackbar({
         open: true,
@@ -587,7 +579,6 @@ const PermissionAssignmentPanel: React.FC = () => {
                         <TextField {...params} label="Select Users" placeholder="Search and select users to assign to this group" helperText={`${selectedUsers.length} user(s) selected`} />
                       )}
                       renderOption={(props, user) => {
-                        console.log("Rendering user:", user); // Debug log
                         const userName = user.full_name || user.display_name || `${user.first_name || ""} ${user.last_name || ""}`.trim() || user.username || "Unknown User";
                         const userEmail = user.email || user.user?.email || "No email";
                         const userDesignation =

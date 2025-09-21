@@ -44,14 +44,8 @@ interface UploadResult {
 }
 
 const ProjectSitesImportPage: React.FC = () => {
-  console.log(`🔥🔥🔥 ProjectSitesImportPage COMPONENT IS LOADING 🔥🔥🔥`);
-
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-
-  console.log(`🚨🚨🚨 COMPONENT LOADED: ProjectSitesImportPage with id: ${id} 🚨🚨🚨`);
-  console.log(`🚨🚨🚨 URL PARAMS:`, { id });
-  console.log(`🚨🚨🚨 CURRENT URL:`, window.location.href);
 
   const [file, setFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -70,36 +64,15 @@ const ProjectSitesImportPage: React.FC = () => {
   const pollCountRef = useRef<number>(0);
 
   const onFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    console.log(`🔥🔥🔥 FILE SELECTION EVENT TRIGGERED 🔥🔥🔥`);
     const selectedFile = e.target.files?.[0] || null;
-    console.log(`🚨🚨🚨 FILE SELECTED:`, {
-      name: selectedFile?.name,
-      size: selectedFile?.size,
-      type: selectedFile?.type,
-    });
     setFile(selectedFile);
-    console.log(`🚨🚨🚨 FILE STATE UPDATED 🚨🚨🚨`);
   };
 
   // Intelligent file size detection and upload selection
   const onSubmit = async () => {
-    console.log(`🔥🔥🔥 UPLOAD BUTTON CLICKED! 🔥🔥🔥`);
-    console.log(`🚨🚨🚨 CHECKING CONDITIONS - file:`, !!file, `id:`, !!id);
-
     if (!file || !id) {
-      console.log(`🚨🚨🚨 EARLY RETURN: Missing file or id`, { file: !!file, id: !!id });
       return;
     }
-
-    console.log(`🚀🚀🚀 PROJECT SITES UPLOAD STARTED 🚀🚀🚀`);
-    console.log(`📁 File Details:`, {
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      lastModified: new Date(file.lastModified).toISOString(),
-    });
-    console.log(`🔗 Project ID:`, id);
-    console.log(`🚨🚨🚨 CRITICAL DEBUG: Starting upload process 🚨🚨🚨`);
 
     setSubmitting(true);
     setError(null);
@@ -124,26 +97,6 @@ const ProjectSitesImportPage: React.FC = () => {
       // TEMPORARY: Force async for ALL uploads to avoid timeout issues during debugging
       const useAsync = true; // fileSizeMB > 1 || estimatedRows > 500 || file.size > 100 * 1024;
 
-      console.log(`🚨🚨🚨 CRITICAL: useAsync is FORCED to TRUE 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: useAsync value = ${useAsync} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: typeof useAsync = ${typeof useAsync} 🚨🚨🚨`);
-
-      console.log(`📊 DETAILED FILE ANALYSIS:`, {
-        name: file.name,
-        sizeBytes: file.size,
-        sizeKB: fileSizeKB.toFixed(2),
-        sizeMB: fileSizeMB.toFixed(2),
-        estimatedRows: estimatedRows,
-        useAsync: useAsync,
-        threshold: "1MB or 500+ rows or >100KB",
-        endpoint: useAsync ? "ASYNC" : "SYNC",
-        conditions: {
-          fileSizeMBCheck: `${fileSizeMB.toFixed(2)}MB > 1MB = ${fileSizeMB > 1}`,
-          estimatedRowsCheck: `${estimatedRows} rows > 500 = ${estimatedRows > 500}`,
-          fileSizeBytesCheck: `${file.size} bytes > 100KB = ${file.size > 100 * 1024}`,
-        },
-      });
-
       setIsAsyncUpload(useAsync);
 
       const formData = new FormData();
@@ -155,36 +108,10 @@ const ProjectSitesImportPage: React.FC = () => {
       const syncEndpoint = API_ENDPOINTS.PROJECTS.SITES.IMPORT(String(id));
       endpoint = useAsync ? asyncEndpoint : syncEndpoint;
 
-      console.log(`🚨🚨🚨 CRITICAL: Endpoint Construction 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Project ID: ${id} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Async Endpoint: ${asyncEndpoint} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Sync Endpoint: ${syncEndpoint} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: useAsync: ${useAsync} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Selected Endpoint: ${endpoint} 🚨🚨🚨`);
-
-      // TRIPLE CHECK: Verify endpoint selection logic
-      if (useAsync === true) {
-        console.log(`✅✅✅ SHOULD USE ASYNC: ${asyncEndpoint} ✅✅✅`);
-      } else {
-        console.log(`❌❌❌ SHOULD USE SYNC: ${syncEndpoint} ❌❌❌`);
-      }
-
-      // FINAL VERIFICATION
-      console.log(`🔥🔥🔥 FINAL ENDPOINT TO BE CALLED: ${endpoint} 🔥🔥🔥`);
-
-      console.log(`📤 PROJECT SITES: Uploading ${file.name} (${fileSizeMB.toFixed(2)}MB, ~${estimatedRows} estimated rows) using ${useAsync ? "async" : "sync"} endpoint`);
-      console.log(`🔗 Final Endpoint: ${endpoint}`);
-      console.log(`📦 FormData file appended:`, formData.has("file"));
-
       const startTime = Date.now();
-      console.log(`⏰ API call started at: ${new Date(startTime).toISOString()}`);
 
       // EXACT COPY FROM MASTER SITES: Use api.post directly (not apiHelpers.post)
       // Add longer timeout for file uploads to prevent timeouts
-      console.log(`🚨🚨🚨 CRITICAL: About to call API with endpoint: ${endpoint} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Expected status for async: 202, for sync: 200 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: If this is not import-async, we have a bug! 🚨🚨🚨`);
-
       const response = await api.post(endpoint, formData, {
         headers: {
           "Content-Type": "multipart/form-data",
@@ -192,30 +119,7 @@ const ProjectSitesImportPage: React.FC = () => {
         timeout: useAsync ? 120000 : 60000, // 2 minutes for async, 1 minute for sync
       });
 
-      console.log(`🚨🚨🚨 CRITICAL: Response received 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Status: ${response.status} 🚨🚨🚨`);
-      console.log(`🚨🚨🚨 CRITICAL: Data:`, response.data);
-      console.log(`🚨🚨🚨 CRITICAL: Expected async response should have job_id, actual:`, response.data?.job_id);
-
-      // VERIFY RESPONSE TYPE
-      if (response.status === 202 && response.data?.job_id) {
-        console.log(`✅✅✅ SUCCESS: Async response detected with job_id: ${response.data.job_id} ✅✅✅`);
-      } else if (response.status === 200) {
-        console.log(`❌❌❌ ERROR: Got sync response (200) when we expected async (202)! ❌❌❌`);
-      } else {
-        console.log(`❌❌❌ ERROR: Unexpected response status: ${response.status} ❌❌❌`);
-      }
-
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-      console.log(`⏰ API call completed in: ${duration}ms`);
-      console.log(`📥 Response Status: ${response.status}`);
-      console.log(`📥 Response Data:`, response.data);
-
       if (useAsync && response.status === 202) {
-        console.log("🔄 Async job started, setting initial state...");
-        console.log("🔒 Loading state before setting results:", submitting);
-
         // Large file - show job tracking
         const initialResults = {
           message: `Starting bulk upload of ${response.data.total_rows} sites...`,
@@ -229,7 +133,6 @@ const ProjectSitesImportPage: React.FC = () => {
           isAsyncJob: true,
         };
 
-        console.log("📝 Setting initial upload results:", initialResults);
         setResult(initialResults);
 
         // Start polling for job status immediately
@@ -237,11 +140,9 @@ const ProjectSitesImportPage: React.FC = () => {
 
         // Keep loading state active for async jobs - don't set submitting to false here
         // Loading will be set to false when the job completes in checkJobStatus
-        console.log("🔒 Loading state after setting results (should still be true):", submitting);
       } else {
         // Small file - show immediate results
         setResult(response.data);
-        console.log(`✅ Completed sync project sites import: ${response.data.created_master} created, ${response.data.linked} linked`);
 
         // Auto-navigate after successful sync upload (only if no errors)
         if (response.data && !response.data.error && (!response.data.errors || response.data.errors.length === 0)) {
@@ -255,21 +156,10 @@ const ProjectSitesImportPage: React.FC = () => {
         setSubmitting(false);
       }
     } catch (e: any) {
-      console.error("🚨🚨🚨 CRITICAL: PROJECT SITES IMPORT FAILED 🚨🚨🚨");
-      console.error("🚨🚨🚨 CRITICAL: Error Object:", e);
-      console.error("🚨🚨🚨 CRITICAL: Error Code:", e?.code);
-      console.error("🚨🚨🚨 CRITICAL: Error Message:", e?.message);
-      console.error("🚨🚨🚨 CRITICAL: Error Response:", e?.response);
-      console.error("🚨🚨🚨 CRITICAL: Error Response Data:", e?.response?.data);
-      console.error("🚨🚨🚨 CRITICAL: Error Response Status:", e?.response?.status);
-      console.error("🚨🚨🚨 CRITICAL: Error Response Headers:", e?.response?.headers);
-      console.error("🚨🚨🚨 CRITICAL: Error Config:", e?.config);
-      console.error("🚨🚨🚨 CRITICAL: Error Request:", e?.request);
-      console.error("🚨🚨🚨 CRITICAL: This error occurred for endpoint:", endpoint);
+      console.error("Project sites import failed:", e);
 
       // Check if this is a timeout error
       const isTimeout = e?.code === "ECONNABORTED" || e?.message?.includes("timeout");
-      console.error("❌ Is Timeout Error:", isTimeout);
 
       // Better error message handling
       let errorMessage = "Failed to import file";
@@ -283,7 +173,6 @@ const ProjectSitesImportPage: React.FC = () => {
         errorMessage = "Upload timed out. The file may be too large. Please try again or contact support.";
       }
 
-      console.error("❌ Final Error Message:", errorMessage);
       setError(errorMessage);
       setSubmitting(false); // Always stop loading on error
     }
@@ -291,8 +180,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
   // Start polling for job status
   const startJobStatusPolling = (jobId: number) => {
-    console.log(`🔄 Starting polling for project sites job ${jobId}`);
-
     // Clear any existing intervals
     stopJobStatusPolling();
 
@@ -310,7 +197,6 @@ const ProjectSitesImportPage: React.FC = () => {
       if (activeJobIdRef.current === jobId) {
         checkJobStatus(jobId);
       } else {
-        console.log("🛑 Polling stopped for inactive job");
         clearInterval(interval);
       }
     }, 5000); // Poll every 5 seconds (same as Master Sites)
@@ -319,7 +205,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
     // Set a 30-minute timeout for safety
     const timeout = setTimeout(() => {
-      console.log("⏰ Polling timeout reached for project sites job");
       stopJobStatusPolling();
       setError("Upload timed out. Please check the status manually.");
     }, 30 * 60 * 1000); // 30 minutes
@@ -329,8 +214,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
   // Stop polling
   const stopJobStatusPolling = () => {
-    console.log("🛑 Stopping project sites job polling");
-
     if (jobStatusInterval) {
       clearInterval(jobStatusInterval);
       setJobStatusInterval(null);
@@ -350,7 +233,6 @@ const ProjectSitesImportPage: React.FC = () => {
   const checkJobStatus = async (jobId: number) => {
     // Safety check to prevent polling for wrong job
     if (activeJobIdRef.current !== jobId) {
-      console.log(`🚫 Job ID mismatch, stopping polling for ${jobId}`);
       return;
     }
 
@@ -359,7 +241,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
       // Safety check for excessive polling
       if (pollCountRef.current > 100) {
-        console.log("🚫 Too many poll attempts, stopping");
         stopJobStatusPolling();
         setError("Upload monitoring exceeded maximum attempts. Please refresh to check status.");
         return;
@@ -369,8 +250,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
       if (response.data) {
         const jobData = response.data;
-
-        console.log(`📊 Job ${jobId} status: ${jobData.status} (${jobData.progress_percentage || 0}%)`);
 
         // Update upload results with current job status (exact copy from Master Sites)
         // Calculate progress percentage if not provided by backend
@@ -391,7 +270,6 @@ const ProjectSitesImportPage: React.FC = () => {
 
         // If job is completed, stop polling and handle completion (exact copy from Master Sites)
         if (jobData.status === "completed") {
-          console.log("✅ Job completed, stopping polling");
           stopJobStatusPolling();
 
           // Show completion message first
@@ -413,7 +291,6 @@ const ProjectSitesImportPage: React.FC = () => {
           }
           // If there are errors, keep on page so user can view them
         } else if (jobData.status === "failed") {
-          console.log("❌ Job failed, stopping polling");
           stopJobStatusPolling();
           setResult((prev: any) => ({
             ...prev,
@@ -426,7 +303,7 @@ const ProjectSitesImportPage: React.FC = () => {
         }
       }
     } catch (error) {
-      console.error("❌ Error checking project sites job status:", error);
+      console.error("Error checking project sites job status:", error);
       stopJobStatusPolling();
       setSubmitting(false);
       setError("Failed to check upload status. Please refresh the page.");

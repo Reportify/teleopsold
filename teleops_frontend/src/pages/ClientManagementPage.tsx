@@ -164,7 +164,6 @@ const ClientManagementPage: React.FC = () => {
         severity: "success",
       });
     } catch (error) {
-      console.error("Failed to delete client:", error);
       setSnackbar({
         open: true,
         message: "Failed to delete client",
@@ -258,11 +257,14 @@ const ClientManagementPage: React.FC = () => {
           <Button
             variant="outlined"
             onClick={() => {
-              console.log("Manual test - Current state:", { isAuthenticated, currentTenant, user });
               clientService
                 .getClients()
-                .then((data) => console.log("Manual API test result:", data))
-                .catch((err) => console.error("Manual API test error:", err));
+                .then((data) => {
+                  // API test completed successfully
+                })
+                .catch((err) => {
+                  // API test failed - error handled silently
+                });
             }}
           >
             Test API

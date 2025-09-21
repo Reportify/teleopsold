@@ -36,24 +36,38 @@ const FlowLibraryPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   // Load flows from service
   useEffect(() => {
+    let isMounted = true;
+
     const loadFlows = async () => {
       try {
-        setLoading(true);
+        if (isMounted) {
+          setLoading(true);
+        }
         const response = await FlowService.getFlowTemplates();
-        if (response.success) {
-          setFlows(response.data);
-        } else {
-          setError("Failed to load flow templates");
+        if (isMounted) {
+          if (response.success) {
+            setFlows(response.data);
+          } else {
+            setError("Failed to load flow templates");
+          }
         }
       } catch (err) {
-        setError("Error loading flow templates");
-        console.error("Error loading flows:", err);
+        if (isMounted) {
+          setError("Error loading flow templates");
+          console.error("Error loading flows:", err);
+        }
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadFlows();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const [searchTerm, setSearchTerm] = useState("");
@@ -87,7 +101,7 @@ const FlowLibraryPage: React.FC = () => {
   };
 
   const handleDuplicateFlow = (flow: FlowTemplate) => {
-    console.log("Duplicating flow:", flow.id);
+    
     // Navigate to create page with pre-filled data
     navigate("/flows/new", { state: { duplicateFrom: flow } });
   };
@@ -104,7 +118,7 @@ const FlowLibraryPage: React.FC = () => {
 
   const confirmDeleteFlow = () => {
     if (selectedFlow) {
-      console.log("Deleting flow:", selectedFlow.id);
+
       // Here you would call the API to delete the flow
     }
     setDeleteDialogOpen(false);

@@ -81,9 +81,7 @@ const ProjectsPage: React.FC = () => {
       }
       try {
         const apiCircles = await telecomCircleApi.list();
-        console.log("API Circles response:", apiCircles);
         const normalized = Array.isArray(apiCircles) ? apiCircles.map((c: any) => ({ value: c.circle_code, label: c.circle_name })) : [];
-        console.log("Normalized circles:", normalized);
         setCircles(normalized);
         circlesRef.current = normalized;
       } catch (e) {

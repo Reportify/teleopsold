@@ -126,9 +126,7 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   const loadUserAnalysisData = async (userId?: number) => {
     try {
       setLoading(true);
-      console.log("Loading user analysis data, userId:", userId);
       const data = await rbacAPI.getUserAnalysis(userId);
-      console.log("User analysis data received:", data);
       setUserAnalysisData(data);
     } catch (error) {
       console.error("Error loading user analysis:", error);
@@ -146,9 +144,7 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   const loadPermissionAnalysisData = async (permissionId?: number) => {
     try {
       setLoading(true);
-      console.log("Loading permission analysis data, permissionId:", permissionId);
       const data = await rbacAPI.getPermissionAnalysis(permissionId);
-      console.log("Permission analysis data received:", data);
       setPermissionAnalysisData(data);
     } catch (error) {
       console.error("Error loading permission analysis:", error);
@@ -166,9 +162,7 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   const loadAnalyticsData = async () => {
     try {
       setLoading(true);
-      console.log("Loading analytics data");
       const data = await rbacAPI.getPermissionAnalytics();
-      console.log("Analytics data received:", data);
       setAnalyticsData(data);
     } catch (error) {
       console.error("Error loading analytics:", error);
@@ -184,25 +178,20 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    console.log("Tab changed to:", newValue);
     setSelectedTab(newValue);
     switch (newValue) {
       case 0:
         if (!overviewData) {
-          console.log("Loading overview data");
           loadOverviewData();
         }
         break;
       case 1:
-        console.log("User Analysis tab selected, loading data");
         loadUserAnalysisData();
         break;
       case 2:
-        console.log("Permission Analysis tab selected, loading data");
         loadPermissionAnalysisData();
         break;
       case 3:
-        console.log("Analytics tab selected, loading data");
         loadAnalyticsData();
         break;
     }
@@ -609,11 +598,6 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   const renderUserAnalysisTab = () => {
     if (!userAnalysisData && !overviewData) return <CircularProgress />;
 
-    // Debug logging
-    console.log("renderUserAnalysisTab - userAnalysisData:", userAnalysisData);
-    console.log("renderUserAnalysisTab - selectedUser:", selectedUser);
-    console.log("renderUserAnalysisTab - loading:", loading);
-
     // Get all users for the dropdown
     const allUsers = overviewData ? Object.values(overviewData.user_summaries || {}) : [];
 
@@ -630,10 +614,8 @@ const ComprehensivePermissionDashboard: React.FC = () => {
                     getOptionLabel={(option: any) => `${option.name} (${option.email})`}
                     value={selectedUser}
                     onChange={(event, newValue) => {
-                      console.log("User selected:", newValue);
                       setSelectedUser(newValue);
                       if (newValue) {
-                        console.log("Loading user analysis for user_id:", newValue.user_id);
                         loadUserAnalysisData(newValue.user_id);
                       }
                     }}
@@ -879,12 +861,6 @@ const ComprehensivePermissionDashboard: React.FC = () => {
   const renderPermissionAnalysisTab = () => {
     if (!permissionAnalysisData && !overviewData) return <CircularProgress />;
 
-    // Debug logging for permission analysis
-    console.log("renderPermissionAnalysisTab - permissionAnalysisData:", permissionAnalysisData);
-    console.log("renderPermissionAnalysisTab - results:", permissionAnalysisData?.results);
-    console.log("renderPermissionAnalysisTab - users:", permissionAnalysisData?.results?.users);
-    console.log("renderPermissionAnalysisTab - users length:", permissionAnalysisData?.results?.users?.length);
-
     // Get all permissions from overview data for autocomplete
     const allPermissions = overviewData ? Object.values(overviewData.permission_summaries || {}) : [];
 
@@ -894,11 +870,7 @@ const ComprehensivePermissionDashboard: React.FC = () => {
       try {
         setLoading(true);
         const data = await rbacAPI.searchUsersByPermission(searchTerm, sourceTypeFilter as "designation" | "group" | "override" | undefined);
-        console.log("Search users by permission - API response:", data);
-        console.log("Users data:", data?.results?.users);
-        console.log("Users length:", data?.results?.users?.length);
         setPermissionAnalysisData(data);
-        console.log("After setting permissionAnalysisData, state should be:", data);
       } catch (error) {
         console.error("Error searching users by permission:", error);
         setSnackbar({
@@ -1061,12 +1033,6 @@ const ComprehensivePermissionDashboard: React.FC = () => {
                       </TableHead>
                       <TableBody>
                         {(() => {
-                          console.log("Permission analysis users check:", {
-                            permissionAnalysisData,
-                            usersArray: permissionAnalysisData.results?.users,
-                            usersLength: permissionAnalysisData.results?.users?.length,
-                            hasUsers: permissionAnalysisData.results?.users?.length > 0,
-                          });
                           return permissionAnalysisData.results?.users?.length > 0;
                         })() ? (
                           permissionAnalysisData.results.users.map((user: any, index: number) => (
