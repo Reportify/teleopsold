@@ -321,8 +321,12 @@ const ProjectSitesImportPage: React.FC = () => {
     `;
     document.head.appendChild(style);
     return () => {
-      if (document.head.contains(style)) {
-        document.head.removeChild(style);
+      try {
+        if (style.parentNode === document.head) {
+          document.head.removeChild(style);
+        }
+      } catch (error) {
+        // Silently handle the case where the element was already removed
       }
     };
   }, []);

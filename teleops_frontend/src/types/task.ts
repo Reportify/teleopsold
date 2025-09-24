@@ -48,6 +48,7 @@ export interface TaskFromFlow {
   updated_at: string;
   site_groups: TaskSiteGroup[];
   sub_activities: TaskSubActivity[];
+  is_vendor_allocated?: boolean; // Flag to indicate task came from vendor allocation
 }
 
 export interface TaskSiteGroup {

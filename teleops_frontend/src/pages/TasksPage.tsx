@@ -1,67 +1,48 @@
 // Task Management Page - Main task list and management interface
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import {
   Box,
   Typography,
   Button,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   TextField,
   MenuItem,
   Chip,
-  FormControlLabel,
-  Switch,
   Card,
   CardContent,
   Grid,
   IconButton,
-  Tooltip,
-  Stack,
   Tabs,
   Tab,
-  FormControl,
-  InputLabel,
-  Select,
   InputAdornment,
-  Collapse,
-  Divider,
 } from "@mui/material";
 import {
   Add,
   Edit,
   Delete,
   Visibility,
-  Assignment,
   CheckCircle,
   Schedule,
   Cancel,
   Task as TaskIcon,
   PlayArrow,
-  Pause,
-  Stop,
   AccountTree,
   Refresh,
   Search,
-  FilterList,
   Clear,
-  ExpandMore,
-  ExpandLess,
 } from "@mui/icons-material";
-import { useAuth } from "../contexts/AuthContext";
-import { DataTable, Column, RowAction, Pagination } from "../components";
-import { useDarkMode } from "../contexts/ThemeContext";
-import { FeatureGate, useFeaturePermissions } from "../hooks/useFeaturePermissions";
+import { DataTable, Pagination, TaskOriginBadge } from "../components";
+import type { Column, RowAction } from "../components";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { TaskFromFlow, TaskStatus, TaskSiteGroup } from "../types/task";
-import FlowLibraryPage from "./FlowLibraryPage";
 import { taskService } from "../services/taskService";
-import { usePagination, PaginationFilters } from "../hooks/usePagination";
+import { usePagination } from "../hooks/usePagination";
+import { getTaskOrigin, getTaskOriginFilterOptions } from "../utils/taskOriginUtils";
+import { AuthService } from "../services/authService";
+import vendorService from "../services/vendorService";
+import { useFeaturePermissions } from "../hooks/useFeaturePermissions";
+import FlowLibraryPage from "./FlowLibraryPage";
 
 const TasksPage: React.FC = () => {
-  const { getCurrentTenant, isCorporateUser, isCircleUser } = useAuth();
-  const { darkMode } = useDarkMode();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -71,61 +52,272 @@ const TasksPage: React.FC = () => {
     return tabParam ? parseInt(tabParam, 10) : 0;
   });
 
+  // Search state - declare before using in usePagination
+  const [searchTerm, setSearchTerm] = useState("");
+
   // Feature permissions
   const { hasPermission } = useFeaturePermissions();
   const canEditTasks = hasPermission("tasks.edit");
   const canDeleteTasks = hasPermission("tasks.delete");
 
-  // Pagination hook
-  const {
-    data: tasks,
-    pagination,
-    loading,
-    error,
-    refresh,
-    setPage,
-    setPageSize,
-    setFilters,
-    clearFilters,
-    hasNextPage,
-    hasPreviousPage,
-  } = usePagination(
-    useCallback((page: number, pageSize: number, filters: PaginationFilters) => {
-      return taskService.getTasksFromFlow(page, pageSize, filters);
-    }, []),
+  // Determine if user is vendor to use appropriate endpoint
+  const isVendorUser = AuthService.isVendorUser();
+  console.log("TasksPage Debug - isVendorUser:", isVendorUser);
+  console.log("TasksPage Debug - User type:", AuthService.getUserType());
+  console.log("TasksPage Debug - Tenant context:", AuthService.getTenantContext());
+
+  // Data adapter to normalize TaskAllocation to TaskFromFlow structure
+  const adaptTaskAllocationToTaskFromFlow = (allocation: any): TaskFromFlow => {
+    console.log("TasksPage Debug - Adapting allocation to TaskFromFlow:", allocation);
+    const adapted = {
+      id: allocation.id,
+      task_id: allocation.task_id,
+      client_task_id: undefined,
+      is_client_id_provided: false,
+      task_name: allocation.task_name,
+      description: allocation.allocation_notes || '',
+      flow_template: '',
+      flow_template_name: '',
+      project: allocation.task || 0, // Use task ID if available
+      project_name: allocation.project_name,
+      status: allocation.status,
+      priority: allocation.priority || 'medium',
+      scheduled_start: undefined,
+      scheduled_end: undefined,
+      created_by: allocation.allocated_by,
+      created_by_name: allocation.allocated_by_name,
+      assigned_to: undefined,
+      assigned_to_name: allocation.allocated_to_name,
+      supervisor: undefined,
+      supervisor_name: undefined,
+      created_at: allocation.created_at,
+      updated_at: allocation.updated_at,
+      site_groups: [], // Not available in allocation
+      // Add flag to indicate this task came from vendor allocation
+      is_vendor_allocated: true,
+      sub_activities: allocation.sub_activity_allocations?.map((subAlloc: any) => ({
+        id: subAlloc.id,
+        sequence_order: 0,
+        activity_type: subAlloc.sub_activity_type || subAlloc.activity_type,
+        activity_name: subAlloc.sub_activity_name || subAlloc.activity_name,
+        description: subAlloc.notes || '',
+        assigned_site: 0,
+        site_alias: '',
+        dependencies: [],
+        dependency_scope: '',
+        parallel_execution: false,
+        status: subAlloc.status,
+        actual_start: subAlloc.started_at,
+        actual_end: subAlloc.completed_at,
+        progress_percentage: subAlloc.progress_percentage || 0,
+        notes: subAlloc.notes || '',
+        created_at: subAlloc.created_at,
+        updated_at: subAlloc.updated_at,
+        site_name: subAlloc.site_name || '',
+        site_global_id: subAlloc.site_global_id || '',
+        site_business_id: subAlloc.site_business_id || '',
+      })) || [],
+    };
+    console.log("TasksPage Debug - Adapted task result:", adapted);
+    return adapted;
+  };
+
+  // Get vendor relationship ID for vendor users
+  const [vendorRelationshipId, setVendorRelationshipId] = useState<number | null>(null);
+  
+  useEffect(() => {
+    let isMounted = true;
+
+    console.log("TasksPage Debug - useEffect for vendor relationship ID, isVendorUser:", isVendorUser);
+    if (isVendorUser) {
+      console.log("TasksPage Debug - Fetching vendor relationship ID...");
+      vendorService.getCurrentVendorRelationshipId().then((id) => {
+        if (isMounted) {
+          console.log("TasksPage Debug - Vendor relationship ID received:", id);
+          setVendorRelationshipId(id);
+          
+          // Test direct API call to task allocations
+          if (id !== null) {
+            console.log("TasksPage Debug - Testing direct API call to task allocations...");
+            taskService.getTaskAllocations(1, 20, { vendor_id: id }).then((response) => {
+              console.log("TasksPage Debug - Direct API call response:", response);
+            }).catch((error) => {
+              console.error("TasksPage Debug - Direct API call error:", error);
+            });
+          }
+        }
+      }).catch((error) => {
+        if (isMounted) {
+          console.error("TasksPage Debug - Error fetching vendor relationship ID:", error);
+        }
+      });
+    } else {
+      console.log("TasksPage Debug - User is not a vendor, skipping vendor relationship ID fetch");
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isVendorUser]);
+
+  // For dual-role users (vendors who are also clients), we need to fetch both types of tasks
+  const fetchParams = useMemo(() => ({
+    page: parseInt(searchParams.get("page") || "1"),
+    pageSize: parseInt(searchParams.get("pageSize") || "20"),
+    vendor_id: vendorRelationshipId, // Use vendor relationship ID for vendor users
+    project: searchParams.get("project") ? parseInt(searchParams.get("project")!) : undefined,
+    flow_template: searchParams.get("flow_template") || undefined,
+    status: searchParams.get("status") || undefined,
+    search: searchTerm || undefined,
+    priority: searchParams.get("priority") || undefined,
+    created_after: searchParams.get("created_after") || undefined,
+    created_before: searchParams.get("created_before") || undefined,
+  }), [searchParams, vendorRelationshipId, searchTerm]);
+
+  // Fetch vendor-allocated tasks (tasks allocated TO this user as a vendor)
+  // Only fetch if user is a vendor and has a vendor relationship ID
+  const shouldFetchVendorTasks = isVendorUser && vendorRelationshipId !== null;
+
+  // Use refs to capture current values and avoid function recreation
+  const isVendorUserRef = useRef(isVendorUser);
+  const vendorRelationshipIdRef = useRef(vendorRelationshipId);
+  
+  // Update refs when values change
+  useEffect(() => {
+    isVendorUserRef.current = isVendorUser;
+  }, [isVendorUser]);
+  
+  useEffect(() => {
+    vendorRelationshipIdRef.current = vendorRelationshipId;
+  }, [vendorRelationshipId]);
+
+  // Create a stable function that handles conditional logic internally
+  const vendorTasksFetchFunction = useCallback(async (page: number, pageSize: number, filters: any) => {
+    const currentIsVendorUser = isVendorUserRef.current;
+    const currentVendorRelationshipId = vendorRelationshipIdRef.current;
+    
+    console.log("TasksPage Debug - vendorTasksFetchFunction called with:", { page, pageSize, filters });
+    console.log("TasksPage Debug - currentIsVendorUser:", currentIsVendorUser);
+    console.log("TasksPage Debug - currentVendorRelationshipId:", currentVendorRelationshipId);
+    
+    if (!currentIsVendorUser || currentVendorRelationshipId === null) {
+      console.log("TasksPage Debug - Returning empty result - not vendor user or no relationship ID");
+      return { results: [], count: 0, next: null, previous: null, current_page: 1, page_size: 20, total_pages: 0 };
+    }
+    
+    console.log("TasksPage Debug - Calling taskService.getTaskAllocations...");
+    
+    // Prepare filters with vendor_id (not vendor_relationship)
+    const vendorFilters = {
+      ...filters,
+      vendor_id: currentVendorRelationshipId, // Use vendor_id as expected by the service
+      allocation_type: 'vendor' // Ensure we only get vendor allocations
+    };
+    
+    console.log("TasksPage Debug - API params:", {
+      page,
+      pageSize,
+      filters: vendorFilters,
+    });
+
+    try {
+      const response = await taskService.getTaskAllocations(page, pageSize, vendorFilters);
+      console.log("TasksPage Debug - API response:", response);
+      console.log("TasksPage Debug - Raw results count:", response.results?.length || 0);
+      
+      // Adapt the results to TaskFromFlow format
+      const adaptedResults = response.results.map(adaptTaskAllocationToTaskFromFlow);
+      console.log("TasksPage Debug - Adapted results count:", adaptedResults.length);
+      
+      return {
+        ...response,
+        results: adaptedResults
+      };
+    } catch (error) {
+      console.error("TasksPage Debug - Error in vendorTasksFetchFunction:", error);
+      throw error;
+    }
+  }, []); // Empty dependency array for stable function
+
+  const { data: vendorTasks, loading: vendorLoading, error: vendorError, pagination: vendorPagination, refresh: refreshVendor, setFilters: setVendorFilters } = usePagination(
+    vendorTasksFetchFunction,
+    fetchParams, // Remove vendor_id from initial filters since it's handled in the fetch function
     {
-      status: "all",
-      priority: "all",
-    },
-    {
-      pageSize: 20,
-      cacheKey: "tasks-from-flow",
-      enableCache: true,
-      cacheExpiry: 5 * 60 * 1000, // 5 minutes
+      cacheKey: "vendor-allocated-tasks",
     }
   );
 
-  // Debounced search
-  const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState("");
-
-  // Debounce search term
+  // Refresh vendor tasks when vendorRelationshipId changes
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedSearchTerm(searchTerm);
-    }, 500);
+    if (vendorRelationshipId !== null) {
+      // Just trigger a refresh since vendorTasksFetchFunction handles vendor_id internally
+      refreshVendor();
+    }
+  }, [vendorRelationshipId, refreshVendor]);
 
-    return () => clearTimeout(timer);
-  }, [searchTerm]);
 
-  // Update filters when search term changes
-  useEffect(() => {
-    setFilters({
-      search: debouncedSearchTerm || undefined,
-      status: searchParams.get("status") || "all",
-      priority: searchParams.get("priority") || "all",
+  // Fetch self-created tasks (tasks created BY this user as a client)
+  const { data: clientTasks, loading: clientLoading, error: clientError, pagination: clientPagination, refresh: refreshClient, setPage, setPageSize } = usePagination(
+    taskService.getTasksFromFlow,
+    fetchParams,
+    {
+      cacheKey: "self-created-tasks",
+    }
+  );
+
+  // Merge and process tasks for dual-role users
+  const tasks = useMemo(() => {
+    const allTasks = [];
+    
+    // Add vendor-allocated tasks (if user is a vendor and has vendor relationship)
+    if (isVendorUser && vendorTasks && vendorRelationshipId) {
+      const adaptedVendorTasks = vendorTasks.map(adaptTaskAllocationToTaskFromFlow);
+      allTasks.push(...adaptedVendorTasks);
+    }
+    
+    // Add self-created tasks (always include these)
+    if (clientTasks) {
+      allTasks.push(...clientTasks);
+    }
+    
+    // Remove duplicates based on task ID (in case a task appears in both lists)
+    const uniqueTasks = allTasks.filter((task, index, self) => 
+      index === self.findIndex(t => t.id === task.id)
+    );
+    
+    return uniqueTasks;
+  }, [isVendorUser, vendorTasks, clientTasks, vendorRelationshipId]);
+
+  // Combine loading and error states
+  const loading = vendorLoading || clientLoading;
+  const error = vendorError || clientError;
+  
+  // Combined refresh function
+  const refresh = () => {
+    refreshVendor();
+    refreshClient();
+  };
+
+  // Use client pagination as primary (since it's always present)
+  const pagination = clientPagination;
+
+
+
+  // Client-side filtering for origin
+  const filteredTasks = useMemo(() => {
+    if (!Array.isArray(tasks)) return [];
+    
+    const originFilter = searchParams.get("origin") || "all";
+    
+    if (originFilter === "all") {
+      return tasks;
+    }
+    
+    return tasks.filter(task => {
+      const origin = getTaskOrigin(task);
+      return origin.type === originFilter;
     });
-  }, [debouncedSearchTerm, searchParams, setFilters]);
+  }, [tasks, searchParams]);
 
   // Status badge component
   const StatusBadge: React.FC<{ status: TaskStatus }> = ({ status }) => {
@@ -162,23 +354,7 @@ const TasksPage: React.FC = () => {
     return <Chip icon={getStatusIcon(status)} label={status.replace("_", " ")} color={getStatusColor(status)} size="small" variant="outlined" />;
   };
 
-  // Priority badge component
-  const PriorityBadge: React.FC<{ priority: string }> = ({ priority }) => {
-    const getPriorityColor = (priority: string) => {
-      switch (priority.toLowerCase()) {
-        case "high":
-          return "error";
-        case "medium":
-          return "warning";
-        case "low":
-          return "default";
-        default:
-          return "default";
-      }
-    };
 
-    return <Chip label={priority} size="small" variant="filled" color={getPriorityColor(priority)} />;
-  };
 
   // Table columns for TaskFromFlow
   const columns: Column[] = [
@@ -218,6 +394,15 @@ const TasksPage: React.FC = () => {
       label: "Priority",
       sortable: true,
       format: (value, task) => <Chip label={task.priority} size="small" variant="outlined" color={task.priority === "high" ? "error" : task.priority === "medium" ? "warning" : "default"} />,
+    },
+    {
+      id: "origin",
+      label: "Origin",
+      sortable: false,
+      format: (value, task) => {
+        const origin = getTaskOrigin(task);
+        return <TaskOriginBadge origin={origin} size="small" variant="outlined" />;
+      },
     },
     {
       id: "site_groups",
@@ -329,12 +514,15 @@ const TasksPage: React.FC = () => {
                   Filters & Search
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {pagination.totalItems} task{pagination.totalItems !== 1 ? "s" : ""} found
+                  {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""} found
+                  {filteredTasks.length !== pagination.totalItems && (
+                    <span> (filtered from {pagination.totalItems} total)</span>
+                  )}
                 </Typography>
               </Box>
 
               <Grid container spacing={2} alignItems="center">
-                <Grid size={{ xs: 12, md: 6 }}>
+                <Grid size={{ xs: 12, md: 4 }}>
                   <TextField
                     fullWidth
                     label="Search tasks..."
@@ -359,7 +547,7 @@ const TasksPage: React.FC = () => {
                     placeholder="Search by task name, ID, or project..."
                   />
                 </Grid>
-                <Grid size={{ xs: 12, md: 3 }}>
+                <Grid size={{ xs: 12, md: 2 }}>
                   <TextField
                     fullWidth
                     select
@@ -383,7 +571,7 @@ const TasksPage: React.FC = () => {
                     <MenuItem value="CANCELLED">Cancelled</MenuItem>
                   </TextField>
                 </Grid>
-                <Grid size={{ xs: 12, md: 3 }}>
+                <Grid size={{ xs: 12, md: 2 }}>
                   <TextField
                     fullWidth
                     select
@@ -407,10 +595,34 @@ const TasksPage: React.FC = () => {
                     <MenuItem value="Critical">Critical</MenuItem>
                   </TextField>
                 </Grid>
+                <Grid size={{ xs: 12, md: 2 }}>
+                  <TextField
+                    fullWidth
+                    select
+                    label="Origin"
+                    size="small"
+                    value={searchParams.get("origin") || "all"}
+                    onChange={(e) => {
+                      const newParams = new URLSearchParams(searchParams);
+                      if (e.target.value === "all") {
+                        newParams.delete("origin");
+                      } else {
+                        newParams.set("origin", e.target.value);
+                      }
+                      navigate(`?${newParams.toString()}`);
+                    }}
+                  >
+                    {getTaskOriginFilterOptions().map((option) => (
+                      <MenuItem key={option.value} value={option.value}>
+                        {option.label}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                </Grid>
               </Grid>
 
               {/* Clear filters button */}
-              {(searchParams.get("status") || searchParams.get("priority") || searchTerm) && (
+              {(searchParams.get("status") || searchParams.get("priority") || searchParams.get("origin") || searchTerm) && (
                 <Box sx={{ mt: 2, display: "flex", justifyContent: "flex-end" }}>
                   <Button
                     variant="outlined"
@@ -441,20 +653,22 @@ const TasksPage: React.FC = () => {
 
           {/* Tasks Table */}
           <Card>
-            <DataTable rows={Array.isArray(tasks) ? tasks : []} columns={columns} loading={loading} error={null} actions={rowActions} emptyMessage="No tasks found" />
+            <DataTable rows={Array.isArray(filteredTasks) ? filteredTasks : []} columns={columns} loading={loading} error={null} actions={rowActions} emptyMessage="No tasks found" />
           </Card>
 
           {/* Pagination */}
-          <Pagination
-            pagination={pagination}
-            onPageChange={setPage}
-            onPageSizeChange={setPageSize}
-            onRefresh={refresh}
-            pageSizeOptions={[10, 20, 50, 100]}
-            showPageSizeSelector={true}
-            showRefreshButton={true}
-            disabled={loading}
-          />
+          <Box sx={{ mt: 3, display: "flex", justifyContent: "center" }}>
+            <Pagination
+              pagination={pagination}
+              onPageChange={setPage}
+              onPageSizeChange={setPageSize}
+              onRefresh={refresh}
+              pageSizeOptions={[10, 20, 50, 100]}
+              showPageSizeSelector={true}
+              showRefreshButton={true}
+              disabled={loading}
+            />
+          </Box>
         </>
       )}
 

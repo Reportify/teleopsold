@@ -165,9 +165,16 @@ class ClientVendorRelationshipViewSet(viewsets.ModelViewSet):
             circle_ids = tenant.child_tenants.filter(tenant_type='Circle').values_list('id', flat=True)
             return ClientVendorRelationship.objects.filter(client_tenant_id__in=circle_ids)
         
-        # Both Circle and Vendor: see relationships where they are the CLIENT
-        elif tenant.tenant_type in ['Circle', 'Vendor']:
+        # Circle: see relationships where they are the CLIENT (hiring vendors)
+        elif tenant.tenant_type == 'Circle':
             return ClientVendorRelationship.objects.filter(client_tenant=tenant)
+        
+        # Vendor: see relationships where they are the VENDOR (being hired by clients)
+        elif tenant.tenant_type == 'Vendor':
+            return ClientVendorRelationship.objects.filter(
+                vendor_tenant=tenant,
+                is_active=True
+            ).select_related('client_tenant')
         
         # Superuser fallback
         elif user.is_superuser:
@@ -1551,4 +1558,4 @@ class VendorCreatedClientViewSet(viewsets.ModelViewSet):
             return Response(
                 {"error": "Failed to create client"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            ) 
+            )

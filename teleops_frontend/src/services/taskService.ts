@@ -327,6 +327,129 @@ class TaskService {
       };
     }
   }
+
+  // Get task allocations (for vendor users)
+  async getTaskAllocations(
+    page: number = 1,
+    pageSize: number = 20,
+    filters?: {
+      task?: number;
+      allocation_type?: string;
+      status?: string;
+      vendor_id?: number;
+      project_id?: number;
+      search?: string;
+      priority?: string;
+      created_after?: string;
+      created_before?: string;
+    }
+  ): Promise<{
+    results: any[];
+    count: number;
+    next: string | null;
+    previous: string | null;
+    current_page: number;
+    page_size: number;
+    total_pages: number;
+  }> {
+    try {
+      console.log("TaskService Debug - getTaskAllocations called with:", { page, pageSize, filters });
+      const params: any = {
+        page,
+        page_size: pageSize,
+      };
+
+      if (filters?.task) {
+        params.task = filters.task;
+      }
+
+      if (filters?.allocation_type) {
+        params.allocation_type = filters.allocation_type;
+      }
+
+      if (filters?.status && filters.status !== "all") {
+        params.status = filters.status;
+      }
+
+      if (filters?.vendor_id) {
+        params.vendor_id = filters.vendor_id;
+      }
+
+      if (filters?.project_id) {
+        params.project_id = filters.project_id;
+      }
+
+      if (filters?.search) {
+        params.search = filters.search;
+      }
+
+      if (filters?.priority && filters.priority !== "all") {
+        params.priority = filters.priority;
+      }
+
+      if (filters?.created_after) {
+        params.created_after = filters.created_after;
+      }
+
+      if (filters?.created_before) {
+        params.created_before = filters.created_before;
+      }
+
+      console.log("TaskService Debug - Making API call to:", API_ENDPOINTS.TASKS.ALLOCATIONS.LIST);
+      console.log("TaskService Debug - API call params:", params);
+      
+      const response = await apiHelpers.get<any>(API_ENDPOINTS.TASKS.ALLOCATIONS.LIST, { params });
+      
+      console.log("TaskService Debug - API response received:", response);
+      console.log("TaskService Debug - Response type:", typeof response);
+      console.log("TaskService Debug - Response results:", response?.results);
+      console.log("TaskService Debug - Response count:", response?.count);
+
+      // Handle paginated response
+      if (response && typeof response === "object") {
+        const result = {
+          results: response.results || [],
+          count: response.count || 0,
+          next: response.next || null,
+          previous: response.previous || null,
+          current_page: response.current_page || page,
+          page_size: response.page_size || pageSize,
+          total_pages: response.total_pages || 0,
+        };
+        console.log("TaskService Debug - Returning paginated result:", result);
+        return result;
+      }
+
+      // Fallback for non-paginated response
+      console.warn("Unexpected response format:", response);
+      return {
+        results: Array.isArray(response) ? response : [],
+        count: Array.isArray(response) ? response.length : 0,
+        next: null,
+        previous: null,
+        current_page: page,
+        page_size: pageSize,
+        total_pages: 1,
+      };
+    } catch (error: any) {
+      console.error("TaskService Debug - Error fetching task allocations:", error);
+      console.error("TaskService Debug - Error details:", {
+        message: error?.message,
+        status: error?.response?.status,
+        statusText: error?.response?.statusText,
+        data: error?.response?.data
+      });
+      return {
+        results: [],
+        count: 0,
+        next: null,
+        previous: null,
+        current_page: page,
+        page_size: pageSize,
+        total_pages: 0,
+      };
+    }
+  }
 }
 
 // Export singleton instance

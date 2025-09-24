@@ -19,3 +19,4 @@ export { default as TaskAllocationCard } from "./TaskAllocationCard";
 export { default as VendorSelectionDialog } from "./VendorSelectionDialog";
 export { default as AllocationTypeDialog } from "./AllocationTypeDialog";
 export { default as InternalTeamAssignmentDialog } from "./InternalTeamAssignmentDialog";
+export { default as TaskOriginBadge } from "./TaskOriginBadge";

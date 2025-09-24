@@ -336,6 +336,84 @@ class VendorService {
       return [];
     }
   }
+
+  /**
+   * Get vendor relationship ID for the current vendor user
+   * This is needed for API calls that require vendor_relationship_id instead of vendor_id
+   */
+  async getCurrentVendorRelationshipId(): Promise<number | null> {
+    try {
+      console.log("VendorService Debug - Fetching vendor relationships...");
+      // Get vendor relationships where current vendor is the vendor_tenant
+      // The backend automatically filters by current tenant context
+      const response = await api.get("/client-vendor-relationships/");
+      
+      console.log("VendorService Debug - Full API response:", response);
+      console.log("VendorService Debug - API response data:", response.data);
+      console.log("VendorService Debug - Response status:", response.status);
+      console.log("VendorService Debug - Response headers:", response.headers);
+      
+      // Handle different response structures
+      let relationships;
+      if (response.data && typeof response.data === 'object') {
+        if (Array.isArray(response.data)) {
+          relationships = response.data;
+        } else if (response.data.results && Array.isArray(response.data.results)) {
+          relationships = response.data.results;
+        } else if (response.data.data && Array.isArray(response.data.data)) {
+          relationships = response.data.data;
+        } else {
+          console.error("VendorService Debug - Unexpected response structure:", response.data);
+          relationships = [];
+        }
+      } else {
+        console.error("VendorService Debug - Invalid response data type:", typeof response.data, response.data);
+        relationships = [];
+      }
+      
+      console.log("VendorService Debug - Extracted relationships array:", relationships);
+      console.log("VendorService Debug - Relationships length:", relationships?.length);
+      console.log("VendorService Debug - Relationships type:", Array.isArray(relationships) ? 'array' : typeof relationships);
+      
+      if (!Array.isArray(relationships) || relationships.length === 0) {
+        console.error("VendorService Debug - No valid relationships found:", relationships);
+        return null;
+      }
+      
+      // Log each relationship for debugging
+      relationships.forEach((rel: any, index: number) => {
+        console.log(`VendorService Debug - Relationship ${index}:`, {
+          id: rel.id,
+          is_active: rel.is_active,
+          relationship_status: rel.relationship_status,
+          vendor_tenant: rel.vendor_tenant,
+          client_tenant: rel.client_tenant
+        });
+      });
+      
+      // Return the first active relationship ID
+      // In most cases, a vendor will have one primary relationship with the client
+      const activeRelationship = relationships.find((rel: any) => {
+        // Handle missing is_active field - default to true if not present
+        const isActive = rel.is_active === undefined || rel.is_active === null || rel.is_active === true || rel.is_active === "true";
+        // Handle missing relationship_status field - default to active if not present
+        const isActiveStatus = rel.relationship_status === undefined || rel.relationship_status === null || 
+                              rel.relationship_status === "Active" || rel.relationship_status === "active";
+        console.log(`VendorService Debug - Checking relationship ${rel.id}: is_active=${rel.is_active} (${isActive}), status=${rel.relationship_status} (${isActiveStatus})`);
+        return isActive && isActiveStatus;
+      });
+      
+      console.log("VendorService Debug - Active relationship found:", activeRelationship);
+      
+      const relationshipId = activeRelationship ? parseInt(activeRelationship.id) : null;
+      console.log("VendorService Debug - Returning relationship ID:", relationshipId);
+      
+      return relationshipId;
+    } catch (error) {
+      console.error("Error fetching vendor relationship ID:", error);
+      return null;
+    }
+  }
 }
 
 // Export singleton instance

@@ -1698,7 +1698,19 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         if not tenant:
             return TaskAllocation.objects.none()
         
-        queryset = TaskAllocation.objects.filter(task__tenant=tenant)
+        # For vendor tenants, show tasks allocated TO them from any client tenant
+        # For client tenants, show tasks that belong to their tenant
+        if tenant.tenant_type == 'Vendor':
+            # Vendors see tasks allocated to them via vendor relationships
+            from apps.tenants.models import ClientVendorRelationship
+            vendor_relationships = ClientVendorRelationship.objects.filter(
+                vendor_tenant=tenant,
+                relationship_status='Active'
+            ).values_list('id', flat=True)
+            queryset = TaskAllocation.objects.filter(vendor_relationship_id__in=vendor_relationships)
+        else:
+            # Client tenants see tasks that belong to their tenant
+            queryset = TaskAllocation.objects.filter(task__tenant=tenant)
         
         # Filter by task if specified
         task_id = self.request.query_params.get('task_id')
@@ -1718,7 +1730,23 @@ class TaskAllocationViewSet(viewsets.ModelViewSet):
         # Filter by vendor if specified
         vendor_id = self.request.query_params.get('vendor_id')
         if vendor_id:
-            queryset = queryset.filter(vendor_relationship_id=vendor_id)
+            # Check if vendor_id is a UUID (vendor tenant) or integer (relationship ID)
+            try:
+                # Try to convert to integer first (relationship ID)
+                relationship_id = int(vendor_id)
+                queryset = queryset.filter(vendor_relationship_id=relationship_id)
+            except ValueError:
+                # If it's not an integer, treat it as vendor tenant UUID
+                from apps.tenants.models import ClientVendorRelationship
+                try:
+                    relationship = ClientVendorRelationship.objects.get(
+                        vendor_tenant_id=vendor_id,
+                        relationship_status='Active'
+                    )
+                    queryset = queryset.filter(vendor_relationship_id=relationship.id)
+                except ClientVendorRelationship.DoesNotExist:
+                    # If no relationship found, return empty queryset
+                    queryset = queryset.none()
         
         # Filter by project if specified
         project_id = self.request.query_params.get('project_id')

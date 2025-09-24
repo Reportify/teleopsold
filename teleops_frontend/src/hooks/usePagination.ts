@@ -88,9 +88,15 @@ export function usePagination<T>(
     hasPreviousPage: false,
   });
 
-  // Cache
+  // Refs
   const cache = useRef<Map<string, CacheEntry<T>>>(new Map());
   const abortController = useRef<AbortController | null>(null);
+  const fetchFunctionRef = useRef(fetchFunction);
+
+  // Update fetch function ref when it changes
+  useEffect(() => {
+    fetchFunctionRef.current = fetchFunction;
+  }, [fetchFunction]);
 
   // Generate cache key
   const generateCacheKey = useCallback(
@@ -170,7 +176,7 @@ export function usePagination<T>(
       setError(null);
 
       try {
-        const response = await fetchFunction(page, size, currentFilters);
+        const response = await fetchFunctionRef.current(page, size, currentFilters);
 
         // Check if request was cancelled
         if (abortController.current?.signal.aborted) {
@@ -205,7 +211,7 @@ export function usePagination<T>(
         }
       }
     },
-    [fetchFunction, getFromCache, setCache]
+    [getFromCache, setCache]
   );
 
   // Set page

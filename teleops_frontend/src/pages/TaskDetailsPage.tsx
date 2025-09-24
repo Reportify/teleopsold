@@ -115,6 +115,11 @@ const TaskDetailsPage: React.FC = () => {
   const [vendorsLoading, setVendorsLoading] = useState(false);
   const [vendorsError, setVendorsError] = useState<string | null>(null);
 
+  // Teams data
+  const [teams, setTeams] = useState<any[]>([]);
+  const [teamsLoading, setTeamsLoading] = useState(false);
+  const [teamsError, setTeamsError] = useState<string | null>(null);
+
   // Allocation details state
   const [allocations, setAllocations] = useState<TaskAllocation[]>([]);
   const [allocationsLoading, setAllocationsLoading] = useState(false);
@@ -140,12 +145,10 @@ const TaskDetailsPage: React.FC = () => {
   // Fetch vendors on component mount
   useEffect(() => {
     if (task?.project) {
-      console.log("Fetching vendors for project:", task.project);
       const fetchProjectVendors = async () => {
         setVendorsLoading(true);
         try {
           const projectVendors = await vendorService.getProjectVendors(task.project);
-          console.log("Project vendors fetched:", projectVendors);
           setVendors(projectVendors);
         } catch (error) {
           console.error("Error fetching project vendors:", error);
@@ -156,10 +159,69 @@ const TaskDetailsPage: React.FC = () => {
       };
 
       fetchProjectVendors();
-    } else {
-      console.log("No project ID found in task:", task);
     }
-  }, [task?.project]);
+  }, [task]);
+
+  // Fetch teams on component mount
+  useEffect(() => {
+    const fetchTeams = async () => {
+      setTeamsLoading(true);
+      try {
+        const teamsData = await taskService.getTeams();
+        setTeams(teamsData as any[]);
+      } catch (error) {
+        console.error("Error fetching teams:", error);
+        setTeamsError("Failed to fetch teams");
+      } finally {
+        setTeamsLoading(false);
+      }
+    };
+
+    fetchTeams();
+  }, []);
+
+  // Helper functions to get names by ID
+  const getVendorName = (vendorId: number) => {
+    const vendor = vendors.find(v => v.id === vendorId);
+    return vendor ? vendor.name : `Vendor ID: ${vendorId}`;
+  };
+
+  const getTeamName = (teamId: number) => {
+    const team = teams.find(t => t.id === teamId);
+    return team ? team.name : `Team ID: ${teamId}`;
+  };
+
+  // Helper function to determine task origin
+  const getTaskOrigin = () => {
+    if (!task) return null;
+    
+    // Check if task has allocations from external clients
+    const hasClientAllocation = allocations?.some(allocation => 
+      allocation.allocation_type === 'vendor' && 
+      allocation.vendor_relationship
+    );
+    
+    // Check if task has client-provided ID
+    const hasClientTaskId = task.is_client_id_provided && task.client_task_id;
+    
+    if (hasClientAllocation || hasClientTaskId) {
+      return {
+        type: 'client_allocated',
+        label: 'Client Allocated',
+        color: 'info' as const,
+        iconType: 'Business',
+        description: hasClientTaskId ? `Client Task ID: ${task.client_task_id}` : 'Allocated from client'
+      };
+    }
+    
+    return {
+      type: 'self_created',
+      label: 'Self Created',
+      color: 'success' as const,
+      iconType: 'AccountTree',
+      description: 'Created internally'
+    };
+  };
 
   const loadAllocationData = async () => {
     if (!taskId) return;
@@ -388,7 +450,6 @@ const TaskDetailsPage: React.FC = () => {
   };
 
   const handleAllocationComplete = (task: Task, vendor: Vendor | null, allocation?: any) => {
-    console.log("Task allocation completed:", { task, vendor, allocation });
 
     // Update the task status to show it's been allocated
     setTask((prevTask) => {
@@ -423,7 +484,6 @@ const TaskDetailsPage: React.FC = () => {
     setSelectedSubActivity(null);
 
     // Show success message (you can implement a snackbar here)
-    console.log(`Task assigned to internal team member ${memberId} with start date ${estimatedStartDate} and notes: ${notes}`);
   };
 
   const getStatusColor = (status: string) => {
@@ -605,6 +665,8 @@ const TaskDetailsPage: React.FC = () => {
     );
   }
 
+  const taskOrigin = getTaskOrigin();
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Header with Breadcrumbs */}
@@ -630,6 +692,25 @@ const TaskDetailsPage: React.FC = () => {
               <Chip label={task.status} color={getStatusColor(task.status) as any} size="small" icon={<CheckCircle />} />
               <Chip label={task.priority} color={getPriorityColor(task.priority) as any} size="small" variant="outlined" />
               <Chip label={task.task_id} size="small" variant="outlined" sx={{ fontFamily: "monospace" }} />
+              
+              {/* Task Origin Badge */}
+              {taskOrigin && (
+                <Tooltip title={taskOrigin.description} arrow>
+                  <Chip 
+                    label={taskOrigin.label}
+                    color={taskOrigin.color}
+                    size="small"
+                    icon={taskOrigin.iconType === 'Business' ? <Business /> : <AccountTree />}
+                    variant="outlined"
+                    sx={{ 
+                      fontWeight: 'medium',
+                      '& .MuiChip-icon': {
+                        fontSize: '16px'
+                      }
+                    }}
+                  />
+                </Tooltip>
+              )}
             </Stack>
           </Box>
 
@@ -990,23 +1071,54 @@ const TaskDetailsPage: React.FC = () => {
                                 {subActivity.status === "completed" ? "View Details" : "Update Progress"}
                               </Button>
 
-                              {/* Button 2 */}
-                              <Button
-                                variant="outlined"
-                                size="medium"
-                                startIcon={<Assignment />}
-                                onClick={() => handleAllocateSubTask(subActivity)}
-                                disabled={vendorsLoading}
-                                sx={{
-                                  minWidth: 140,
-                                  borderRadius: 2,
-                                  textTransform: "none",
-                                  fontWeight: "medium",
-                                  px: 3,
-                                }}
-                              >
-                                {vendorsLoading ? "Loading..." : "Allocate"}
-                              </Button>
+                              {/* Button 2 - Allocation Status */}
+                              {(subActivity as any).allocated_vendor || (subActivity as any).assigned_team ? (
+                                <Box
+                                  sx={{
+                                    minWidth: 140,
+                                    p: 1.5,
+                                    borderRadius: 2,
+                                    border: "1px solid",
+                                    borderColor: "success.main",
+                                    backgroundColor: "success.light",
+                                    display: "flex",
+                                    flexDirection: "column",
+                                    alignItems: "center",
+                                    gap: 0.5,
+                                  }}
+                                >
+                                  <Typography variant="caption" color="success.dark" fontWeight="medium">
+                                    {(subActivity as any).allocated_vendor ? "Vendor" : "Internal Team"}
+                                  </Typography>
+                                  <Typography variant="body2" fontWeight="bold" color="text.primary" textAlign="center">
+                                    {(subActivity as any).allocated_vendor ? (subActivity as any).allocated_vendor.name : (subActivity as any).assigned_team?.name}
+                                  </Typography>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => handleAllocateSubTask(subActivity)}
+                                    sx={{ mt: 0.5, color: "primary.main" }}
+                                  >
+                                    <Edit fontSize="small" />
+                                  </IconButton>
+                                </Box>
+                              ) : (
+                                <Button
+                                  variant="outlined"
+                                  size="medium"
+                                  startIcon={<Assignment />}
+                                  onClick={() => handleAllocateSubTask(subActivity)}
+                                  disabled={vendorsLoading}
+                                  sx={{
+                                    minWidth: 140,
+                                    borderRadius: 2,
+                                    textTransform: "none",
+                                    fontWeight: "medium",
+                                    px: 3,
+                                  }}
+                                >
+                                  {vendorsLoading ? "Loading..." : "Allocate"}
+                                </Button>
+                              )}
                               {/* Dependencies Section - Minimalist Design */}
                               {subActivity.dependencies.length > 0 && (
                                 <Box sx={{ mt: 2, px: 3 }}>
