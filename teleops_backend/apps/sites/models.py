@@ -84,6 +84,11 @@ class Site(models.Model):
                 condition=models.Q(deleted_at__isnull=True),
                 name='unique_global_id_per_tenant'
             ),
+            models.UniqueConstraint(
+                fields=['tenant', 'site_code'], 
+                condition=models.Q(deleted_at__isnull=True) & ~models.Q(site_code__isnull=True) & ~models.Q(site_code=''),
+                name='unique_site_code_per_tenant'
+            ),
         ]
         
         indexes = [
@@ -173,4 +178,4 @@ class BulkUploadJob(models.Model):
         if not self.started_at:
             return None
         end_time = self.completed_at or timezone.now()
-        return end_time - self.started_at 
+        return end_time - self.started_at
