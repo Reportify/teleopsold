@@ -62,13 +62,35 @@ const TasksPage: React.FC = () => {
 
   // Determine if user is vendor to use appropriate endpoint
   const isVendorUser = AuthService.isVendorUser();
-  console.log("TasksPage Debug - isVendorUser:", isVendorUser);
-  console.log("TasksPage Debug - User type:", AuthService.getUserType());
-  console.log("TasksPage Debug - Tenant context:", AuthService.getTenantContext());
 
   // Data adapter to normalize TaskAllocation to TaskFromFlow structure
   const adaptTaskAllocationToTaskFromFlow = (allocation: any): TaskFromFlow => {
-    console.log("TasksPage Debug - Adapting allocation to TaskFromFlow:", allocation);
+    
+    // Extract unique sites from sub_activity_allocations
+    const siteGroups = [];
+    if (allocation.sub_activity_allocations) {
+      const uniqueSites = new Map();
+      
+      allocation.sub_activity_allocations.forEach((subAlloc: any) => {
+        const siteKey = subAlloc.site_global_id || subAlloc.site_business_id || subAlloc.site_name;
+        if (siteKey && !uniqueSites.has(siteKey)) {
+          uniqueSites.set(siteKey, {
+            id: uniqueSites.size + 1, // Generate a unique ID
+            site_alias: subAlloc.site_name || subAlloc.site_global_id || subAlloc.site_business_id || 'Unknown Site',
+            site_name: subAlloc.site_name || '',
+            site_global_id: subAlloc.site_global_id || '',
+            site_business_id: subAlloc.site_business_id || '',
+            assignment_order: uniqueSites.size + 1,
+            site: null // This would normally contain full site details
+          });
+        }
+      });
+      
+      siteGroups.push(...Array.from(uniqueSites.values()));
+    }
+    
+    console.log("adaptTaskAllocationToTaskFromFlow - created site_groups:", siteGroups);
+    
     const adapted = {
       id: allocation.id,
       task_id: allocation.task_id,
@@ -92,7 +114,7 @@ const TasksPage: React.FC = () => {
       supervisor_name: undefined,
       created_at: allocation.created_at,
       updated_at: allocation.updated_at,
-      site_groups: [], // Not available in allocation
+      site_groups: siteGroups,
       // Add flag to indicate this task came from vendor allocation
       is_vendor_allocated: true,
       sub_activities: allocation.sub_activity_allocations?.map((subAlloc: any) => ({
@@ -118,7 +140,6 @@ const TasksPage: React.FC = () => {
         site_business_id: subAlloc.site_business_id || '',
       })) || [],
     };
-    console.log("TasksPage Debug - Adapted task result:", adapted);
     return adapted;
   };
 
@@ -128,31 +149,16 @@ const TasksPage: React.FC = () => {
   useEffect(() => {
     let isMounted = true;
 
-    console.log("TasksPage Debug - useEffect for vendor relationship ID, isVendorUser:", isVendorUser);
     if (isVendorUser) {
-      console.log("TasksPage Debug - Fetching vendor relationship ID...");
       vendorService.getCurrentVendorRelationshipId().then((id) => {
         if (isMounted) {
-          console.log("TasksPage Debug - Vendor relationship ID received:", id);
           setVendorRelationshipId(id);
-          
-          // Test direct API call to task allocations
-          if (id !== null) {
-            console.log("TasksPage Debug - Testing direct API call to task allocations...");
-            taskService.getTaskAllocations(1, 20, { vendor_id: id }).then((response) => {
-              console.log("TasksPage Debug - Direct API call response:", response);
-            }).catch((error) => {
-              console.error("TasksPage Debug - Direct API call error:", error);
-            });
-          }
         }
       }).catch((error) => {
         if (isMounted) {
-          console.error("TasksPage Debug - Error fetching vendor relationship ID:", error);
+          console.error("Error fetching vendor relationship ID:", error);
         }
       });
-    } else {
-      console.log("TasksPage Debug - User is not a vendor, skipping vendor relationship ID fetch");
     }
 
     return () => {
@@ -196,16 +202,9 @@ const TasksPage: React.FC = () => {
     const currentIsVendorUser = isVendorUserRef.current;
     const currentVendorRelationshipId = vendorRelationshipIdRef.current;
     
-    console.log("TasksPage Debug - vendorTasksFetchFunction called with:", { page, pageSize, filters });
-    console.log("TasksPage Debug - currentIsVendorUser:", currentIsVendorUser);
-    console.log("TasksPage Debug - currentVendorRelationshipId:", currentVendorRelationshipId);
-    
     if (!currentIsVendorUser || currentVendorRelationshipId === null) {
-      console.log("TasksPage Debug - Returning empty result - not vendor user or no relationship ID");
       return { results: [], count: 0, next: null, previous: null, current_page: 1, page_size: 20, total_pages: 0 };
     }
-    
-    console.log("TasksPage Debug - Calling taskService.getTaskAllocations...");
     
     // Prepare filters with vendor_id (not vendor_relationship)
     const vendorFilters = {
@@ -213,28 +212,19 @@ const TasksPage: React.FC = () => {
       vendor_id: currentVendorRelationshipId, // Use vendor_id as expected by the service
       allocation_type: 'vendor' // Ensure we only get vendor allocations
     };
-    
-    console.log("TasksPage Debug - API params:", {
-      page,
-      pageSize,
-      filters: vendorFilters,
-    });
 
     try {
       const response = await taskService.getTaskAllocations(page, pageSize, vendorFilters);
-      console.log("TasksPage Debug - API response:", response);
-      console.log("TasksPage Debug - Raw results count:", response.results?.length || 0);
       
       // Adapt the results to TaskFromFlow format
       const adaptedResults = response.results.map(adaptTaskAllocationToTaskFromFlow);
-      console.log("TasksPage Debug - Adapted results count:", adaptedResults.length);
       
       return {
         ...response,
         results: adaptedResults
       };
     } catch (error) {
-      console.error("TasksPage Debug - Error in vendorTasksFetchFunction:", error);
+      console.error("Error in vendorTasksFetchFunction:", error);
       throw error;
     }
   }, []); // Empty dependency array for stable function
@@ -269,14 +259,20 @@ const TasksPage: React.FC = () => {
   const tasks = useMemo(() => {
     const allTasks = [];
     
+    console.log("Tasks merging - isVendorUser:", isVendorUser, "vendorRelationshipId:", vendorRelationshipId);
+    console.log("Tasks merging - vendorTasks:", vendorTasks);
+    console.log("Tasks merging - clientTasks:", clientTasks);
+    
     // Add vendor-allocated tasks (if user is a vendor and has vendor relationship)
+    // Note: vendorTasks are already adapted by vendorTasksFetchFunction
     if (isVendorUser && vendorTasks && vendorRelationshipId) {
-      const adaptedVendorTasks = vendorTasks.map(adaptTaskAllocationToTaskFromFlow);
-      allTasks.push(...adaptedVendorTasks);
+      console.log("Adding vendor tasks:", vendorTasks.length);
+      allTasks.push(...vendorTasks);
     }
     
     // Add self-created tasks (always include these)
     if (clientTasks) {
+      console.log("Adding client tasks:", clientTasks.length);
       allTasks.push(...clientTasks);
     }
     
@@ -408,17 +404,23 @@ const TasksPage: React.FC = () => {
       id: "site_groups",
       label: "Sites",
       sortable: true,
-      format: (value, task) => (
-        <Box>
-          {task.site_groups.map((siteGroup: TaskSiteGroup, index: number) => (
-            <Box key={siteGroup.id} sx={{ mb: index < task.site_groups.length - 1 ? 1 : 0 }}>
-              <Typography variant="body2" component="span">
-                <strong>{siteGroup.site_alias}:</strong> {siteGroup.site_global_id || siteGroup.site_name}
-              </Typography>
-            </Box>
-          ))}
-        </Box>
-      ),
+      format: (value, task) => {
+        console.log("Sites column - task:", task.task_name, "site_groups:", task.site_groups);
+        return (
+          <Box>
+            {task.site_groups.map((siteGroup: TaskSiteGroup, index: number) => {
+              console.log("Sites column - siteGroup:", siteGroup);
+              return (
+                <Box key={siteGroup.id} sx={{ mb: index < task.site_groups.length - 1 ? 1 : 0 }}>
+                  <Typography variant="body2" component="span">
+                    <strong>{siteGroup.site_alias}:</strong> {siteGroup.site_name || siteGroup.site_global_id}
+                  </Typography>
+                </Box>
+              );
+            })}
+          </Box>
+        );
+      },
     },
     {
       id: "created_at",

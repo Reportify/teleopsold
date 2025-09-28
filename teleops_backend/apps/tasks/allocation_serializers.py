@@ -58,6 +58,9 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     # Sub-activity allocations
     sub_activity_allocations = SubActivityAllocationSerializer(many=True, read_only=True)
     
+    # Site groups information
+    site_groups = serializers.SerializerMethodField()
+    
     # Computed fields
     allocated_to_name = serializers.CharField(read_only=True)
     allocated_sub_activities_count = serializers.IntegerField(read_only=True)
@@ -78,11 +81,30 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'allocated_at', 'accepted_at', 'started_at', 'completed_at', 'cancelled_at',
             'created_at', 'updated_at', 'metadata',
             'allocated_to_name', 'allocated_sub_activities_count', 'completed_sub_activities_count',
-            'can_be_started', 'can_be_completed', 'sub_activity_allocations'
+            'can_be_started', 'can_be_completed', 'sub_activity_allocations', 'site_groups'
         ]
         read_only_fields = [
             'id', 'allocated_at', 'accepted_at', 'started_at', 'completed_at', 
             'cancelled_at', 'created_at', 'updated_at'
+        ]
+    
+    def get_site_groups(self, obj):
+        """Get site groups information from the related task"""
+        if not obj.task or not hasattr(obj.task, 'site_groups'):
+            return []
+        
+        site_groups = obj.task.site_groups.select_related('site').all()
+        return [
+            {
+                'id': str(site_group.id),
+                'site': str(site_group.site.id),
+                'site_alias': site_group.site_alias,
+                'assignment_order': site_group.assignment_order,
+                'site_name': site_group.site.site_name,
+                'site_global_id': site_group.site.site_global_id,
+                'site_business_id': site_group.site.site_business_id,
+            }
+            for site_group in site_groups
         ]
 
 

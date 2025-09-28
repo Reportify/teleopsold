@@ -1005,25 +1005,13 @@ class CreateTaskFromFlowView(APIView):
                     created_tasks.append(task)
                     total_sites += len(site_group['sites'])
                 
-                # Create flow instance for tracking (using the first task's ID)
-                if created_tasks:
-                    flow_instance = FlowInstance.objects.create(
-                        flow_template=flow_template,
-                            task_id=created_tasks[0].id,
-                        status='PENDING'
-                    )
-                else:
-                    # This shouldn't happen, but handle it gracefully
-                    flow_instance = None
+                # Note: FlowInstance creation removed to match bulk upload behavior
+                # Bulk uploads work fine without FlowInstance objects
                 
                 # Prepare response data
                 response_data = {
                     'tasks': TaskFromFlowSerializer(created_tasks, many=True).data,
-                    'flow_instance': {
-                        'id': str(flow_instance.id) if flow_instance else None,
-                        'flow_template': flow_template.name,
-                        'status': flow_instance.status if flow_instance else 'PENDING'
-                    } if flow_instance else None,
+                    'flow_template': flow_template.name,
                     'message': f"Successfully created {len(created_tasks)} tasks",
                     'created_count': len(created_tasks),
                     'total_sites': total_sites

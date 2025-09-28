@@ -669,6 +669,67 @@ class ProjectViewSet(viewsets.ModelViewSet):
         count = ProjectSite.objects.filter(project=project, is_active=True).count()
         return Response({'site_count': count})
 
+    @action(detail=True, methods=['post'], url_path='sites/link')
+    def link_sites(self, request, pk=None):
+        """Link multiple sites to a project manually.
+        
+        Expected payload: {"site_ids": [1, 2, 3], "alias_name": "optional"}
+        """
+        project = self.get_object()
+        serializer = LinkSitesRequestSerializer(data=request.data, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        
+        site_ids = serializer.validated_data['site_ids']
+        alias_name = serializer.validated_data.get('alias_name', '')
+        tenant = getattr(request, 'tenant', None)
+        
+        linked_sites = []
+        errors = []
+        
+        with transaction.atomic():
+            for site_id in site_ids:
+                try:
+                    # Check if site exists and belongs to tenant
+                    site = Site.objects.get(id=site_id, tenant=tenant, deleted_at__isnull=True)
+                    
+                    # Check if already linked
+                    existing_link = ProjectSite.objects.filter(
+                        project=project, 
+                        site=site, 
+                        is_active=True
+                    ).first()
+                    
+                    if existing_link:
+                        errors.append(f"Site {site.site_name or site.site_id} is already linked to this project")
+                        continue
+                    
+                    # Create the link
+                    project_site = ProjectSite.objects.create(
+                        project=project,
+                        site=site,
+                        alias_name=alias_name,
+                        is_active=True,
+                        created_by=request.user
+                    )
+                    linked_sites.append(project_site)
+                    
+                except Site.DoesNotExist:
+                    errors.append(f"Site with ID {site_id} not found")
+                except Exception as e:
+                    errors.append(f"Failed to link site {site_id}: {str(e)}")
+        
+        # Prepare response
+        response_data = {
+            'linked_count': len(linked_sites),
+            'linked_sites': ProjectSiteSerializer(linked_sites, many=True).data
+        }
+        
+        if errors:
+            response_data['errors'] = errors
+            
+        status_code = status.HTTP_201_CREATED if linked_sites else status.HTTP_400_BAD_REQUEST
+        return Response(response_data, status=status_code)
+
     # -----------------------------
     # Phase 3 - Inventory (Dismantle)
     # -----------------------------

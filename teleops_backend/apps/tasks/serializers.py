@@ -96,6 +96,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     allocated_to_name = serializers.CharField(read_only=True)
     total_sub_activities = serializers.SerializerMethodField()
     completed_sub_activities = serializers.SerializerMethodField()
+    site_groups = serializers.SerializerMethodField()
     
     class Meta:
         model = TaskAllocation
@@ -108,7 +109,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'allocated_at', 'started_at', 'completed_at',
             'allocated_by', 'allocated_by_name', 'updated_by', 'updated_by_name',
             'allocated_to_name', 'total_sub_activities', 'completed_sub_activities',
-            'created_at', 'updated_at'
+            'site_groups', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'allocated_at', 'created_at', 'updated_at']
     
@@ -119,6 +120,25 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     def get_completed_sub_activities(self, obj):
         """Get number of completed sub-activities"""
         return obj.sub_activity_allocations.filter(status='completed').count()
+    
+    def get_site_groups(self, obj):
+        """Get site groups from the related task"""
+        if not obj.task:
+            return []
+        
+        site_groups = obj.task.site_groups.all()
+        return [
+            {
+                'id': site_group.id,
+                'site': site_group.site.id if site_group.site else None,
+                'site_alias': site_group.site_alias,
+                'assignment_order': site_group.assignment_order,
+                'site_name': site_group.site.site_name if site_group.site else None,
+                'site_global_id': site_group.site.global_id if site_group.site else None,
+                'site_business_id': site_group.site.site_id if site_group.site else None,
+            }
+            for site_group in site_groups
+        ]
     
     def validate(self, data):
         """Validate allocation data"""
@@ -249,6 +269,9 @@ class TaskSerializer(serializers.ModelSerializer):
     assigned_to_name = serializers.CharField(source='assigned_to.get_full_name', read_only=True)
     supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True)
     
+    # Site groups for displaying site information
+    site_groups = serializers.SerializerMethodField()
+    
     # Timeline events (recent ones)
     recent_timeline_events = serializers.SerializerMethodField()
     
@@ -258,7 +281,23 @@ class TaskSerializer(serializers.ModelSerializer):
             'id', 'task_id', 'task_name', 'task_type', 'status', 'priority',
             'progress_percentage', 'project_name',
             'assigned_to_name', 'supervisor_name', 'scheduled_start',
-            'scheduled_end', 'created_at', 'recent_timeline_events'
+            'scheduled_end', 'created_at', 'site_groups', 'recent_timeline_events'
+        ]
+    
+    def get_site_groups(self, obj):
+        """Get site groups for the task"""
+        site_groups = obj.site_groups.all()
+        return [
+            {
+                'id': sg.id,
+                'site': sg.site.id if sg.site else None,
+                'site_alias': sg.site_alias,
+                'assignment_order': sg.assignment_order,
+                'site_name': sg.site.site_name if sg.site else None,
+                'site_global_id': sg.site.global_id if sg.site else None,
+                'site_business_id': sg.site.site_id if sg.site else None,
+            }
+            for sg in site_groups
         ]
     
     def get_recent_timeline_events(self, obj):
