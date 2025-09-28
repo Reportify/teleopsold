@@ -39,6 +39,7 @@ class TaskSubActivityAllocationSerializer(serializers.ModelSerializer):
     site_name = serializers.CharField(source='sub_activity.assigned_site.site_name', read_only=True)
     site_business_id = serializers.CharField(source='sub_activity.assigned_site.site_id', read_only=True)
     site_global_id = serializers.CharField(source='sub_activity.assigned_site.global_id', read_only=True)
+    site_alias = serializers.CharField(source='sub_activity.site_alias', read_only=True)
     
     def to_representation(self, instance):
         """Override to include site information in metadata"""
@@ -61,11 +62,11 @@ class TaskSubActivityAllocationSerializer(serializers.ModelSerializer):
         model = TaskSubActivityAllocation
         fields = [
             'id', 'allocation', 'sub_activity', 'sub_activity_name', 'sub_activity_type',
-            'site_name', 'site_business_id', 'site_global_id', 'status', 'progress_percentage', 
+            'site_name', 'site_business_id', 'site_global_id', 'site_alias', 'status', 'progress_percentage', 
             'estimated_duration_hours', 'actual_duration_hours', 'started_at', 'completed_at', 
             'notes', 'metadata', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at', 'site_name', 'site_business_id', 'site_global_id']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'site_name', 'site_business_id', 'site_global_id', 'site_alias']
 
 
 class TaskAllocationSerializer(serializers.ModelSerializer):

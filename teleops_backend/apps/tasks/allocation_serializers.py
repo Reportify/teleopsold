@@ -23,12 +23,13 @@ class SubActivityAllocationSerializer(serializers.ModelSerializer):
     sub_activity_type = serializers.CharField(source='sub_activity.activity_type', read_only=True)
     sub_activity_sequence = serializers.IntegerField(source='sub_activity.sequence_order', read_only=True)
     site_name = serializers.CharField(source='sub_activity.assigned_site.site_name', read_only=True)
+    site_alias = serializers.CharField(source='sub_activity.site_alias', read_only=True)
     
     class Meta:
         model = SubActivityAllocation
         fields = [
             'id', 'sub_activity', 'sub_activity_name', 'sub_activity_type', 
-            'sub_activity_sequence', 'site_name', 'status', 'progress_percentage',
+            'sub_activity_sequence', 'site_name', 'site_alias', 'status', 'progress_percentage',
             'estimated_duration_hours', 'actual_duration_hours', 'started_at', 
             'completed_at', 'notes', 'completion_notes', 'metadata', 
             'created_at', 'updated_at'

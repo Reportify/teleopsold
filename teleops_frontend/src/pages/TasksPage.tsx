@@ -65,31 +65,53 @@ const TasksPage: React.FC = () => {
 
   // Data adapter to normalize TaskAllocation to TaskFromFlow structure
   const adaptTaskAllocationToTaskFromFlow = (allocation: any): TaskFromFlow => {
+    console.log('🔍 DEBUG: Raw allocation data:', allocation);
+    console.log('🔍 DEBUG: Sub-activity allocations:', allocation.sub_activity_allocations);
     
-    // Extract unique sites from sub_activity_allocations
-    const siteGroups = [];
-    if (allocation.sub_activity_allocations) {
+    // Log each sub-activity allocation to see site_alias values
+    allocation.sub_activity_allocations?.forEach((subAlloc: any, index: number) => {
+      console.log(`🔍 DEBUG: Sub-activity ${index} raw data:`, {
+        id: subAlloc.id,
+        site_alias: subAlloc.site_alias,
+        site_name: subAlloc.site_name,
+        activity_name: subAlloc.sub_activity_name
+      });
+    });
+    
+    // Since both APIs have the same structure, use site_groups directly if available
+    // Otherwise, extract from sub_activity_allocations (for backward compatibility)
+    let siteGroups = [];
+    
+    if (allocation.site_groups && allocation.site_groups.length > 0) {
+      // Use site_groups directly from the API (unified approach)
+      console.log("🔍 Using site_groups from API:", allocation.site_groups);
+      siteGroups = allocation.site_groups;
+    } else if (allocation.sub_activity_allocations) {
+      // Fallback: extract from sub_activity_allocations
+      console.log("🔍 Extracting sites from sub_activity_allocations:", allocation.sub_activity_allocations);
       const uniqueSites = new Map();
       
-      allocation.sub_activity_allocations.forEach((subAlloc: any) => {
-        const siteKey = subAlloc.site_global_id || subAlloc.site_business_id || subAlloc.site_name;
-        if (siteKey && !uniqueSites.has(siteKey)) {
+      allocation.sub_activity_allocations.forEach((subAlloc: any, index: number) => {
+        const siteAlias = subAlloc.site_alias || `Site-${index + 1}`;
+        const siteKey = siteAlias;
+        
+        if (!uniqueSites.has(siteKey)) {
           uniqueSites.set(siteKey, {
-            id: uniqueSites.size + 1, // Generate a unique ID
-            site_alias: subAlloc.site_name || subAlloc.site_global_id || subAlloc.site_business_id || 'Unknown Site',
+            id: uniqueSites.size + 1,
+            site_alias: siteAlias,
             site_name: subAlloc.site_name || '',
             site_global_id: subAlloc.site_global_id || '',
             site_business_id: subAlloc.site_business_id || '',
             assignment_order: uniqueSites.size + 1,
-            site: null // This would normally contain full site details
+            site: null
           });
         }
       });
       
-      siteGroups.push(...Array.from(uniqueSites.values()));
+      siteGroups = Array.from(uniqueSites.values());
     }
     
-    console.log("adaptTaskAllocationToTaskFromFlow - created site_groups:", siteGroups);
+    console.log("🔍 Final siteGroups:", siteGroups);
     
     const adapted = {
       id: allocation.id,
@@ -117,28 +139,31 @@ const TasksPage: React.FC = () => {
       site_groups: siteGroups,
       // Add flag to indicate this task came from vendor allocation
       is_vendor_allocated: true,
-      sub_activities: allocation.sub_activity_allocations?.map((subAlloc: any) => ({
-        id: subAlloc.id,
-        sequence_order: 0,
-        activity_type: subAlloc.sub_activity_type || subAlloc.activity_type,
-        activity_name: subAlloc.sub_activity_name || subAlloc.activity_name,
-        description: subAlloc.notes || '',
-        assigned_site: 0,
-        site_alias: '',
-        dependencies: [],
-        dependency_scope: '',
-        parallel_execution: false,
-        status: subAlloc.status,
-        actual_start: subAlloc.started_at,
-        actual_end: subAlloc.completed_at,
-        progress_percentage: subAlloc.progress_percentage || 0,
-        notes: subAlloc.notes || '',
-        created_at: subAlloc.created_at,
-        updated_at: subAlloc.updated_at,
-        site_name: subAlloc.site_name || '',
-        site_global_id: subAlloc.site_global_id || '',
-        site_business_id: subAlloc.site_business_id || '',
-      })) || [],
+      sub_activities: allocation.sub_activity_allocations?.map((subAlloc: any, index: number) => {
+        console.log(`🔍 Mapping sub-activity ${index} - site_alias:`, subAlloc.site_alias);
+        return {
+          id: subAlloc.id,
+          sequence_order: subAlloc.sub_activity_sequence || 0,
+          activity_type: subAlloc.sub_activity_type || subAlloc.activity_type,
+          activity_name: subAlloc.sub_activity_name || subAlloc.activity_name,
+          description: subAlloc.notes || '',
+          assigned_site: 0,
+          site_alias: subAlloc.site_alias || '',
+          dependencies: [],
+          dependency_scope: '',
+          parallel_execution: false,
+          status: subAlloc.status,
+          actual_start: subAlloc.started_at,
+          actual_end: subAlloc.completed_at,
+          progress_percentage: subAlloc.progress_percentage || 0,
+          notes: subAlloc.notes || '',
+          created_at: subAlloc.created_at,
+          updated_at: subAlloc.updated_at,
+          site_name: subAlloc.site_name || '',
+          site_global_id: subAlloc.site_global_id || '',
+          site_business_id: subAlloc.site_business_id || '',
+        };
+      }) || [],
     };
     return adapted;
   };
@@ -215,6 +240,8 @@ const TasksPage: React.FC = () => {
 
     try {
       const response = await taskService.getTaskAllocations(page, pageSize, vendorFilters);
+      console.log('🔍 DEBUG: Vendor API response:', response);
+      console.log('🔍 DEBUG: Number of vendor allocations:', response.results?.length);
       
       // Adapt the results to TaskFromFlow format
       const adaptedResults = response.results.map(adaptTaskAllocationToTaskFromFlow);
@@ -259,20 +286,14 @@ const TasksPage: React.FC = () => {
   const tasks = useMemo(() => {
     const allTasks = [];
     
-    console.log("Tasks merging - isVendorUser:", isVendorUser, "vendorRelationshipId:", vendorRelationshipId);
-    console.log("Tasks merging - vendorTasks:", vendorTasks);
-    console.log("Tasks merging - clientTasks:", clientTasks);
-    
     // Add vendor-allocated tasks (if user is a vendor and has vendor relationship)
     // Note: vendorTasks are already adapted by vendorTasksFetchFunction
     if (isVendorUser && vendorTasks && vendorRelationshipId) {
-      console.log("Adding vendor tasks:", vendorTasks.length);
       allTasks.push(...vendorTasks);
     }
     
     // Add self-created tasks (always include these)
     if (clientTasks) {
-      console.log("Adding client tasks:", clientTasks.length);
       allTasks.push(...clientTasks);
     }
     
@@ -405,11 +426,9 @@ const TasksPage: React.FC = () => {
       label: "Sites",
       sortable: true,
       format: (value, task) => {
-        console.log("Sites column - task:", task.task_name, "site_groups:", task.site_groups);
         return (
           <Box>
             {task.site_groups.map((siteGroup: TaskSiteGroup, index: number) => {
-              console.log("Sites column - siteGroup:", siteGroup);
               return (
                 <Box key={siteGroup.id} sx={{ mb: index < task.site_groups.length - 1 ? 1 : 0 }}>
                   <Typography variant="body2" component="span">
