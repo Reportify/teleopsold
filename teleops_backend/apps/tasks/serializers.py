@@ -82,6 +82,10 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     vendor_code = serializers.CharField(source='vendor_relationship.vendor_code', read_only=True)
     vendor_contact_person = serializers.CharField(source='vendor_relationship.contact_person_name', read_only=True)
     
+    # Client information (for vendor-allocated tasks)
+    client_tenant_name = serializers.CharField(source='vendor_relationship.client_tenant.organization_name', read_only=True)
+    client_tenant_code = serializers.CharField(source='vendor_relationship.client_tenant.circle_code', read_only=True)
+    
     # Team information
     team_name = serializers.CharField(source='internal_team.name', read_only=True)
     team_type = serializers.CharField(source='internal_team.team_type', read_only=True)
@@ -105,6 +109,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'id', 'task', 'task_id', 'task_name', 'project_name',
             'allocation_type', 'status', 'vendor_relationship', 'internal_team',
             'vendor_name', 'vendor_code', 'vendor_contact_person',
+            'client_tenant_name', 'client_tenant_code',
             'team_name', 'team_type',
             'sub_activity_allocations',
             'allocated_at', 'started_at', 'completed_at',
@@ -987,6 +992,11 @@ class TaskFromFlowSerializer(serializers.ModelSerializer):
     assigned_to_name = serializers.CharField(source='assigned_to.get_full_name', read_only=True)
     supervisor_name = serializers.CharField(source='supervisor.get_full_name', read_only=True)
     
+    # Client information from allocations
+    client_tenant_name = serializers.SerializerMethodField()
+    client_tenant_code = serializers.SerializerMethodField()
+    client_allocation_info = serializers.SerializerMethodField()
+    
     # Related data
     site_groups = TaskSiteGroupSerializer(many=True, read_only=True)
     sub_activities = TaskSubActivitySerializer(many=True, read_only=True)
@@ -999,9 +1009,62 @@ class TaskFromFlowSerializer(serializers.ModelSerializer):
             'project', 'project_name', 'status', 'priority',
             'scheduled_start', 'scheduled_end', 'created_by', 'created_by_name',
             'assigned_to', 'assigned_to_name', 'supervisor', 'supervisor_name',
+            'client_tenant_name', 'client_tenant_code', 'client_allocation_info',
             'created_at', 'updated_at', 'site_groups', 'sub_activities'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_client_tenant_name(self, obj):
+        """Get client tenant name from the first vendor allocation"""
+        allocation = obj.allocations.filter(
+            allocation_type='vendor',
+            vendor_relationship__isnull=False
+        ).first()
+        
+        if allocation and allocation.vendor_relationship:
+            return allocation.vendor_relationship.client_tenant.organization_name
+        return None
+    
+    def get_client_tenant_code(self, obj):
+        """Get client tenant code from the first vendor allocation"""
+        allocation = obj.allocations.filter(
+            allocation_type='vendor',
+            vendor_relationship__isnull=False
+        ).first()
+        
+        if allocation and allocation.vendor_relationship:
+            return allocation.vendor_relationship.client_tenant.circle_code
+        return None
+    
+    def get_client_allocation_info(self, obj):
+        """Get comprehensive client allocation information"""
+        allocations = obj.allocations.filter(
+            allocation_type='vendor',
+            vendor_relationship__isnull=False
+        )
+        
+        if not allocations.exists():
+            return None
+        
+        # Get the primary allocation (first one)
+        primary_allocation = allocations.first()
+        
+        if not primary_allocation.vendor_relationship:
+            return None
+        
+        client_tenant = primary_allocation.vendor_relationship.client_tenant
+        vendor_relationship = primary_allocation.vendor_relationship
+        
+        return {
+            'client_tenant_id': str(client_tenant.id),
+            'client_tenant_name': client_tenant.organization_name,
+            'client_tenant_code': client_tenant.circle_code,
+            'vendor_relationship_id': vendor_relationship.id,
+            'allocation_id': str(primary_allocation.id),
+            'allocation_status': primary_allocation.status,
+            'allocated_at': primary_allocation.allocated_at,
+            'is_client_allocated': True
+        }
 
 
 class TaskCreationRequestSerializer(serializers.Serializer):

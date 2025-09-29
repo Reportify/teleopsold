@@ -25,6 +25,8 @@ export interface TaskAllocation {
   vendor_name?: string;
   vendor_code?: string;
   vendor_contact_person?: string;
+  client_tenant_name?: string;
+  client_tenant_code?: string;
   team_name?: string;
   team_type?: string;
   allocated_sub_activities: string[];

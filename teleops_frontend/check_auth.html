@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Auth Check</title>
+</head>
+<body>
+    <h1>Authentication Status Check</h1>
+    <div id="results"></div>
+    
+    <script>
+        function checkAuth() {
+            const results = document.getElementById('results');
+            
+            // Check for tokens
+            const accessToken = localStorage.getItem('access_token');
+            const refreshToken = localStorage.getItem('refresh_token');
+            const tenantContext = localStorage.getItem('tenant_context');
+            
+            let html = '<h2>LocalStorage Contents:</h2>';
+            html += `<p><strong>Access Token:</strong> ${accessToken ? 'Present' : 'Missing'}</p>`;
+            html += `<p><strong>Refresh Token:</strong> ${refreshToken ? 'Present' : 'Missing'}</p>`;
+            html += `<p><strong>Tenant Context:</strong> ${tenantContext ? 'Present' : 'Missing'}</p>`;
+            
+            if (tenantContext) {
+                try {
+                    const context = JSON.parse(tenantContext);
+                    html += `<p><strong>Current Tenant:</strong> ${context.currentTenant ? context.currentTenant.name : 'None'}</p>`;
+                    html += `<p><strong>Tenant Type:</strong> ${context.currentTenant ? context.currentTenant.tenant_type : 'None'}</p>`;
+                } catch (e) {
+                    html += '<p><strong>Tenant Context:</strong> Invalid JSON</p>';
+                }
+            }
+            
+            // Check if token is expired
+            if (accessToken) {
+                try {
+                    const payload = JSON.parse(atob(accessToken.split('.')[1]));
+                    const currentTime = Date.now() / 1000;
+                    const isExpired = payload.exp < currentTime;
+                    html += `<p><strong>Token Expired:</strong> ${isExpired ? 'Yes' : 'No'}</p>`;
+                    html += `<p><strong>Token Expires At:</strong> ${new Date(payload.exp * 1000).toLocaleString()}</p>`;
+                } catch (e) {
+                    html += '<p><strong>Token:</strong> Invalid format</p>';
+                }
+            }
+            
+            results.innerHTML = html;
+        }
+        
+        // Run check when page loads
+        checkAuth();
+    </script>
+</body>
+</html>

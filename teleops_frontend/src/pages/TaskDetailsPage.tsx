@@ -182,54 +182,63 @@ const TaskDetailsPage: React.FC = () => {
 
   // Helper functions to get names by ID
   const getVendorName = (vendorId: number) => {
-    const vendor = vendors.find(v => v.id === vendorId);
+    const vendor = vendors.find((v) => v.id === vendorId);
     return vendor ? vendor.name : `Vendor ID: ${vendorId}`;
   };
 
   const getTeamName = (teamId: number) => {
-    const team = teams.find(t => t.id === teamId);
+    const team = teams.find((t) => t.id === teamId);
     return team ? team.name : `Team ID: ${teamId}`;
   };
 
   // Helper function to determine task origin
   const getTaskOrigin = () => {
     if (!task) return null;
-    
+
     // Check if task has allocations from external clients
-    const hasClientAllocation = allocations?.some(allocation => 
-      allocation.allocation_type === 'vendor' && 
-      allocation.vendor_relationship
-    );
-    
+    const clientAllocation = allocations?.find((allocation) => allocation.allocation_type === "vendor" && allocation.vendor_relationship);
+
     // Check if task has client-provided ID
     const hasClientTaskId = task.is_client_id_provided && task.client_task_id;
-    
-    if (hasClientAllocation || hasClientTaskId) {
+
+    if (clientAllocation || hasClientTaskId) {
+      let description = "Allocated from client";
+
+      // Build description with client information
+      if (clientAllocation?.client_tenant_name) {
+        const clientInfo = clientAllocation.client_tenant_code ? `${clientAllocation.client_tenant_name} (${clientAllocation.client_tenant_code})` : clientAllocation.client_tenant_name;
+        description = `Allocated by ${clientInfo}`;
+      }
+
+      if (hasClientTaskId) {
+        description += ` • Client Task ID: ${task.client_task_id}`;
+      }
+
       return {
-        type: 'client_allocated',
-        label: 'Client Allocated',
-        color: 'info' as const,
-        iconType: 'Business',
-        description: hasClientTaskId ? `Client Task ID: ${task.client_task_id}` : 'Allocated from client'
+        type: "client_allocated",
+        label: "Client Allocated",
+        color: "info" as const,
+        iconType: "Business",
+        description,
       };
     }
-    
+
     return {
-      type: 'self_created',
-      label: 'Self Created',
-      color: 'success' as const,
-      iconType: 'AccountTree',
-      description: 'Created internally'
+      type: "self_created",
+      label: "Self Created",
+      color: "success" as const,
+      iconType: "AccountTree",
+      description: "Created internally",
     };
   };
 
   const loadAllocationData = async () => {
     if (!taskId) return;
-    
+
     try {
       setAllocationsLoading(true);
       setAllocationsError(null);
-      
+
       const allocationData = await taskAllocationService.getTaskAllocations({ task_id: taskId });
       setAllocations(allocationData);
     } catch (err) {
@@ -242,11 +251,11 @@ const TaskDetailsPage: React.FC = () => {
 
   const loadTimelineData = async () => {
     if (!taskId) return;
-    
+
     try {
       setTimelineLoading(true);
       setTimelineError(null);
-      
+
       const timelineData = await taskAllocationService.getTaskTimeline(taskId);
       setTimelineEvents(timelineData);
     } catch (err) {
@@ -267,11 +276,105 @@ const TaskDetailsPage: React.FC = () => {
         return;
       }
 
-      // Call the real API endpoint
-      const taskData = await taskService.getTaskFromFlowById(taskId);
+      let taskData = null;
+      let isClientAllocated = false;
+
+      // First, try to fetch as a self-created task (tasks-from-flow)
+      try {
+        taskData = await taskService.getTaskFromFlowById(taskId);
+        console.log("✅ Successfully fetched as self-created task:", taskData);
+      } catch (err) {
+        console.log("❌ Failed to fetch as self-created task, trying client-allocated...");
+
+        // If that fails, try to fetch as a client-allocated task (task-allocations)
+        try {
+          const taskAllocationService = (await import("../services/taskAllocationService")).default;
+          const allocationData = await taskAllocationService.getTaskAllocation(taskId);
+          console.log("✅ Successfully fetched as client-allocated task:", allocationData);
+
+          // Convert allocation data to TaskFromFlow format using the same adapter
+          const adaptTaskAllocationToTaskFromFlow = (allocation: any): TaskFromFlow => {
+            let siteGroups = [];
+
+            if (allocation.site_groups && allocation.site_groups.length > 0) {
+              siteGroups = allocation.site_groups;
+            } else if (allocation.sub_activity_allocations) {
+              const uniqueSites = new Map();
+
+              allocation.sub_activity_allocations.forEach((subAlloc: any, index: number) => {
+                const siteAlias = subAlloc.site_alias || `Site-${index + 1}`;
+                const siteKey = siteAlias;
+
+                if (!uniqueSites.has(siteKey)) {
+                  uniqueSites.set(siteKey, {
+                    id: uniqueSites.size + 1,
+                    site_alias: siteAlias,
+                    site_name: subAlloc.site_name || "",
+                    site_global_id: subAlloc.site_global_id || "",
+                    site_business_id: subAlloc.site_business_id || "",
+                    assignment_order: uniqueSites.size + 1,
+                    site: null,
+                  });
+                }
+              });
+
+              siteGroups = Array.from(uniqueSites.values());
+            }
+
+            return {
+              id: allocation.id,
+              task_id: allocation.task_id,
+              client_task_id: allocation.client_task_id || undefined,
+              is_client_id_provided: Boolean(allocation.client_task_id),
+              task_name: allocation.task_name,
+              description: allocation.description || "",
+              flow_template: allocation.flow_template || "",
+              flow_template_name: allocation.flow_template_name || "",
+              project: allocation.task || allocation.project_id || 0,
+              project_name: allocation.project_name || "",
+              status: allocation.status || "pending",
+              priority: allocation.priority || "medium",
+              scheduled_start: allocation.scheduled_start || undefined,
+              scheduled_end: allocation.scheduled_end || undefined,
+              created_by: allocation.created_by || 0,
+              created_by_name: allocation.allocated_by_name || allocation.created_by_name || "",
+              assigned_to: allocation.assigned_to || undefined,
+              assigned_to_name: allocation.assigned_to_name || undefined,
+              supervisor: allocation.supervisor || undefined,
+              supervisor_name: allocation.supervisor_name || undefined,
+              created_at: allocation.created_at || new Date().toISOString(),
+              updated_at: allocation.updated_at || new Date().toISOString(),
+              site_groups: siteGroups,
+              sub_activities:
+                allocation.sub_activity_allocations?.map((subAlloc: any) => ({
+                  id: subAlloc.id,
+                  activity_name: subAlloc.sub_activity_name,
+                  activity_type: subAlloc.activity_type || "DISMANTLE",
+                  sequence_order: subAlloc.sequence_order || 1,
+                  status: subAlloc.status,
+                  progress_percentage: subAlloc.progress_percentage || 0,
+                  assigned_site: subAlloc.site_alias,
+                  site_name: subAlloc.site_name,
+                  site_global_id: subAlloc.site_global_id,
+                  site_business_id: subAlloc.site_business_id,
+                  dependencies: [],
+                  notes: subAlloc.notes || "",
+                })) || [],
+              is_vendor_allocated: true, // Mark as client-allocated
+            };
+          };
+
+          taskData = adaptTaskAllocationToTaskFromFlow(allocationData);
+          isClientAllocated = true;
+        } catch (allocationErr) {
+          console.error("❌ Failed to fetch as both self-created and client-allocated task:", allocationErr);
+          throw allocationErr;
+        }
+      }
 
       if (taskData) {
         setTask(taskData);
+        console.log(`📋 Task loaded successfully as ${isClientAllocated ? "client-allocated" : "self-created"} task`);
         // Load allocation and timeline data after task is loaded
         loadAllocationData();
         loadTimelineData();
@@ -450,7 +553,6 @@ const TaskDetailsPage: React.FC = () => {
   };
 
   const handleAllocationComplete = (task: Task, vendor: Vendor | null, allocation?: any) => {
-
     // Update the task status to show it's been allocated
     setTask((prevTask) => {
       if (!prevTask) return prevTask;
@@ -493,12 +595,30 @@ const TaskDetailsPage: React.FC = () => {
       case "in_progress":
         return "info";
       case "pending":
+      case "received":
         return "warning";
+      case "allocated":
+        return "info";
       case "cancelled":
         return "error";
       default:
         return "default";
     }
+  };
+
+  // Helper function to get appropriate status display for vendor portal
+  const getDisplayStatus = () => {
+    if (!task) return "";
+
+    // Check if this task is allocated TO the current vendor (vendor portal context)
+    const isAllocatedToVendor = allocations?.some((allocation) => allocation.allocation_type === "vendor" && allocation.vendor_relationship && task.status === "allocated");
+
+    // If task is allocated to vendor but not yet assigned internally, show as 'received'
+    if (isAllocatedToVendor) {
+      return "received";
+    }
+
+    return task.status;
   };
 
   const getPriorityColor = (priority: string) => {
@@ -589,7 +709,7 @@ const TaskDetailsPage: React.FC = () => {
             <strong>Allocated to:</strong> {eventData.allocated_to}
           </Typography>
           <Typography variant="body2" sx={{ mb: 1 }}>
-            <strong>Allocation Type:</strong> {eventData.allocation_type === 'vendor' ? 'External Vendor' : 'Internal Team'}
+            <strong>Allocation Type:</strong> {eventData.allocation_type === "vendor" ? "External Vendor" : "Internal Team"}
           </Typography>
           {eventData.previous_status && (
             <Typography variant="body2" sx={{ mb: 1 }}>
@@ -626,7 +746,7 @@ const TaskDetailsPage: React.FC = () => {
       <Box sx={{ mt: 1 }}>
         {Object.entries(eventData).map(([key, value]) => (
           <Typography key={key} variant="body2" sx={{ mb: 0.5 }}>
-            <strong>{key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}:</strong> {String(value)}
+            <strong>{key.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}:</strong> {String(value)}
           </Typography>
         ))}
       </Box>
@@ -689,24 +809,24 @@ const TaskDetailsPage: React.FC = () => {
 
             {/* Status and Priority Badges */}
             <Stack direction="row" spacing={2} sx={{ mb: 2 }}>
-              <Chip label={task.status} color={getStatusColor(task.status) as any} size="small" icon={<CheckCircle />} />
+              <Chip label={getDisplayStatus()} color={getStatusColor(getDisplayStatus()) as any} size="small" icon={<CheckCircle />} />
               <Chip label={task.priority} color={getPriorityColor(task.priority) as any} size="small" variant="outlined" />
               <Chip label={task.task_id} size="small" variant="outlined" sx={{ fontFamily: "monospace" }} />
-              
+
               {/* Task Origin Badge */}
               {taskOrigin && (
                 <Tooltip title={taskOrigin.description} arrow>
-                  <Chip 
+                  <Chip
                     label={taskOrigin.label}
                     color={taskOrigin.color}
                     size="small"
-                    icon={taskOrigin.iconType === 'Business' ? <Business /> : <AccountTree />}
+                    icon={taskOrigin.iconType === "Business" ? <Business /> : <AccountTree />}
                     variant="outlined"
-                    sx={{ 
-                      fontWeight: 'medium',
-                      '& .MuiChip-icon': {
-                        fontSize: '16px'
-                      }
+                    sx={{
+                      fontWeight: "medium",
+                      "& .MuiChip-icon": {
+                        fontSize: "16px",
+                      },
                     }}
                   />
                 </Tooltip>
@@ -779,6 +899,14 @@ const TaskDetailsPage: React.FC = () => {
                           </ListItemIcon>
                           <ListItemText primary="Project" secondary={task.project_name} />
                         </ListItem>
+                        {task.client_tenant_name && (
+                          <ListItem>
+                            <ListItemIcon>
+                              <Business />
+                            </ListItemIcon>
+                            <ListItemText primary="Client" secondary={task.client_tenant_name} />
+                          </ListItem>
+                        )}
                         <ListItem>
                           <ListItemIcon>
                             <Description />
@@ -1093,11 +1221,7 @@ const TaskDetailsPage: React.FC = () => {
                                   <Typography variant="body2" fontWeight="bold" color="text.primary" textAlign="center">
                                     {(subActivity as any).allocated_vendor ? (subActivity as any).allocated_vendor.name : (subActivity as any).assigned_team?.name}
                                   </Typography>
-                                  <IconButton
-                                    size="small"
-                                    onClick={() => handleAllocateSubTask(subActivity)}
-                                    sx={{ mt: 0.5, color: "primary.main" }}
-                                  >
+                                  <IconButton size="small" onClick={() => handleAllocateSubTask(subActivity)} sx={{ mt: 0.5, color: "primary.main" }}>
                                     <Edit fontSize="small" />
                                   </IconButton>
                                 </Box>
@@ -1215,9 +1339,7 @@ const TaskDetailsPage: React.FC = () => {
               <Card variant="outlined">
                 <CardContent>
                   <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-                    <Typography variant="h6">
-                      Task Timeline
-                    </Typography>
+                    <Typography variant="h6">Task Timeline</Typography>
                     <IconButton onClick={() => loadTimelineData()} disabled={timelineLoading}>
                       <Refresh />
                     </IconButton>
@@ -1252,16 +1374,12 @@ const TaskDetailsPage: React.FC = () => {
                         <React.Fragment key={event.id}>
                           <ListItem alignItems="flex-start">
                             <ListItemAvatar>
-                              <Avatar sx={{ bgcolor: getEventColor(event.event_type) }}>
-                                {getEventIcon(event.event_type)}
-                              </Avatar>
+                              <Avatar sx={{ bgcolor: getEventColor(event.event_type) }}>{getEventIcon(event.event_type)}</Avatar>
                             </ListItemAvatar>
                             <ListItemText
                               primary={
                                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                  <Typography variant="subtitle2">
-                                    {event.event_description}
-                                  </Typography>
+                                  <Typography variant="subtitle2">{event.event_description}</Typography>
                                   <Typography variant="caption" color="text.secondary">
                                     {new Date(event.timestamp).toLocaleString()}
                                   </Typography>
@@ -1269,19 +1387,8 @@ const TaskDetailsPage: React.FC = () => {
                               }
                               secondary={
                                 <Box sx={{ mt: 1 }}>
-                                  <Chip 
-                                    label={event.event_type.replace('_', ' ').toUpperCase()} 
-                                    size="small" 
-                                    sx={{ mr: 1, mb: 1 }}
-                                  />
-                                  {event.user_name && (
-                                    <Chip 
-                                      label={`By: ${event.user_name}`} 
-                                      size="small" 
-                                      variant="outlined"
-                                      sx={{ mb: 1 }}
-                                    />
-                                  )}
+                                  <Chip label={event.event_type.replace("_", " ").toUpperCase()} size="small" sx={{ mr: 1, mb: 1 }} />
+                                  {event.user_name && <Chip label={`By: ${event.user_name}`} size="small" variant="outlined" sx={{ mb: 1 }} />}
                                   {event.event_data && Object.keys(event.event_data).length > 0 && (
                                     <Box sx={{ mt: 1, p: 1, bgcolor: "grey.50", borderRadius: 1 }}>
                                       <Typography variant="caption" color="text.secondary">
@@ -1312,7 +1419,7 @@ const TaskDetailsPage: React.FC = () => {
                   </Typography>
 
                   {allocationsLoading ? (
-                    <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
+                    <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
                       <Skeleton variant="rectangular" width="100%" height={200} />
                     </Box>
                   ) : allocationsError ? (
@@ -1320,8 +1427,8 @@ const TaskDetailsPage: React.FC = () => {
                       {allocationsError}
                     </Alert>
                   ) : allocations.length === 0 ? (
-                    <Box sx={{ textAlign: 'center', py: 4 }}>
-                      <Assignment sx={{ fontSize: 48, color: 'text.secondary', mb: 2 }} />
+                    <Box sx={{ textAlign: "center", py: 4 }}>
+                      <Assignment sx={{ fontSize: 48, color: "text.secondary", mb: 2 }} />
                       <Typography variant="body1" color="text.secondary">
                         No allocations found for this task
                       </Typography>
@@ -1332,79 +1439,71 @@ const TaskDetailsPage: React.FC = () => {
                         <Grid size={{ xs: 12 }} key={allocation.id}>
                           <Card variant="outlined" sx={{ mb: 2 }}>
                             <CardContent>
-                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
-                                <Typography variant="h6">
-                                  Allocation #{allocation.id}
-                                </Typography>
-                                <Chip 
-                                   label={allocation.status}
-                                   color={allocation.status === 'allocated' ? 'success' : allocation.status === 'pending' ? 'warning' : allocation.status === 'in_progress' ? 'info' : 'default'}
-                                   size="small"
-                                 />
+                              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", mb: 2 }}>
+                                <Typography variant="h6">Allocation #{allocation.id}</Typography>
+                                <Chip
+                                  label={allocation.status}
+                                  color={allocation.status === "allocated" ? "success" : allocation.status === "pending" ? "warning" : allocation.status === "in_progress" ? "info" : "default"}
+                                  size="small"
+                                />
                               </Box>
-                              
+
                               <Grid container spacing={2}>
                                 <Grid size={{ xs: 12, md: 6 }}>
                                   <List dense>
                                     <ListItem>
-                                      <ListItemIcon><Business /></ListItemIcon>
-                                      <ListItemText 
-                                        primary="Allocation Type" 
-                                        secondary={allocation.allocation_type}
-                                      />
+                                      <ListItemIcon>
+                                        <Business />
+                                      </ListItemIcon>
+                                      <ListItemText primary="Allocation Type" secondary={allocation.allocation_type} />
                                     </ListItem>
                                     <ListItem>
-                                      <ListItemIcon><Person /></ListItemIcon>
-                                      <ListItemText 
-                                         primary="Allocated To" 
-                                         secondary={allocation.vendor_name || allocation.team_name || 'N/A'}
-                                       />
+                                      <ListItemIcon>
+                                        <Person />
+                                      </ListItemIcon>
+                                      <ListItemText primary="Allocated To" secondary={allocation.vendor_name || allocation.team_name || "N/A"} />
                                     </ListItem>
                                     <ListItem>
-                                      <ListItemIcon><Schedule /></ListItemIcon>
-                                      <ListItemText 
-                                        primary="Created" 
-                                        secondary={new Date(allocation.created_at).toLocaleString()}
-                                      />
+                                      <ListItemIcon>
+                                        <Schedule />
+                                      </ListItemIcon>
+                                      <ListItemText primary="Created" secondary={new Date(allocation.created_at).toLocaleString()} />
                                     </ListItem>
                                   </List>
                                 </Grid>
-                                
+
                                 <Grid size={{ xs: 12, md: 6 }}>
-                                   <List dense>
-                                     {allocation.started_at && (
-                                       <ListItem>
-                                         <ListItemIcon><PlayArrow /></ListItemIcon>
-                                         <ListItemText 
-                                           primary="Started At" 
-                                           secondary={new Date(allocation.started_at).toLocaleString()}
-                                         />
-                                       </ListItem>
-                                     )}
-                                     {allocation.completed_at && (
-                                       <ListItem>
-                                         <ListItemIcon><Stop /></ListItemIcon>
-                                         <ListItemText 
-                                           primary="Completed At" 
-                                           secondary={new Date(allocation.completed_at).toLocaleString()}
-                                         />
-                                       </ListItem>
-                                     )}
-                                     <ListItem>
-                                       <ListItemIcon><Info /></ListItemIcon>
-                                       <ListItemText 
-                                         primary="Sub-Activities" 
-                                         secondary={`${allocation.completed_sub_activities}/${allocation.total_sub_activities} completed`}
-                                       />
-                                     </ListItem>
-                                   </List>
-                                 </Grid>
+                                  <List dense>
+                                    {allocation.started_at && (
+                                      <ListItem>
+                                        <ListItemIcon>
+                                          <PlayArrow />
+                                        </ListItemIcon>
+                                        <ListItemText primary="Started At" secondary={new Date(allocation.started_at).toLocaleString()} />
+                                      </ListItem>
+                                    )}
+                                    {allocation.completed_at && (
+                                      <ListItem>
+                                        <ListItemIcon>
+                                          <Stop />
+                                        </ListItemIcon>
+                                        <ListItemText primary="Completed At" secondary={new Date(allocation.completed_at).toLocaleString()} />
+                                      </ListItem>
+                                    )}
+                                    <ListItem>
+                                      <ListItemIcon>
+                                        <Info />
+                                      </ListItemIcon>
+                                      <ListItemText primary="Sub-Activities" secondary={`${allocation.completed_sub_activities}/${allocation.total_sub_activities} completed`} />
+                                    </ListItem>
+                                  </List>
+                                </Grid>
                               </Grid>
-                              
+
                               {/* Sub-Activities Details */}
                               {allocation.sub_activity_allocations && allocation.sub_activity_allocations.length > 0 && (
                                 <Box sx={{ mt: 2 }}>
-                                  <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: 'bold' }}>
+                                  <Typography variant="subtitle2" gutterBottom sx={{ fontWeight: "bold" }}>
                                     Sub-Activity Details
                                   </Typography>
                                   <List dense>
@@ -1415,7 +1514,7 @@ const TaskDetailsPage: React.FC = () => {
                                         </ListItemIcon>
                                         <ListItemText
                                           primary={
-                                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                                               <Typography variant="body2" component="span">
                                                 {subAllocation.sub_activity_name || `Sub-Activity ${subAllocation.sub_activity}`}
                                               </Typography>
@@ -1423,48 +1522,47 @@ const TaskDetailsPage: React.FC = () => {
                                                 label={subAllocation.status}
                                                 size="small"
                                                 color={
-                                                  subAllocation.status === 'completed' ? 'success' :
-                                                  subAllocation.status === 'in_progress' ? 'info' :
-                                                  subAllocation.status === 'allocated' ? 'primary' :
-                                                  'default'
+                                                  subAllocation.status === "completed"
+                                                    ? "success"
+                                                    : subAllocation.status === "in_progress"
+                                                    ? "info"
+                                                    : subAllocation.status === "allocated"
+                                                    ? "primary"
+                                                    : "default"
                                                 }
-                                                sx={{ fontSize: '0.7rem', height: '20px' }}
+                                                sx={{ fontSize: "0.7rem", height: "20px" }}
                                               />
                                             </Box>
                                           }
                                           secondary={
-                                             <Box>
-                                               <Typography variant="caption" color="text.secondary">
-                                                  Site: {subAllocation.metadata?.site_name || 'Not assigned'}
-                                                </Typography>
-                                               {subAllocation.progress_percentage > 0 && (
-                                                 <Box sx={{ mt: 0.5 }}>
-                                                   <Typography variant="caption" color="text.secondary">
-                                                     Progress: {subAllocation.progress_percentage}%
-                                                   </Typography>
-                                                   <LinearProgress
-                                                     variant="determinate"
-                                                     value={subAllocation.progress_percentage}
-                                                     sx={{ mt: 0.5, height: 4 }}
-                                                   />
-                                                 </Box>
-                                               )}
-                                             </Box>
-                                           }
+                                            <Box>
+                                              <Typography variant="caption" color="text.secondary">
+                                                Site: {subAllocation.metadata?.site_name || "Not assigned"}
+                                              </Typography>
+                                              {subAllocation.progress_percentage > 0 && (
+                                                <Box sx={{ mt: 0.5 }}>
+                                                  <Typography variant="caption" color="text.secondary">
+                                                    Progress: {subAllocation.progress_percentage}%
+                                                  </Typography>
+                                                  <LinearProgress variant="determinate" value={subAllocation.progress_percentage} sx={{ mt: 0.5, height: 4 }} />
+                                                </Box>
+                                              )}
+                                            </Box>
+                                          }
                                         />
                                       </ListItem>
                                     ))}
                                   </List>
                                 </Box>
                               )}
-                               
-                               {allocation.allocation_notes && (
-                                 <Box sx={{ mt: 2, p: 2, backgroundColor: 'rgba(0,0,0,0.02)', borderRadius: 1 }}>
-                                   <Typography variant="body2" color="text.secondary">
-                                     <strong>Notes:</strong> {allocation.allocation_notes}
-                                   </Typography>
-                                 </Box>
-                               )}
+
+                              {allocation.allocation_notes && (
+                                <Box sx={{ mt: 2, p: 2, backgroundColor: "rgba(0,0,0,0.02)", borderRadius: 1 }}>
+                                  <Typography variant="body2" color="text.secondary">
+                                    <strong>Notes:</strong> {allocation.allocation_notes}
+                                  </Typography>
+                                </Box>
+                              )}
                             </CardContent>
                           </Card>
                         </Grid>

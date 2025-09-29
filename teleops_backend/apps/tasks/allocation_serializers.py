@@ -49,6 +49,11 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
     vendor_name = serializers.CharField(source='vendor_relationship.vendor_tenant.organization_name', read_only=True)
     vendor_code = serializers.CharField(source='vendor_relationship.vendor_code', read_only=True)
     vendor_contact = serializers.CharField(source='vendor_relationship.contact_person_name', read_only=True)
+    
+    # Client information (for vendor-allocated tasks)
+    client_tenant_name = serializers.CharField(source='vendor_relationship.client_tenant.organization_name', read_only=True)
+    client_tenant_code = serializers.CharField(source='vendor_relationship.client_tenant.circle_code', read_only=True)
+    
     team_name = serializers.CharField(source='internal_team.name', read_only=True)
     team_type = serializers.CharField(source='internal_team.team_type', read_only=True)
     
@@ -75,6 +80,7 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
             'id', 'task', 'task_id', 'task_name', 'project_name',
             'allocation_type', 'status', 'priority', 'allocation_reference',
             'vendor_relationship', 'vendor_name', 'vendor_code', 'vendor_contact',
+            'client_tenant_name', 'client_tenant_code',
             'internal_team', 'team_name', 'team_type',
             'progress_percentage',
             'allocation_notes', 'completion_notes',
@@ -102,8 +108,8 @@ class TaskAllocationSerializer(serializers.ModelSerializer):
                 'site_alias': site_group.site_alias,
                 'assignment_order': site_group.assignment_order,
                 'site_name': site_group.site.site_name,
-                'site_global_id': site_group.site.site_global_id,
-                'site_business_id': site_group.site.site_business_id,
+                'site_global_id': site_group.site.global_id,
+                'site_business_id': site_group.site.site_id,
             }
             for site_group in site_groups
         ]

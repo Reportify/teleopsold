@@ -46,6 +46,9 @@ export interface TaskFromFlow {
   supervisor_name?: string;
   created_at: string;
   updated_at: string;
+  client_tenant_name?: string;
+  client_tenant_code?: string;
+  client_allocation_info?: any;
   site_groups: TaskSiteGroup[];
   sub_activities: TaskSubActivity[];
   is_vendor_allocated?: boolean; // Flag to indicate task came from vendor allocation

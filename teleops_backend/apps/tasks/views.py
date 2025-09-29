@@ -6,6 +6,7 @@ from django.db import models, transaction
 from django.db.models import Q, Count, Sum
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.http import Http404
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.views import APIView
 import pandas as pd
@@ -902,7 +903,12 @@ class TaskFromFlowViewSet(viewsets.ModelViewSet):
         
         queryset = TaskFromFlow.objects.filter(tenant=tenant).select_related(
             'flow_template', 'project', 'created_by', 'assigned_to', 'supervisor'
-        ).prefetch_related('site_groups', 'sub_activities')
+        ).prefetch_related(
+            'site_groups', 
+            'sub_activities',
+            'allocations__vendor_relationship__client_tenant',
+            'allocations__vendor_relationship__vendor_tenant'
+        )
         
         # Additional filtering options
         project_id = self.request.query_params.get('project')
@@ -918,6 +924,69 @@ class TaskFromFlowViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status=status_filter)
         
         return queryset
+
+    def get_object(self):
+        """
+        Override get_object to handle both TaskFromFlow UUIDs and TaskAllocation UUIDs.
+        This allows the vendor portal to access tasks using TaskAllocation IDs.
+        """
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs[lookup_url_kwarg]
+        
+        # Get tenant context for security
+        tenant = getattr(self.request, 'tenant', None)
+        if not tenant:
+            raise Http404("Tenant context required")
+        
+        # First, try to find TaskFromFlow directly by ID
+        try:
+            task_from_flow = TaskFromFlow.objects.select_related(
+                'flow_template', 'project', 'created_by', 'assigned_to', 'supervisor'
+            ).prefetch_related('site_groups', 'sub_activities').get(
+                id=lookup_value,
+                tenant=tenant
+            )
+            return task_from_flow
+        except (TaskFromFlow.DoesNotExist, ValueError):
+            pass
+        
+        # If not found, try to find TaskAllocation and get its associated TaskFromFlow
+        try:
+            from .allocation_models import TaskAllocation
+            from apps.tenants.models import ClientVendorRelationship
+            
+            task_allocation = TaskAllocation.objects.select_related('task', 'vendor_relationship').get(
+                id=lookup_value
+            )
+            
+            # Check access permissions:
+            # 1. Direct access: Task belongs to the current tenant
+            # 2. Vendor access: Task is allocated to the current tenant through vendor relationship
+            has_access = False
+            
+            if task_allocation.task.tenant == tenant:
+                # Direct access - task owner
+                has_access = True
+            elif task_allocation.vendor_relationship:
+                # Vendor access - check if current tenant is the vendor in the relationship
+                if task_allocation.vendor_relationship.vendor_tenant == tenant:
+                    has_access = True
+            
+            if not has_access:
+                raise Http404("Task not found or access denied")
+            
+            # Return the associated TaskFromFlow with proper prefetching
+            task_from_flow = TaskFromFlow.objects.select_related(
+                'flow_template', 'project', 'created_by', 'assigned_to', 'supervisor'
+            ).prefetch_related('site_groups', 'sub_activities').get(
+                id=task_allocation.task.id
+            )
+            return task_from_flow
+        except (TaskAllocation.DoesNotExist, ValueError):
+            pass
+        
+        # If neither found, raise 404
+        raise Http404("No TaskFromFlow matches the given query.")
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
