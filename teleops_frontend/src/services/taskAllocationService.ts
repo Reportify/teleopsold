@@ -28,7 +28,6 @@ export interface TaskAllocation {
   client_tenant_name?: string;
   client_tenant_code?: string;
   team_name?: string;
-  team_type?: string;
   allocated_sub_activities: string[];
   sub_activity_allocations: SubActivityAllocation[];
   allocation_notes?: string;

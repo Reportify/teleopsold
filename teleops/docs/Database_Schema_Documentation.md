@@ -1126,16 +1126,6 @@ CREATE TABLE teams (
     team_name VARCHAR(255) NOT NULL,
     team_code VARCHAR(100) NOT NULL,
     description TEXT,
-    team_type VARCHAR(50) DEFAULT 'Functional',
-
-    -- Team Configuration
-    max_members INTEGER DEFAULT 50,
-    geographic_scope JSONB DEFAULT '[]',
-    functional_scope JSONB DEFAULT '[]',
-
-    -- Leadership
-    team_leader_id INTEGER REFERENCES auth_user(id),
-    team_manager_id INTEGER REFERENCES auth_user(id),
 
     -- Status
     is_active BOOLEAN DEFAULT TRUE,
@@ -1143,15 +1133,12 @@ CREATE TABLE teams (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    UNIQUE(tenant_id, team_code),
-    CHECK (team_type IN ('Functional', 'Project', 'Geographic', 'Cross_Functional'))
+    UNIQUE(tenant_id, team_code)
 );
 
 -- Indexes
 CREATE INDEX idx_teams_tenant ON teams(tenant_id);
 CREATE INDEX idx_teams_code ON teams(tenant_id, team_code);
-CREATE INDEX idx_teams_leader ON teams(team_leader_id);
-CREATE INDEX idx_teams_geographic ON teams USING GIN(geographic_scope);
 ```
 
 #### team_memberships
@@ -1166,20 +1153,16 @@ CREATE TABLE team_memberships (
 
     -- Membership Details
     membership_role VARCHAR(50) DEFAULT 'Member',
-    is_primary_team BOOLEAN DEFAULT FALSE,
-    responsibility_area VARCHAR(100),
 
     -- Period
     joined_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    effective_from DATE DEFAULT CURRENT_DATE,
-    effective_to DATE,
 
     -- Status
     is_active BOOLEAN DEFAULT TRUE,
     added_by INTEGER REFERENCES auth_user(id),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
 
-    UNIQUE(team_id, user_profile_id, effective_from),
+    UNIQUE(team_id, user_profile_id),
     CHECK (membership_role IN ('Member', 'Senior_Member', 'Team_Lead', 'Deputy_Manager', 'Manager'))
 );
 

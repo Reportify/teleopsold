@@ -195,24 +195,31 @@ export interface UserUpdateData {
 
 // Team Management Types
 export interface Team {
-  id: string;
+  id: number;
   name: string;
   description?: string;
-  team_type: "project" | "operational" | "functional" | "temporary";
   is_active: boolean;
-  max_members?: number;
   tenant: string;
   created_by: string;
   created_by_name?: string;
-  members_count?: number;
-  active_members_count?: number;
+  member_count?: number;
+  members?: TeamMember[];
   created_at: string;
   updated_at: string;
 }
 
+export interface TeamMember {
+  id: number;
+  user_full_name: string;
+  user_email: string;
+  role: string;
+  role_display: string;
+  joined_at: string;
+}
+
 export interface TeamMembership {
   id: string;
-  team: string;
+  team: number;
   team_name?: string;
   user: string;
   user_full_name?: string;
@@ -351,7 +358,6 @@ export interface UserSearchFilters {
 
 export interface TeamSearchFilters {
   search?: string;
-  team_type?: string;
   is_active?: boolean;
   created_by?: string;
   members_count_min?: number;
@@ -402,15 +408,13 @@ export interface BulkOperationResponse {
 export interface TeamCreateData {
   name: string;
   description?: string;
-  team_type: "project" | "operational" | "functional" | "temporary";
-  max_members?: number;
+  team_leader_id?: string;
+  team_member_ids?: string[];
 }
 
 export interface TeamUpdateData {
   name?: string;
   description?: string;
-  team_type?: "project" | "operational" | "functional" | "temporary";
-  max_members?: number;
   is_active?: boolean;
 }
 

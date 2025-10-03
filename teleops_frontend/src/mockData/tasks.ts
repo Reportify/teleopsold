@@ -9,7 +9,6 @@ export const mockTeams: Team[] = [
     id: 301,
     name: "Team Alpha",
     vendor_id: null, // External team (vendor will be assigned dynamically)
-    team_type: "Field Services",
     members_count: 4,
     specializations: ["2G Dismantling", "Equipment Removal"],
   },
@@ -17,7 +16,6 @@ export const mockTeams: Team[] = [
     id: 302,
     name: "Internal Packaging Team",
     vendor_id: null, // Internal team
-    team_type: "Logistics",
     members_count: 3,
     specializations: ["Equipment Packaging", "Inventory Management"],
   },
@@ -25,7 +23,6 @@ export const mockTeams: Team[] = [
     id: 303,
     name: "Team Beta",
     vendor_id: null, // External team (vendor will be assigned dynamically)
-    team_type: "Field Services",
     members_count: 5,
     specializations: ["MW Installation", "RF Testing"],
   },
@@ -33,7 +30,6 @@ export const mockTeams: Team[] = [
     id: 304,
     name: "Team Gamma",
     vendor_id: null, // External team (vendor will be assigned dynamically)
-    team_type: "Field Services",
     members_count: 3,
     specializations: ["MW Dismantling", "Multi-site Coordination"],
   },
@@ -41,7 +37,6 @@ export const mockTeams: Team[] = [
     id: 305,
     name: "Transport Team Delta",
     vendor_id: null, // External team (vendor will be assigned dynamically)
-    team_type: "Transportation",
     members_count: 2,
     specializations: ["Heavy Equipment Transport", "Logistics Coordination"],
   },
@@ -49,7 +44,6 @@ export const mockTeams: Team[] = [
     id: 306,
     name: "Internal Installation Team",
     vendor_id: null, // Internal team
-    team_type: "Installation",
     members_count: 6,
     specializations: ["L900 Installation", "System Commissioning"],
   },

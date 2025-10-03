@@ -176,7 +176,6 @@ export interface Team {
   id: number;
   name: string;
   vendor_id?: number | null; // null for internal teams
-  team_type: string;
   members_count?: number;
   specializations?: string[];
 }

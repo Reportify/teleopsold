@@ -48,7 +48,7 @@ class DesignationSerializer(serializers.ModelSerializer):
         model = TenantDesignation
         fields = [
             'id', 'tenant', 'designation_name', 'designation_code', 'designation_level',
-            'department', 'description', 'parent_designation', 'parent_designation_name',
+            'department', 'description', 'designation_type', 'parent_designation', 'parent_designation_name',
             'can_manage_subordinates', 'approval_authority_level', 'delegation_allowed',
             'max_subordinates', 'hierarchy_path', 'permissions', 'feature_access',
             'data_access_level', 'custom_capabilities', 'geographic_scope',
@@ -155,7 +155,7 @@ class DesignationListSerializer(serializers.ModelSerializer):
         model = TenantDesignation
         fields = [
             'id', 'designation_name', 'designation_code', 'designation_level',
-            'department', 'parent_designation', 'parent_designation_name',
+            'department', 'designation_type', 'parent_designation', 'parent_designation_name',
             'can_manage_subordinates', 'approval_authority_level', 'data_access_level',
             'is_system_role', 'is_active', 'subordinate_count', 'user_count',
             'created_at', 'updated_at'
@@ -554,4 +554,4 @@ class DesignationAssignmentRequestSerializer(serializers.Serializer):
     permission_overrides = serializers.DictField(required=False, default=dict)
     effective_from = serializers.DateField(default=date.today)
     effective_to = serializers.DateField(required=False, allow_null=True)
-    approval_required = serializers.BooleanField(default=False) 
+    approval_required = serializers.BooleanField(default=False)

@@ -164,9 +164,7 @@ export interface Team {
   id: number;
   circle_tenant_id: string;
   team_name: string;
-  team_code: string;
   team_leader_id?: number;
-  team_type: string;
   team_size: number;
   is_active: boolean;
   created_at: string;

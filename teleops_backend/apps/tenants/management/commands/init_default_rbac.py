@@ -374,6 +374,68 @@ class Command(BaseCommand):
                 'is_auditable': True
             },
             
+            # Team Management Permissions
+            {
+                'permission_name': 'View Teams',
+                'permission_code': 'team.read',
+                'permission_category': 'Team Management',
+                'description': 'View team information, members, and details',
+                'permission_type': 'access',
+                'risk_level': 'low',
+                'requires_scope': True,
+                'is_delegatable': True,
+                'effect': 'allow',
+                'is_auditable': False
+            },
+            {
+                'permission_name': 'Create Teams',
+                'permission_code': 'team.create',
+                'permission_category': 'Team Management',
+                'description': 'Create new teams and configure team settings',
+                'permission_type': 'action',
+                'risk_level': 'medium',
+                'requires_scope': True,
+                'is_delegatable': False,
+                'effect': 'allow',
+                'is_auditable': True
+            },
+            {
+                'permission_name': 'Edit Teams',
+                'permission_code': 'team.update',
+                'permission_category': 'Team Management',
+                'description': 'Edit team information, settings, and configurations',
+                'permission_type': 'action',
+                'risk_level': 'medium',
+                'requires_scope': True,
+                'is_delegatable': False,
+                'effect': 'allow',
+                'is_auditable': True
+            },
+            {
+                'permission_name': 'Delete Teams',
+                'permission_code': 'team.delete',
+                'permission_category': 'Team Management',
+                'description': 'Delete or archive teams',
+                'permission_type': 'action',
+                'risk_level': 'high',
+                'requires_scope': True,
+                'is_delegatable': False,
+                'effect': 'allow',
+                'is_auditable': True
+            },
+            {
+                'permission_name': 'Manage Team Members',
+                'permission_code': 'team.manage_members',
+                'permission_category': 'Team Management',
+                'description': 'Add, remove, and manage team member roles',
+                'permission_type': 'action',
+                'risk_level': 'medium',
+                'requires_scope': True,
+                'is_delegatable': True,
+                'effect': 'allow',
+                'is_auditable': True
+            },
+            
             # RBAC Management Permissions
             {
                 'permission_name': 'View Permissions',
@@ -611,4 +673,4 @@ class Command(BaseCommand):
             except PermissionGroup.DoesNotExist:
                 self.stdout.write(f'      ⚠ Group not found: {group_code}')
         
-        return created_count 
+        return created_count

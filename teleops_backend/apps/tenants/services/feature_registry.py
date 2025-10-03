@@ -461,6 +461,64 @@ class FeatureRegistry:
             required_actions=["update"],
             description="Manage permissions assigned to designations"
         ))
+
+        # ==========================================
+        # TEAM MANAGEMENT FEATURES
+        # ==========================================
+        self.register_feature(FeatureDefinition(
+            feature_id="team_view",
+            feature_name="View Teams",
+            resource_type="team",
+            component_path="pages/TeamsPage",
+            api_endpoints=["/api/v1/teams/"],
+            required_actions=["read"],
+            description="View team information and members"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="team_create",
+            feature_name="Create Teams",
+            resource_type="team",
+            component_path="pages/TeamsPage",
+            api_endpoints=["/api/v1/teams/"],
+            required_actions=["create"],
+            description="Create new teams and manage team structure"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="team_edit",
+            feature_name="Edit Teams",
+            resource_type="team",
+            component_path="pages/TeamsPage",
+            api_endpoints=["/api/v1/teams/{id}/"],
+            required_actions=["update"],
+            description="Modify team details and configurations"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="team_delete",
+            feature_name="Delete Teams",
+            resource_type="team",
+            component_path="pages/TeamsPage",
+            api_endpoints=["/api/v1/teams/{id}/"],
+            required_actions=["delete"],
+            description="Remove teams from the system"
+        ))
+        
+        self.register_feature(FeatureDefinition(
+            feature_id="team_manage_members",
+            feature_name="Manage Team Members",
+            resource_type="team",
+            component_path="pages/TeamsPage",
+            api_endpoints=[
+                "/api/v1/teams/{id}/add_member/",
+                "/api/v1/teams/{id}/remove_member/",
+                "/api/v1/teams/{id}/update_member_role/",
+                "/api/v1/teams/{id}/bulk_add_members/"
+            ],
+            required_actions=["update"],
+            description="Add, remove, and manage team member roles"
+        ))
     
     def register_feature(self, feature: FeatureDefinition):
         """Register a new feature"""

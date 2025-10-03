@@ -398,7 +398,7 @@ export const useEmployeeManagement = () => {
         const membership = await userManagementAPI.teams.addMember(teamId, memberData);
 
         // Update team members if current team is selected
-        if (teamManagement.selectedTeam?.id === teamId) {
+        if (teamManagement.selectedTeam?.id === parseInt(teamId, 10)) {
           setTeamManagement((prev) => ({
             ...prev,
             teamMembers: [membership, ...prev.teamMembers],

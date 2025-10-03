@@ -864,7 +864,7 @@ class DesignationSerializer(serializers.ModelSerializer):
         model = TenantDesignation
         fields = [
             'id', 'designation_name', 'designation_code', 'designation_level', 'department', 
-            'tenant', 'can_manage_users', 'can_create_projects', 'can_assign_tasks',
+            'designation_type', 'tenant', 'can_manage_users', 'can_create_projects', 'can_assign_tasks',
             'can_approve_expenses', 'can_access_reports', 'geographic_scope', 
             'functional_scope', 'is_active', 'is_system_role', 'description',
             'created_by', 'created_at', 'updated_at'
@@ -1105,7 +1105,8 @@ class TenantUserSerializer(serializers.ModelSerializer):
             return {
                 'id': primary_designation.id,
                 'name': primary_designation.designation_name,
-                'level': primary_designation.designation_level
+                'level': primary_designation.designation_level,
+                'designation_type': primary_designation.designation_type
             }
         return None 
 
@@ -1196,4 +1197,4 @@ class VendorCreatedClientFormSerializer(serializers.ModelSerializer):
             digits_only = ''.join(filter(str.isdigit, value))
             if len(digits_only) < 10:
                 raise serializers.ValidationError("Phone number must have at least 10 digits")
-        return value 
+        return value

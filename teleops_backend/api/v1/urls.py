@@ -38,6 +38,9 @@ urlpatterns = [
     # Task Management endpoints
     path('tasks/', include('apps.tasks.urls')),
 
+    # Team Management endpoints
+    path('teams/', include('apps.teams.urls')),
+
     # Equipment Inventory endpoints
     path('equipment/', include('apps.equipment.urls')),
     
@@ -58,4 +61,4 @@ urlpatterns = [
     path('corporate/circles/invite/', CorporateCircleInvitationView.as_view(), name='corporate-circle-invitation'),
     path('corporate/circles/invitations/', CorporateCircleInvitationView.as_view(), name='corporate-circle-pending-invitations'),
     path('', include(router.urls)),
-] 
+]

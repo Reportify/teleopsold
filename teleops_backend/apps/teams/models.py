@@ -16,6 +16,7 @@ class Team(models.Model):
         db_table = 'teams'
         verbose_name = _('Team')
         verbose_name_plural = _('Teams')
+        unique_together = ['tenant', 'name']
 
     def __str__(self):
         return f"{self.tenant.name} - {self.name}"
@@ -39,4 +40,4 @@ class TeamMember(models.Model):
         unique_together = ['team', 'user']
 
     def __str__(self):
-        return f"{self.user.full_name} - {self.get_role_display()} in {self.team.name}" 
+        return f"{self.user.full_name} - {self.get_role_display()} in {self.team.name}"

@@ -41,7 +41,6 @@ class TenantMiddleware:
         if tenant_id:
             try:
                 tenant = Tenant.objects.select_related('circle').get(id=tenant_id, is_active=True)
-        
             except ValueError as e:
                 logger.warning(f"Invalid tenant ID format in header: {tenant_id} - {e}")
                 # Set error context for better debugging
@@ -207,4 +206,4 @@ class CircleBasedAccessMiddleware:
                 request.vendor_context = {
                     'vendor_tenant': request.tenant,
                     'circle_relationships': request.tenant.vendor_circle_relationships.filter(is_active=True),
-                } 
+                }
