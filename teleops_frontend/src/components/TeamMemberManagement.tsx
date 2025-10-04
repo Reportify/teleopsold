@@ -40,12 +40,12 @@ import {
   Phone,
   Badge,
 } from "@mui/icons-material";
-import { TeamMembership, TeamMemberAddData, EnhancedUserProfile } from "../types/user";
+import { TeamMember, TeamMembership, TeamMemberAddData, EnhancedUserProfile } from "../types/user";
 
 interface TeamMemberManagementProps {
   teamId: string;
   teamName: string;
-  members: TeamMembership[];
+  members: (TeamMember | TeamMembership)[];
   availableUsers: EnhancedUserProfile[];
   onAddMember: (memberData: TeamMemberAddData) => Promise<void>;
   onRemoveMember: (userId: string) => Promise<void>;
@@ -253,7 +253,7 @@ const TeamMemberManagement: React.FC<TeamMemberManagementProps> = ({
 }) => {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [removeConfirmOpen, setRemoveConfirmOpen] = useState(false);
-  const [memberToRemove, setMemberToRemove] = useState<TeamMembership | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<(TeamMember | TeamMembership) | null>(null);
 
   const getRoleColor = (role: string) => {
     switch (role) {
@@ -288,7 +288,9 @@ const TeamMemberManagement: React.FC<TeamMemberManagementProps> = ({
   const handleRemoveMember = async () => {
     if (memberToRemove) {
       try {
-        await onRemoveMember(memberToRemove.user);
+        // Handle both TeamMember and TeamMembership types
+        const userId = 'user' in memberToRemove ? memberToRemove.user : memberToRemove.id.toString();
+        await onRemoveMember(userId);
         setRemoveConfirmOpen(false);
         setMemberToRemove(null);
       } catch (error) {
@@ -369,7 +371,7 @@ const TeamMemberManagement: React.FC<TeamMemberManagementProps> = ({
                           color={getRoleColor(member.role) as any}
                           variant="outlined"
                         />
-                        {!member.is_active && (
+                        {'is_active' in member && !member.is_active && (
                           <Chip label="Inactive" size="small" color="error" variant="outlined" />
                         )}
                       </Box>
@@ -385,7 +387,7 @@ const TeamMemberManagement: React.FC<TeamMemberManagementProps> = ({
                         <Typography variant="body2" color="text.secondary">
                           Joined: {formatDate(member.joined_at)}
                         </Typography>
-                        {member.notes && (
+                        {'notes' in member && member.notes && (
                           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
                             Notes: {member.notes}
                           </Typography>

@@ -416,6 +416,8 @@ export interface TeamUpdateData {
   name?: string;
   description?: string;
   is_active?: boolean;
+  team_leader_id?: string;
+  team_member_ids?: string[];
 }
 
 export interface TeamMemberAddData {

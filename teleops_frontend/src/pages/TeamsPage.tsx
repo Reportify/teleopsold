@@ -24,8 +24,12 @@ import {
   Tooltip,
   Divider,
   LinearProgress,
+  List,
+  ListItem,
+  ListItemAvatar,
+  ListItemText,
 } from "@mui/material";
-import { Add, Group, MoreVert, Edit, Delete, People, Search, FilterList, Refresh, Settings, Analytics } from "@mui/icons-material";
+import { Add, MoreVert, Edit, Delete, People, Search, FilterList, Refresh, Settings } from "@mui/icons-material";
 import TeamCreationDialog from "../components/TeamCreationDialog";
 import TeamMemberManagement from "../components/TeamMemberManagement";
 import EditTeamDialog from "../components/EditTeamDialog";
@@ -52,6 +56,8 @@ function TabPanel(props: TabPanelProps) {
 const TeamsPage: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
   const [teamMemberships, setTeamMemberships] = useState<TeamMembership[]>([]);
+  const [teamDetailsMembers, setTeamDetailsMembers] = useState<TeamMember[]>([]);
+  const [teamTabMembers, setTeamTabMembers] = useState<TeamMember[]>([]);
   const [availableUsers, setAvailableUsers] = useState<EnhancedUserProfile[]>([]);
   const [allUsers, setAllUsers] = useState<EnhancedUserProfile[]>([]);
   const [memberType, setMemberType] = useState<"field" | "non_field">("field");
@@ -200,6 +206,7 @@ const TeamsPage: React.FC = () => {
       if (selectedTeam?.id === teamToDelete.id) {
         setSelectedTeam(null);
         setTabValue(0);
+        setTeamTabMembers([]);
       }
     } catch (error) {
       setError("Failed to delete team");
@@ -241,7 +248,7 @@ const TeamsPage: React.FC = () => {
   const loadTeamMembers = async (teamId: number) => {
     try {
       const members = await teamService.getMembers(teamId);
-      setTeamMemberships(members);
+      setTeamTabMembers(members);
     } catch (error) {
       console.error("Error loading team members:", error);
       setError("Failed to load team members");
@@ -251,28 +258,56 @@ const TeamsPage: React.FC = () => {
   const handleViewTeamMembers = (team: Team) => {
     setSelectedTeam(team);
     setTabValue(1);
+    setTeamTabMembers([]); // Clear previous data
     loadTeamMembers(team.id);
     handleMenuClose();
   };
 
-  const handleViewTeamDetails = (team: Team) => {
+  const handleViewTeamDetails = async (team: Team) => {
     setTeamToView(team);
     setViewDialogOpen(true);
+    // Load team members for the details view
+    try {
+      const members = await teamService.getMembers(team.id);
+      setTeamDetailsMembers(members);
+    } catch (error) {
+      console.error("Error loading team members:", error);
+    }
     handleMenuClose();
   };
 
-  const handleEditTeam = (team: Team) => {
+  const handleEditTeam = async (team: Team) => {
     setTeamToEdit(team);
     setEditDialogOpen(true);
+    
+    // Load team members for the edit dialog
+    try {
+      const members = await teamService.getMembers(team.id);
+      setTeamDetailsMembers(members);
+    } catch (error) {
+      console.error("Error loading team members for edit:", error);
+    }
+    
     handleMenuClose();
   };
 
-  const handleUpdateTeam = async (teamData: { name: string; description: string }) => {
+  const handleUpdateTeam = async (teamData: { 
+    name: string; 
+    description: string; 
+    team_leader_id?: string; 
+    team_member_ids?: string[];
+  }) => {
     if (!teamToEdit) return;
 
     try {
       const updatedTeam = await teamService.update(teamToEdit.id, teamData);
       setSafeTeams((prev) => prev.map((team) => (team.id === teamToEdit.id ? updatedTeam : team)));
+      
+      // If team members were updated, refresh the team members data
+      if (teamData.team_member_ids && selectedTeam?.id === teamToEdit.id) {
+        loadTeamMembers(teamToEdit.id);
+      }
+      
       setEditDialogOpen(false);
       setTeamToEdit(null);
     } catch (error) {
@@ -289,7 +324,20 @@ const TeamsPage: React.FC = () => {
     return team?.member_count || 0;
   };
 
-  const getTeamMembers = (teamId: number) => {
+  const getTeamMembers = (teamId: number): (TeamMember | TeamMembership)[] => {
+    // For the details view, return the loaded team members
+    if (teamToView && teamToView.id === teamId) {
+      return teamDetailsMembers;
+    }
+    // For the edit dialog, return the loaded team members
+    if (teamToEdit && teamToEdit.id === teamId) {
+      return teamDetailsMembers;
+    }
+    // For the team members tab, return the loaded team tab members
+    if (selectedTeam && selectedTeam.id === teamId) {
+      return teamTabMembers;
+    }
+    // For other views, filter from teamMemberships (if needed)
     return teamMemberships.filter((membership) => membership.team === teamId && membership.is_active);
   };
 
@@ -313,7 +361,7 @@ const TeamsPage: React.FC = () => {
       <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 3 }}>
         <Box>
           <Typography variant="h4" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Group />
+            <People />
             Teams
           </Typography>
           <Typography variant="body1" color="text.secondary">
@@ -341,7 +389,7 @@ const TeamsPage: React.FC = () => {
       {/* Tabs */}
       <Box sx={{ borderBottom: 1, borderColor: "divider", mb: 3 }}>
         <Tabs value={tabValue} onChange={(_, newValue) => setTabValue(newValue)}>
-          <Tab label={`All Teams (${safeTeams.length})`} icon={<Group />} iconPosition="start" />
+          <Tab label={`All Teams (${safeTeams.length})`} icon={<People />} iconPosition="start" />
           {selectedTeam && <Tab label={`${selectedTeam.name} Members`} icon={<People />} iconPosition="start" />}
         </Tabs>
       </Box>
@@ -372,7 +420,7 @@ const TeamsPage: React.FC = () => {
         {filteredTeams.length === 0 ? (
           <Card>
             <CardContent sx={{ textAlign: "center", py: 6 }}>
-              <Group sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
+              <People sx={{ fontSize: 64, color: "text.secondary", mb: 2 }} />
               <Typography variant="h6" color="text.secondary" gutterBottom>
                 {searchQuery ? "No teams found" : "No teams created yet"}
               </Typography>
@@ -449,20 +497,12 @@ const TeamsPage: React.FC = () => {
       {/* Team Actions Menu */}
       <Menu anchorEl={anchorEl} open={Boolean(anchorEl)} onClose={handleMenuClose}>
         <MenuItem onClick={() => handleViewTeamDetails(menuTeam!)}>
-          <Group sx={{ mr: 1 }} />
-          View Team Details
-        </MenuItem>
-        <MenuItem onClick={() => handleViewTeamMembers(menuTeam!)}>
           <People sx={{ mr: 1 }} />
-          View Members
+          View Team Details
         </MenuItem>
         <MenuItem onClick={() => handleEditTeam(menuTeam!)}>
           <Edit sx={{ mr: 1 }} />
           Edit Team
-        </MenuItem>
-        <MenuItem onClick={handleMenuClose}>
-          <Analytics sx={{ mr: 1 }} />
-          Team Analytics
         </MenuItem>
         <Divider />
         <MenuItem
@@ -511,7 +551,7 @@ const TeamsPage: React.FC = () => {
       <Dialog open={viewDialogOpen} onClose={() => setViewDialogOpen(false)} maxWidth="md" fullWidth>
         <DialogTitle>
           <Box display="flex" alignItems="center" gap={1}>
-            <Group />
+            <People />
             Team Details
           </Box>
         </DialogTitle>
@@ -558,15 +598,72 @@ const TeamsPage: React.FC = () => {
                   </Grid>
                 </Grid>
               </Box>
+
+              {/* Team Members Section */}
+              <Box sx={{ mt: 4 }}>
+                <Typography variant="subtitle1" gutterBottom sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                  <People />
+                  Team Members
+                </Typography>
+                {getTeamMembers(teamToView.id).length > 0 ? (
+                  <List sx={{ bgcolor: "background.paper", borderRadius: 1, border: 1, borderColor: "divider" }}>
+                    {getTeamMembers(teamToView.id).map((member, index) => (
+                      <ListItem key={member.id} divider={index < getTeamMembers(teamToView.id).length - 1}>
+                        <ListItemAvatar>
+                          <Avatar sx={{ bgcolor: "primary.main" }}>
+                            {member.user_full_name?.charAt(0) || "U"}
+                          </Avatar>
+                        </ListItemAvatar>
+                        <ListItemText
+                          primary={
+                            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                              <Typography variant="subtitle2">
+                                {member.user_full_name || "Unknown User"}
+                              </Typography>
+                              <Chip
+                                label={(member as any).role_display || member.role.charAt(0).toUpperCase() + member.role.slice(1)}
+                                size="small"
+                                color={member.role === "leader" ? "primary" : "default"}
+                                variant="outlined"
+                              />
+                            </Box>
+                          }
+                          secondary={
+                            <Box>
+                              <Typography variant="body2" color="text.secondary">
+                                {member.user_email}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary">
+                                Joined: {new Date(member.joined_at).toLocaleDateString()}
+                              </Typography>
+                            </Box>
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                ) : (
+                  <Box sx={{ textAlign: "center", py: 3, bgcolor: "background.paper", borderRadius: 1, border: 1, borderColor: "divider" }}>
+                    <People sx={{ fontSize: 48, color: "text.secondary", mb: 1 }} />
+                    <Typography variant="body2" color="text.secondary">
+                      No members in this team yet
+                    </Typography>
+                  </Box>
+                )}
+              </Box>
             </Box>
           )}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setViewDialogOpen(false)}>Close</Button>
+          <Button onClick={() => {
+            setViewDialogOpen(false);
+            setTeamDetailsMembers([]);
+          }}>Close</Button>
           <Button
             variant="contained"
             onClick={() => {
               setViewDialogOpen(false);
+              setTeamDetailsMembers([]);
               if (teamToView) handleEditTeam(teamToView);
             }}
           >
@@ -585,6 +682,10 @@ const TeamsPage: React.FC = () => {
         team={teamToEdit}
         onUpdateTeam={handleUpdateTeam}
         existingTeamNames={teams.filter((t) => t.id !== teamToEdit?.id).map((t) => t.name)}
+        availableUsers={availableUsers}
+        teamMembers={teamToEdit ? getTeamMembers(teamToEdit.id) : []}
+        onAddMember={handleAddMember}
+        onRemoveMember={handleRemoveMember}
       />
     </Box>
   );

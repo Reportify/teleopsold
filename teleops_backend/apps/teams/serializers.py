@@ -171,6 +171,42 @@ class TeamSerializer(serializers.ModelSerializer):
         
         return team
 
+    def update(self, instance, validated_data):
+        """Update team and handle team leader and member changes"""
+        from django.db import transaction
+        
+        # Extract team member data before updating the team
+        team_leader_id = validated_data.pop('team_leader_id', None)
+        team_member_ids = validated_data.pop('team_member_ids', None)
+        
+        # Update basic team fields
+        instance = super().update(instance, validated_data)
+        
+        # Handle team membership changes if provided
+        if team_leader_id is not None or team_member_ids is not None:
+            with transaction.atomic():
+                # Clear existing memberships
+                TeamMember.objects.filter(team=instance).delete()
+                
+                # Add new team leader if provided
+                if team_leader_id:
+                    TeamMember.objects.create(
+                        team=instance,
+                        user_id=team_leader_id,
+                        role='leader'
+                    )
+                
+                # Add new team members if provided
+                if team_member_ids:
+                    for member_id in team_member_ids:
+                        TeamMember.objects.create(
+                            team=instance,
+                            user_id=member_id,
+                            role='member'
+                        )
+        
+        return instance
+
 
 class TeamMemberManagementSerializer(serializers.Serializer):
     """Serializer for adding/removing team members"""

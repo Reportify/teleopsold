@@ -1,6 +1,6 @@
 // Team Service for Real Backend Integration
 import { api } from "./api";
-import { Team, TeamMembership, TeamCreateData, TeamUpdateData, TeamMemberAddData, TeamListResponse } from "../types/user";
+import { Team, TeamMember, TeamMembership, TeamCreateData, TeamUpdateData, TeamMemberAddData, TeamListResponse } from "../types/user";
 
 // Team API Endpoints
 const TEAM_ENDPOINTS = {
@@ -76,7 +76,7 @@ export const teamService = {
   },
 
   // Get team members
-  getMembers: async (id: number): Promise<TeamMembership[]> => {
+  getMembers: async (id: number): Promise<TeamMember[]> => {
     try {
       const response = await api.get(TEAM_ENDPOINTS.MEMBERS(id.toString()));
       return response.data;
